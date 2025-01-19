@@ -13,6 +13,10 @@ A web-based terminal application built with Flask and XtermJS that provides secu
 - Support for multiple environments (dev, val, prod)
 - Organized instance grouping by environment and organization
 
+## Screenshot
+![Uploading image.png…]()
+
+
 ## Prerequisites
 
 - Docker and Docker Compose
