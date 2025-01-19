@@ -14,8 +14,7 @@ A web-based terminal application built with Flask and XtermJS that provides secu
 - Organized instance grouping by environment and organization
 
 ## Screenshot
-![Uploading image.png…]()
-
+![image](https://github.com/user-attachments/assets/d47373c7-fd78-4290-9f70-c5f45d6f8f10)
 
 ## Prerequisites
 
