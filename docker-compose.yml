@@ -1,0 +1,13 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8080:5000"
+    volumes:
+      - ~/.aws:/home/appuser/.aws:ro  # Mount AWS credentials to appuser home
+      - ./instances_list.yaml:/app/instances_list.yaml:ro  # Mount instances configuration
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

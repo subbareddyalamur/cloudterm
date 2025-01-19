@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Terminal Web App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='xterm/css/xterm.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            overflow: hidden;
+        }
+        .header {
+            padding: 16px 20px;
+            background-color: #161b22;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #58a6ff;
+            font-size: 24px;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .logo-icon {
+            position: relative;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .logo-icon .fa-terminal {
+            position: absolute;
+            font-size: 16px;
+            color: #0d1117;
+            z-index: 2;
+        }
+        .logo-icon .fa-cloud {
+            position: absolute;
+            font-size: 32px;
+            color: #58a6ff;
+            z-index: 1;
+        }
+        .logo-text {
+            background: linear-gradient(135deg, #58a6ff, #d2a8ff);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-caption {
+            font-size: 13px;
+            color: #8b949e;
+            margin-left: 38px;  /* Align with the text after icon */
+        }
+        .container {
+            display: flex;
+            height: calc(100vh - 75px);  /* Adjust for increased header height */
+            width: 100vw;
+        }
+        #sidebar {
+            min-width: 200px;
+            width: 300px;
+            background-color: #161b22;
+            overflow-y: auto;
+            padding: 20px;
+            flex-shrink: 0;
+            position: relative;
+        }
+        .resizer {
+            width: 8px;
+            background-color: #30363d;
+            cursor: col-resize;
+            transition: background-color 0.2s;
+            position: relative;
+            z-index: 10;
+        }
+        .resizer:hover, .resizer.dragging {
+            background-color: #58a6ff;
+        }
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+        #tabs-container {
+            display: flex;
+            background-color: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 0 10px;
+            overflow-x: auto;
+        }
+        .tab {
+            padding: 8px 16px;
+            background: none;
+            border: none;
+            color: #c9d1d9;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+        }
+        .tab.active {
+            background-color: #1f2428;
+            border-bottom-color: #58a6ff;
+        }
+        .tab-close {
+            margin-left: 8px;
+            opacity: 0.6;
+        }
+        .tab:hover .tab-close {
+            opacity: 1;
+        }
+        #terminals-container {
+            flex: 1;
+            position: relative;
+            background-color: #0d1117;
+            min-height: 0;
+        }
+        .terminal-instance {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 20px;
+        }
+        .terminal-instance.active {
+            display: block;
+        }
+        .tree-item {
+            margin: 4px 0;
+        }
+        .tree-item-content {
+            display: flex;
+            padding: 6px 8px;
+            cursor: pointer;
+            border-radius: 4px;
+            gap: 8px;
+            align-items: center;
+        }
+        .tree-item-content:hover {
+            background-color: #1f2428;
+        }
+        .tree-toggle {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: #8b949e;
+            cursor: pointer;
+        }
+        .tree-children {
+            margin-left: 24px;
+            display: none;  /* Hide by default */
+        }
+        .tree-icon {
+            width: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+        .customer-icon {
+            color: #ff7b72;
+        }
+        .env-icon {
+            color: #7ee787;
+        }
+        .env-icon.dev {
+            color: #7ee787;  /* Green for dev */
+        }
+        .env-icon.val {
+            color: #ffa657;  /* Orange for val */
+        }
+        .env-icon.prod {
+            color: #ff7b72;  /* Red for prod */
+        }
+        .instance-icon {
+            color: #58a6ff;
+        }
+        .instance-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+        }
+        .instance-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #c9d1d9;
+        }
+        .instance-id {
+            font-size: 11px;
+            color: #8b949e;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+        .env-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+        }
+        .env-name {
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+        .error {
+            color: #ff7b72;
+            padding: 8px;
+            margin: 8px 0;
+            background-color: rgba(255, 123, 114, 0.1);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <a href="/" class="logo">
+            <div class="logo-icon">
+                <i class="fas fa-cloud"></i>
+                <i class="fas fa-terminal"></i>
+            </div>
+            <span class="logo-text">CloudTerm</span>
+        </a>
+        <div class="header-caption">Secure Web Terminal for AWS EC2 Instances via Systems Manager</div>
+    </header>
+    <div class="container">
+        <div id="sidebar">
+            <div class="tree-view" id="instances-tree"></div>
+        </div>
+        <div class="resizer" id="dragMe"></div>
+        <div class="main-content">
+            <div id="tabs-container"></div>
+            <div id="terminals-container"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='xterm/lib/xterm.js') }}"></script>
+    <script src="{{ url_for('static', filename='xterm/lib/xterm-addon-fit.js') }}"></script>
+    <script src="{{ url_for('static', filename='socket.io/socket.io.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/terminal.js') }}"></script>
+    <script>
+        // Initialize terminal manager without auto-connecting
+        window.terminalManager = new TerminalManager();
+        window.terminalManager.init();
+
+        // Add resizer functionality
+        const resizer = document.getElementById('dragMe');
+        const sidebar = document.getElementById('sidebar');
+        const container = document.querySelector('.container');
+        
+        let isResizing = false;
+        
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            container.style.cursor = 'col-resize';
+            resizer.classList.add('dragging');
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            
+            const containerRect = container.getBoundingClientRect();
+            const newWidth = e.clientX - containerRect.left;
+            
+            if (newWidth >= 200 && newWidth <= 600) {
+                sidebar.style.width = `${newWidth}px`;
+            }
+        });
+        
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+            container.style.cursor = '';
+            resizer.classList.remove('dragging');
+        });
+        
+        // Tree view functionality
+        function createTreeItem(item) {
+            const div = document.createElement('div');
+            div.className = 'tree-item';
+            
+            const content = document.createElement('div');
+            content.className = 'tree-item-content';
+            
+            switch(item.type) {
+                case 'customer':
+                    const toggle = document.createElement('span');
+                    toggle.className = 'tree-toggle';
+                    toggle.innerHTML = '<i class="fas fa-chevron-right"></i>';  // Start with right arrow
+                    content.appendChild(toggle);
+                    
+                    const icon = document.createElement('span');
+                    icon.className = 'tree-icon customer-icon';
+                    icon.innerHTML = '<i class="fas fa-building"></i>';
+                    content.appendChild(icon);
+                    
+                    const label = document.createElement('span');
+                    label.textContent = item.name.toUpperCase();
+                    content.appendChild(label);
+                    
+                    const envContainer = document.createElement('div');
+                    envContainer.className = 'tree-children';
+                    item.environments.forEach(env => {
+                        envContainer.appendChild(createTreeItem(env));
+                    });
+                    
+                    div.appendChild(content);
+                    div.appendChild(envContainer);
+                    
+                    toggle.onclick = (e) => {
+                        e.stopPropagation();
+                        const isExpanded = toggle.querySelector('i').classList.contains('fa-chevron-down');
+                        toggle.innerHTML = isExpanded ? 
+                            '<i class="fas fa-chevron-right"></i>' : 
+                            '<i class="fas fa-chevron-down"></i>';
+                        envContainer.style.display = isExpanded ? 'none' : 'block';
+                    };
+                    break;
+                    
+                case 'environment':
+                    const envToggle = document.createElement('span');
+                    envToggle.className = 'tree-toggle';
+                    envToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';  // Start with right arrow
+                    content.appendChild(envToggle);
+                    
+                    const envIcon = document.createElement('span');
+                    envIcon.className = `tree-icon env-icon ${item.name}`;
+                    envIcon.innerHTML = '<i class="fas fa-folder"></i>';
+                    content.appendChild(envIcon);
+                    
+                    const envLabel = document.createElement('div');
+                    envLabel.className = 'env-label';
+                    const envName = document.createElement('span');
+                    envName.className = 'env-name';
+                    envName.textContent = item.name.toUpperCase();
+                    envLabel.appendChild(envName);
+                    content.appendChild(envLabel);
+                    
+                    const instanceContainer = document.createElement('div');
+                    instanceContainer.className = 'tree-children';
+                    item.instances.forEach(instance => {
+                        instanceContainer.appendChild(createTreeItem(instance));
+                    });
+                    
+                    div.appendChild(content);
+                    div.appendChild(instanceContainer);
+                    
+                    envToggle.onclick = (e) => {
+                        e.stopPropagation();
+                        const isExpanded = envToggle.querySelector('i').classList.contains('fa-chevron-down');
+                        envToggle.innerHTML = isExpanded ? 
+                            '<i class="fas fa-chevron-right"></i>' : 
+                            '<i class="fas fa-chevron-down"></i>';
+                        instanceContainer.style.display = isExpanded ? 'none' : 'block';
+                    };
+                    break;
+                    
+                case 'instance':
+                    const instanceIcon = document.createElement('span');
+                    instanceIcon.className = 'tree-icon instance-icon';
+                    instanceIcon.innerHTML = '<i class="fas fa-terminal"></i>';
+                    content.appendChild(instanceIcon);
+                    
+                    const instanceContent = document.createElement('div');
+                    instanceContent.className = 'instance-content';
+                    
+                    const instanceName = document.createElement('div');
+                    instanceName.className = 'instance-name';
+                    instanceName.textContent = item.name;
+                    
+                    const instanceId = document.createElement('div');
+                    instanceId.className = 'instance-id';
+                    instanceId.textContent = item.id;
+                    
+                    instanceContent.appendChild(instanceName);
+                    instanceContent.appendChild(instanceId);
+                    content.appendChild(instanceContent);
+                    
+                    div.appendChild(content);
+                    content.onclick = () => {
+                        window.terminalManager.openTerminal({
+                            id: item.id,
+                            name: item.name
+                        });
+                    };
+                    break;
+            }
+            
+            return div;
+        }
+
+        // Load and render instances
+        fetch('/instances')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Loaded instances:', data);
+                const treeContainer = document.getElementById('instances-tree');
+                treeContainer.innerHTML = '';
+                data.forEach(customer => {
+                    treeContainer.appendChild(createTreeItem(customer));
+                });
+            })
+            .catch(error => {
+                console.error('Error loading instances:', error);
+                const treeContainer = document.getElementById('instances-tree');
+                treeContainer.innerHTML = '<div class="error">Error loading instances</div>';
+            });
+    </script>
+</body>
+</html>

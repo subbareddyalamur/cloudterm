@@ -1,0 +1,22 @@
+org_name1:
+  region: us-east-1
+  aws_profile: org_name1_profile
+  instances:
+    dev:
+      - name: instance-name-1
+        instance_id: i-xxxxxxxxxxxxxxxxx
+      - name: instance-name-2
+        instance_id: i-xxxxxxxxxxxxxxxxx
+    prod:
+      - name: instance-name-3
+        instance_id: i-xxxxxxxxxxxxxxxxx
+org_name2:
+  region: us-west-1
+  aws_profile: org_name2_profile
+  instances:
+    dev:
+      - name: instance-name-4
+        instance_id: i-xxxxxxxxxxxxxxxxx
+    prod:
+      - name: instance-name-5
+        instance_id: i-xxxxxxxxxxxxxxxxx
