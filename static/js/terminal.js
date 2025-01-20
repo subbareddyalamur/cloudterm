@@ -2,7 +2,8 @@
 class TerminalManager {
     constructor() {
         console.log('Initializing TerminalManager...');
-        this.terminals = new Map();
+        this.terminals = new Map();  // Key: sessionId, Value: terminalState
+        this.sessionCounter = new Map();  // Key: instanceId, Value: number of sessions
         this.activeTerminalId = null;
         this.initialized = false;
         this.socket = null;
@@ -78,21 +79,23 @@ class TerminalManager {
         return container;
     }
 
-    createTab(instance) {
+    createTab(instance, sessionCount) {
         const tab = document.createElement('button');
         tab.className = 'tab';
+        const sessionLabel = sessionCount > 1 ? ` (${sessionCount})` : '';
         tab.innerHTML = `
             <span class="instance-icon"><i class="fas fa-terminal"></i></span>
-            <span>${instance.name}</span>
+            <span>${instance.name}${sessionLabel}</span>
             <span class="tab-close">×</span>
         `;
         tab.style.display = 'none'; // Hide by default
         
+        const sessionId = `${instance.id}-${sessionCount}`;
         tab.onclick = (e) => {
             if (e.target.classList.contains('tab-close')) {
-                this.closeTerminal(instance.id);
+                this.closeTerminal(sessionId);
             } else {
-                this.activateTerminal(instance.id);
+                this.activateTerminal(sessionId);
             }
         };
         
@@ -112,54 +115,56 @@ class TerminalManager {
             return;
         }
 
-        if (this.terminals.has(instance.id)) {
-            console.log('Terminal already exists, activating...');
-            this.activateTerminal(instance.id);
-            return;
-        }
+        // Generate a unique session ID
+        const sessionCount = (this.sessionCounter.get(instance.id) || 0) + 1;
+        this.sessionCounter.set(instance.id, sessionCount);
+        const sessionId = `${instance.id}-${sessionCount}`;
 
         try {
             const { term, fitAddon } = this.createTerminal();
             if (!term) return;
 
             const container = this.createTerminalContainer();
-            const tab = this.createTab(instance);
+            const tab = this.createTab(instance, sessionCount);
             
             this.terminalsContainer.appendChild(container);
             this.tabsContainer.appendChild(tab);
             
             term.open(container);
+            fitAddon.fit();  // Fit terminal to container immediately
             
             // Initialize socket connection
             const socket = this.initSocket();
             
-            // Start session for this instance
-            socket.emit('start_session', { instance_id: instance.id });
-
+            // Add event listeners before starting session
             const handleOutput = (data) => {
-                if (data.output && data.instance_id === instance.id) {
-                    console.log(`Received output for ${instance.id}: ${data.output.substring(0, 50)}...`);
+                if (data.session_id === sessionId) {
+                    console.log(`Received output for ${sessionId}: ${data.output.substring(0, 50)}...`);
                     term.write(data.output);
                 }
             };
 
             const handleError = (data) => {
-                if (data.instance_id === instance.id) {
+                if (data.session_id === sessionId) {
                     console.error('Session error:', data.error);
                     term.write('\r\n\x1b[31mError: ' + data.error + '\x1b[0m\r\n');
                 }
             };
 
             const handleSessionStart = (data) => {
-                if (data.instance_id === instance.id) {
-                    console.log('Session started for:', instance.id);
+                if (data.session_id === sessionId) {
+                    console.log('Session started:', sessionId);
                     container.style.display = 'block';
                     tab.style.display = 'inline-block';
                     term.focus();
                     fitAddon.fit();
                     
+                    // Write a welcome message
+                    term.write('\r\n\x1b[32mSession established. Welcome to CloudTerm!\x1b[0m\r\n');
+                    
                     socket.emit('terminal_resize', {
                         instance_id: instance.id,
+                        session_id: sessionId,
                         cols: term.cols,
                         rows: term.rows
                     });
@@ -170,10 +175,24 @@ class TerminalManager {
             socket.on('terminal_output', handleOutput);
             socket.on('session_error', handleError);
             socket.on('session_started', handleSessionStart);
+            
+            // Start session for this instance after listeners are set up
+            socket.emit('start_session', { 
+                instance_id: instance.id,
+                session_id: sessionId 
+            });
 
             term.onData(data => {
+                // Handle Ctrl+C
+                if (data.charCodeAt(0) === 3) {
+                    socket.emit('terminal_interrupt', { 
+                        instance_id: instance.id,
+                        session_id: sessionId 
+                    });
+                }
                 socket.emit('terminal_input', { 
                     instance_id: instance.id,
+                    session_id: sessionId,
                     input: data 
                 });
             });
@@ -181,6 +200,7 @@ class TerminalManager {
             term.onResize(size => {
                 socket.emit('terminal_resize', {
                     instance_id: instance.id,
+                    session_id: sessionId,
                     cols: size.cols,
                     rows: size.rows
                 });
@@ -191,6 +211,7 @@ class TerminalManager {
                 container,
                 tab,
                 fitAddon,
+                sessionId,
                 cleanup: () => {
                     socket.off('terminal_output', handleOutput);
                     socket.off('session_error', handleError);
@@ -198,12 +219,12 @@ class TerminalManager {
                 }
             };
 
-            this.terminals.set(instance.id, terminalState);
-            this.activateTerminal(instance.id);
+            this.terminals.set(sessionId, terminalState);
+            this.activateTerminal(sessionId);
             
             // Handle window resize
             const resizeHandler = () => {
-                if (this.activeTerminalId === instance.id) {
+                if (this.activeTerminalId === sessionId) {
                     fitAddon.fit();
                 }
             };
@@ -215,56 +236,45 @@ class TerminalManager {
         }
     }
 
-    activateTerminal(instanceId) {
-        if (!this.initialized) {
-            console.error('Terminal manager not initialized');
-            return;
+    activateTerminal(sessionId) {
+        // Hide all terminals and deactivate all tabs
+        for (const state of this.terminals.values()) {
+            state.container.style.display = 'none';
+            state.tab.classList.remove('active');
         }
 
-        console.log('Activating terminal:', instanceId);
-        
-        // Deactivate current terminal
-        if (this.activeTerminalId) {
-            const current = this.terminals.get(this.activeTerminalId);
-            if (current) {
-                current.container.style.display = 'none';
-                current.tab.classList.remove('active');
-            }
-        }
-
-        // Activate new terminal
-        const terminal = this.terminals.get(instanceId);
-        if (terminal) {
-            terminal.container.style.display = 'block';
-            terminal.tab.classList.add('active');
-            terminal.term.focus();
-            terminal.fitAddon.fit();
-            this.activeTerminalId = instanceId;
+        // Show and activate the selected terminal
+        const terminalState = this.terminals.get(sessionId);
+        if (terminalState) {
+            terminalState.container.style.display = 'block';
+            terminalState.tab.classList.add('active');
+            terminalState.term.focus();
+            this.activeTerminalId = sessionId;
         }
     }
 
-    closeTerminal(instanceId) {
-        if (!this.initialized) {
-            console.error('Terminal manager not initialized');
-            return;
-        }
-
-        console.log('Closing terminal:', instanceId);
-        const terminal = this.terminals.get(instanceId);
-        if (terminal) {
-            terminal.cleanup(); // Remove event listeners
-            terminal.term.dispose();
-            terminal.container.remove();
-            terminal.tab.remove();
-            this.terminals.delete(instanceId);
-
-            // Activate another terminal if available
-            if (this.activeTerminalId === instanceId) {
+    closeTerminal(sessionId) {
+        const terminalState = this.terminals.get(sessionId);
+        if (terminalState) {
+            // Cleanup terminal
+            terminalState.cleanup();
+            terminalState.term.dispose();
+            terminalState.container.remove();
+            terminalState.tab.remove();
+            this.terminals.delete(sessionId);
+            
+            // Update active terminal if needed
+            if (this.activeTerminalId === sessionId) {
                 this.activeTerminalId = null;
-                const nextTerminal = Array.from(this.terminals.keys())[0];
-                if (nextTerminal) {
-                    this.activateTerminal(nextTerminal);
+                const remainingTerminals = Array.from(this.terminals.keys());
+                if (remainingTerminals.length > 0) {
+                    this.activateTerminal(remainingTerminals[0]);
                 }
+            }
+
+            // Notify backend to close the session
+            if (this.socket) {
+                this.socket.emit('close_session', { session_id: sessionId });
             }
         }
     }

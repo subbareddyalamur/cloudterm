@@ -21,11 +21,12 @@ app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Store active sessions
-sessions = {}  # Key: instance_id, Value: SSMSession object
+sessions = {}  # Key: session_id, Value: SSMSession object
 
 class SSMSession:
-    def __init__(self, instance_id):
+    def __init__(self, instance_id, session_id):
         self.instance_id = instance_id
+        self.session_id = session_id
         self.process = None
         self.master_fd = None
         self.running = False
@@ -91,10 +92,14 @@ class SSMSession:
                             if data:
                                 text = data.decode('utf-8', errors='replace')
                                 if 'Starting session with SessionId' in text:
-                                    print(f"Session established for {self.instance_id}")
+                                    print(f"Session established for {self.instance_id} (session {self.session_id})")
                                 elif 'Exiting session with sessionId' in text:
-                                    print(f"Session disconnected for {self.instance_id}")
-                                socketio.emit('terminal_output', {'instance_id': self.instance_id, 'output': text})
+                                    print(f"Session disconnected for {self.instance_id} (session {self.session_id})")
+                                socketio.emit('terminal_output', {
+                                    'instance_id': self.instance_id,
+                                    'session_id': self.session_id,
+                                    'output': text
+                                })
                             else:
                                 break
                         except (OSError, IOError) as e:
@@ -111,6 +116,7 @@ class SSMSession:
             if self.running:
                 socketio.emit('terminal_output', {
                     'instance_id': self.instance_id, 
+                    'session_id': self.session_id,
                     'output': f"\r\nSession disconnected for {self.instance_id}\r\n"
                 })
             self.running = False
@@ -215,17 +221,6 @@ def check_instance_status(instance_id, profile, region):
         print(f"Error checking instance status: {str(e)}")
         return False
 
-def start_session(instance_id):
-    try:
-        session = SSMSession(instance_id)
-        if session.start_session():
-            sessions[instance_id] = session
-            return True
-        return False
-    except Exception as e:
-        print(f"Error starting session: {str(e)}")
-        return False
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -282,63 +277,87 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
     # Clean up any existing sessions for this client
-    for instance_id, session in list(sessions.items()):
+    for session_id, session in list(sessions.items()):
         try:
             session.close()
-            del sessions[instance_id]
+            del sessions[session_id]
         except Exception as e:
-            print(f'Error cleaning up session {instance_id}: {e}')
+            print(f'Error cleaning up session {session_id}: {e}')
 
 @socketio.on('start_session')
 def handle_start_session(data):
     instance_id = data.get('instance_id')
-    if not instance_id:
-        socketio.emit('session_error', {'error': 'No instance ID provided', 'instance_id': None})
-        return
-        
-    # Check if session already exists
-    if instance_id in sessions:
-        socketio.emit('session_started', {'instance_id': instance_id})
-        return
+    session_id = data.get('session_id')
     
-    if start_session(instance_id):
-        socketio.emit('session_started', {'instance_id': instance_id})
-    else:
-        error_msg = 'Failed to start session'
-        socketio.emit('session_error', {'error': error_msg, 'instance_id': instance_id})
-        if instance_id in sessions:
-            del sessions[instance_id]
+    if not instance_id or not session_id:
+        emit('session_error', {'error': 'Invalid instance or session ID'})
+        return
+
+    try:
+        session = SSMSession(instance_id, session_id)
+        if session.start_session():
+            sessions[session_id] = session
+            emit('session_started', {
+                'instance_id': instance_id,
+                'session_id': session_id
+            })
+        else:
+            emit('session_error', {
+                'instance_id': instance_id,
+                'session_id': session_id,
+                'error': 'Failed to start session'
+            })
+    except Exception as e:
+        emit('session_error', {
+            'instance_id': instance_id,
+            'session_id': session_id,
+            'error': str(e)
+        })
 
 @socketio.on('terminal_input')
 def handle_terminal_input(data):
-    instance_id = data.get('instance_id')
+    session_id = data.get('session_id')
     input_data = data.get('input')
     
-    if not instance_id or not input_data:
-        print("Missing instance_id or input data")
-        return
-    
-    if instance_id not in sessions:
-        print(f"No session found for instance {instance_id}")
+    if not session_id or not input_data:
         return
         
-    session = sessions[instance_id]
-    session.write_input(input_data)
+    session = sessions.get(session_id)
+    if session:
+        session.write_input(input_data)
+
+@socketio.on('terminal_interrupt')
+def handle_terminal_interrupt(data):
+    session_id = data.get('session_id')
+    if session_id in sessions:
+        session = sessions[session_id]
+        # Send Ctrl+C signal to the process group
+        if session.process:
+            try:
+                os.killpg(os.getpgid(session.process.pid), signal.SIGINT)
+            except ProcessLookupError:
+                pass
 
 @socketio.on('terminal_resize')
 def handle_terminal_resize(data):
-    instance_id = data.get('instance_id')
-    cols = data.get('cols')
+    session_id = data.get('session_id')
     rows = data.get('rows')
+    cols = data.get('cols')
     
-    if not instance_id or not cols or not rows:
+    if not all([session_id, rows, cols]):
         return
         
-    if instance_id not in sessions:
-        return
-        
-    session = sessions[instance_id]
-    session.resize_terminal(rows, cols)
+    session = sessions.get(session_id)
+    if session:
+        session.resize_terminal(rows, cols)
+
+@socketio.on('close_session')
+def handle_close_session(data):
+    session_id = data.get('session_id')
+    if session_id in sessions:
+        session = sessions[session_id]
+        session.close()
+        del sessions[session_id]
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
