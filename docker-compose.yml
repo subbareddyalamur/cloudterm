@@ -1,13 +1,66 @@
+# =============================================================================
+# CloudTerm - Modern AWS EC2 Terminal with Auto-Discovery
+# Docker Compose Configuration
+# =============================================================================
+
 services:
-  web:
-    build: .
+  cloudterm:
+    container_name: cloudterm-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cloudterm:latest
     ports:
-      - "8080:5000"
+      - "5000:5000"  # Application port
     volumes:
-      - ~/.aws:/home/appuser/.aws:ro  # Mount AWS credentials to appuser home
-      - ./instances_list.yaml:/app/instances_list.yaml:ro  # Mount instances configuration
+      # Mount AWS credentials (read-only for security)
+      - ~/.aws:/home/appuser/.aws:ro
+      # Mount instances configuration
+      - ./instances_list.yaml:/app/instances_list.yaml:rw
     environment:
+      # Application settings
       - FLASK_APP=app.py
       - FLASK_ENV=production
       - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PORT=5000
+      
+      # Auto-scan configuration
+      - TAG1=Application              # Root level AWS tag for grouping
+      - TAG2=Environment              # Branch level AWS tag for grouping
+ 
+    # Resource limits for production use
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Restart policy
     restart: unless-stopped
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =============================================================================
+# Networks (optional - for multi-service setups)
+# =============================================================================
+networks:
+  default:
+    name: cloudterm-network
+    driver: bridge

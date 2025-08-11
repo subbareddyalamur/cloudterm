@@ -5,6 +5,7 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 512'><path fill='%234d9fff' d='M537.6 226.6c4.1-10.7 6.4-22.4 6.4-34.6 0-53-43-96-96-96-19.7 0-38.1 6-53.3 16.2C367 64.2 315.3 32 256 32c-88.4 0-160 71.6-160 160 0 2.7.1 5.4.2 8.1C40.2 219.8 0 273.2 0 336c0 79.5 64.5 144 144 144h368c70.7 0 128-57.3 128-128 0-61.9-44-113.6-102.4-125.4zM300 376c0 4.4-3.6 8-8 8h-84c-4.4 0-8-3.6-8-8v-32c0-4.4 3.6-8 8-8h84c4.4 0 8 3.6 8 8v32zm0-96c0 4.4-3.6 8-8 8h-84c-4.4 0-8-3.6-8-8v-32c0-4.4 3.6-8 8-8h84c4.4 0 8 3.6 8 8v32zm128 96c0 4.4-3.6 8-8 8h-84c-4.4 0-8-3.6-8-8v-32c0-4.4 3.6-8 8-8h84c4.4 0 8 3.6 8 8v32z'/></svg>">
     <link rel="stylesheet" href="{{ url_for('static', filename='xterm/css/xterm.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         body {
             margin: 0;
@@ -75,6 +76,90 @@
             padding: 20px;
             flex-shrink: 0;
             position: relative;
+        }
+        .button-group {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 8px;
+        }
+        .scan-button {
+            flex: 1;
+            padding: 10px 12px;
+            background: linear-gradient(135deg, #238636, #2ea043);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        .search-container {
+            margin-bottom: 20px;
+        }
+        .search-input {
+            width: 100%;
+            padding: 10px 12px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+        .search-input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.1);
+        }
+        .search-input::placeholder {
+            color: #8b949e;
+        }
+        .scan-button:hover {
+            background: linear-gradient(135deg, #2ea043, #238636);
+            transform: translateY(-1px);
+        }
+        .scan-button:active {
+            transform: translateY(0);
+        }
+        .scan-button:disabled {
+            background: #30363d;
+            color: #8b949e;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .scan-button .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ffffff40;
+            border-top: 2px solid #ffffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background-color: #21262d;
+            border-radius: 4px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #238636, #2ea043);
+            border-radius: 4px;
+            transition: width 0.3s ease-in-out;
         }
         .resizer {
             width: 8px;
@@ -210,6 +295,42 @@
             color: #8b949e;
             font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
         }
+        .instance-state {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        .instance-state.running {
+            background-color: #2ea043;
+            box-shadow: 0 0 4px rgba(46, 160, 67, 0.5);
+        }
+        .instance-state.stopped {
+            background-color: #f85149;
+            box-shadow: 0 0 4px rgba(248, 81, 73, 0.5);
+        }
+        .instance-state.pending,
+        .instance-state.stopping,
+        .instance-state.starting {
+            background-color: #d29922;
+            box-shadow: 0 0 4px rgba(210, 153, 34, 0.5);
+        }
+        .instance-state.unknown {
+            background-color: #8b949e;
+            box-shadow: 0 0 4px rgba(139, 148, 158, 0.5);
+        }
+        .platform-icon {
+            margin-right: 6px;
+            color: #8b949e;
+            font-size: 12px;
+        }
+        .platform-icon.windows {
+            color: #0078d4;
+        }
+        .platform-icon.linux {
+            color: #f0652a;
+        }
         .env-label {
             display: flex;
             align-items: center;
@@ -243,7 +364,16 @@
     </header>
     <div class="container">
         <div id="sidebar">
-            <div class="tree-view" id="instances-tree"></div>
+            <div class="button-group">
+                <button id="scan-button" class="scan-button">
+                    <i class="fas fa-sync-alt"></i>
+                    <span>Scan Instances</span>
+                </button>
+            </div>
+            <div class="search-container">
+                <input type="text" id="search-input" class="search-input" placeholder="Search instances by name, ID, or tags...">
+            </div>
+            <div id="instances-tree"></div>
         </div>
         <div class="resizer" id="dragMe"></div>
         <div class="main-content">
@@ -292,7 +422,7 @@
         });
         
         // Tree view functionality
-        function createTreeItem(item) {
+        function createTreeItem(item, searchTerm = '') {
             const div = document.createElement('div');
             div.className = 'tree-item';
             
@@ -300,6 +430,98 @@
             content.className = 'tree-item-content';
             
             switch(item.type) {
+                case 'account':
+                    const accountToggle = document.createElement('span');
+                    accountToggle.className = 'tree-toggle';
+                    accountToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                    content.appendChild(accountToggle);
+                    
+                    const accountIcon = document.createElement('span');
+                    accountIcon.className = 'tree-icon account-icon';
+                    accountIcon.innerHTML = '<i class="fas fa-cloud"></i>';
+                    content.appendChild(accountIcon);
+                    
+                    const accountLabel = document.createElement('span');
+                    accountLabel.textContent = item.name;
+                    accountLabel.style.fontWeight = 'bold';
+                    accountLabel.style.color = '#58a6ff';
+                    content.appendChild(accountLabel);
+                    
+                    const regionContainer = document.createElement('div');
+                    regionContainer.className = 'tree-children';
+                    item.regions.forEach(region => {
+                        regionContainer.appendChild(createTreeItem(region, searchTerm));
+                    });
+                    
+                    div.appendChild(content);
+                    div.appendChild(regionContainer);
+                    
+                    // Auto-expand if search term is provided and there are matches
+                    const accountShouldExpand = searchTerm && searchTerm.length > 0;
+                    if (accountShouldExpand) {
+                        accountToggle.innerHTML = '<i class="fas fa-chevron-down"></i>';
+                        regionContainer.style.display = 'block';
+                    } else {
+                        accountToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                        regionContainer.style.display = 'none';
+                    }
+                    
+                    accountToggle.onclick = (e) => {
+                        e.stopPropagation();
+                        const isExpanded = accountToggle.querySelector('i').classList.contains('fa-chevron-down');
+                        accountToggle.innerHTML = isExpanded ? 
+                            '<i class="fas fa-chevron-right"></i>' : 
+                            '<i class="fas fa-chevron-down"></i>';
+                        regionContainer.style.display = isExpanded ? 'none' : 'block';
+                    };
+                    break;
+                    
+                case 'region':
+                    const regionToggle = document.createElement('span');
+                    regionToggle.className = 'tree-toggle';
+                    regionToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                    content.appendChild(regionToggle);
+                    
+                    const regionIcon = document.createElement('span');
+                    regionIcon.className = 'tree-icon region-icon';
+                    regionIcon.innerHTML = '<i class="fas fa-globe-americas"></i>';
+                    content.appendChild(regionIcon);
+                    
+                    const regionLabel = document.createElement('span');
+                    regionLabel.textContent = item.name;
+                    regionLabel.style.fontWeight = '500';
+                    regionLabel.style.color = '#f0883e';
+                    content.appendChild(regionLabel);
+                    
+                    const customerContainer = document.createElement('div');
+                    customerContainer.className = 'tree-children';
+                    item.customers.forEach(customer => {
+                        customerContainer.appendChild(createTreeItem(customer, searchTerm));
+                    });
+                    
+                    div.appendChild(content);
+                    div.appendChild(customerContainer);
+                    
+                    // Auto-expand if search term is provided and there are matches
+                    const regionShouldExpand = searchTerm && searchTerm.length > 0;
+                    if (regionShouldExpand) {
+                        regionToggle.innerHTML = '<i class="fas fa-chevron-down"></i>';
+                        customerContainer.style.display = 'block';
+                    } else {
+                        regionToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                        customerContainer.style.display = 'none';
+                    }
+                    
+                    regionToggle.onclick = (e) => {
+                        e.stopPropagation();
+                        const isExpanded = regionToggle.querySelector('i').classList.contains('fa-chevron-down');
+                        regionToggle.innerHTML = isExpanded ? 
+                            '<i class="fas fa-chevron-right"></i>' : 
+                            '<i class="fas fa-chevron-down"></i>';
+                        customerContainer.style.display = isExpanded ? 'none' : 'block';
+                    };
+                    break;
+                    
                 case 'customer':
                     const toggle = document.createElement('span');
                     toggle.className = 'tree-toggle';
@@ -318,11 +540,21 @@
                     const envContainer = document.createElement('div');
                     envContainer.className = 'tree-children';
                     item.environments.forEach(env => {
-                        envContainer.appendChild(createTreeItem(env));
+                        envContainer.appendChild(createTreeItem(env, searchTerm));
                     });
                     
                     div.appendChild(content);
                     div.appendChild(envContainer);
+                    
+                    // Auto-expand if search term is provided and there are matches
+                    const customerShouldExpand = searchTerm && searchTerm.length > 0;
+                    if (customerShouldExpand) {
+                        toggle.innerHTML = '<i class="fas fa-chevron-down"></i>';
+                        envContainer.style.display = 'block';
+                    } else {
+                        toggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                        envContainer.style.display = 'none';
+                    }
                     
                     toggle.onclick = (e) => {
                         e.stopPropagation();
@@ -356,11 +588,21 @@
                     const instanceContainer = document.createElement('div');
                     instanceContainer.className = 'tree-children';
                     item.instances.forEach(instance => {
-                        instanceContainer.appendChild(createTreeItem(instance));
+                        instanceContainer.appendChild(createTreeItem(instance, searchTerm));
                     });
                     
                     div.appendChild(content);
                     div.appendChild(instanceContainer);
+                    
+                    // Auto-expand if search term is provided and there are matches
+                    const envShouldExpand = searchTerm && searchTerm.length > 0;
+                    if (envShouldExpand) {
+                        envToggle.innerHTML = '<i class="fas fa-chevron-down"></i>';
+                        instanceContainer.style.display = 'block';
+                    } else {
+                        envToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                        instanceContainer.style.display = 'none';
+                    }
                     
                     envToggle.onclick = (e) => {
                         e.stopPropagation();
@@ -373,10 +615,17 @@
                     break;
                     
                 case 'instance':
-                    const instanceIcon = document.createElement('span');
-                    instanceIcon.className = 'tree-icon instance-icon';
-                    instanceIcon.innerHTML = '<i class="fas fa-terminal"></i>';
-                    content.appendChild(instanceIcon);
+                    // Instance state indicator
+                    const stateIndicator = document.createElement('div');
+                    stateIndicator.className = `instance-state ${item.state || 'running'}`;
+                    content.appendChild(stateIndicator);
+                    
+                    // Platform icon
+                    const platformIcon = document.createElement('span');
+                    platformIcon.className = `platform-icon ${item.platform || 'linux'}`;
+                    const iconClass = (item.platform === 'windows') ? 'fab fa-windows' : 'fab fa-linux';
+                    platformIcon.innerHTML = `<i class="${iconClass}"></i>`;
+                    content.appendChild(platformIcon);
                     
                     const instanceContent = document.createElement('div');
                     instanceContent.className = 'instance-content';
@@ -406,22 +655,396 @@
             return div;
         }
 
-        // Load and render instances
-        fetch('/instances')
-            .then(response => response.json())
-            .then(data => {
-                console.log('Loaded instances:', data);
-                const treeContainer = document.getElementById('instances-tree');
-                treeContainer.innerHTML = '';
-                data.forEach(customer => {
-                    treeContainer.appendChild(createTreeItem(customer));
+        // Function to auto-scan instances on page load
+        function autoScanInstances() {
+            console.log('Checking for cached scan results...');
+            const treeContainer = document.getElementById('instances-tree');
+            treeContainer.innerHTML = `
+                <div id="scan-status-container" style="padding: 20px; color: #8b949e;">
+                    <div style="text-align: center; margin-bottom: 15px;">
+                        <i class="fas fa-sync-alt fa-spin"></i> Loading AWS instances...
+                    </div>
+                </div>
+            `;
+            
+            // First check if we have cached data
+            fetch('/scan-status')
+                .then(response => response.json())
+                .then(status => {
+                    console.log('Scan cache status:', status);
+                    
+                    if (status.has_cache) {
+                        // We have cached data, use it
+                        const cacheMinutes = Math.floor(status.cache_age / 60);
+                        console.log(`Using cached scan results from ${cacheMinutes} minutes ago`);
+                        
+                        // Show loading message with cache info
+                        const statusContainer = document.querySelector('#scan-status-container > div:first-child');
+                        statusContainer.innerHTML = `
+                            <i class="fas fa-sync-alt fa-spin"></i> Loading cached instances from ${cacheMinutes} minutes ago...
+                            <div style="margin-top: 10px; font-size: 12px;">
+                                <button id="force-scan-button" class="scan-button" style="padding: 5px 10px; font-size: 12px;">
+                                    <i class="fas fa-sync-alt"></i> Force Fresh Scan
+                                </button>
+                            </div>
+                        `;
+                        
+                        // Load cached data
+                        return fetch('/scan-instances')
+                            .then(response => response.json())
+                            .then(data => {
+                                console.log('Loaded cached instances:', data);
+                                if (data.error) {
+                                    throw new Error(data.error);
+                                }
+                                renderInstanceTree(data);
+                                
+                                // Add event listener to force scan button
+                                document.getElementById('force-scan-button').addEventListener('click', forceScan);
+                            });
+                    } else {
+                        // No cache, perform a fresh scan
+                        return performFreshScan();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking scan cache:', error);
+                    // Fallback to static instances if scan fails
+                    console.log('Falling back to static instances...');
+                    loadStaticInstancesAsFallback();
                 });
-            })
-            .catch(error => {
-                console.error('Error loading instances:', error);
-                const treeContainer = document.getElementById('instances-tree');
-                treeContainer.innerHTML = '<div class="error">Error loading instances</div>';
+        }
+        
+        // Function to force a fresh scan
+        function forceScan() {
+            console.log('Forcing fresh scan...');
+            performFreshScan();
+        }
+        
+        // Function to perform a fresh scan
+        function performFreshScan() {
+            console.log('Performing fresh scan...');
+            const treeContainer = document.getElementById('instances-tree');
+            treeContainer.innerHTML = `
+                <div id="scan-status-container" style="padding: 20px; color: #8b949e;">
+                    <div style="text-align: center; margin-bottom: 15px;">
+                        <i class="fas fa-sync-alt fa-spin"></i> Scanning AWS instances...
+                    </div>
+                    <div id="scan-progress" style="margin-bottom: 10px;">
+                        <div>Profiles: <span id="scan-profiles">0</span></div>
+                        <div>Regions: <span id="scan-regions">0</span></div>
+                        <div>Progress: <span id="scan-progress-count">0</span>/<span id="scan-total-count">0</span></div>
+                        <div>Instances found: <span id="scan-instances-count">0</span></div>
+                    </div>
+                    <div id="scan-results" style="max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;"></div>
+                </div>
+            `;
+            
+            return fetch('/scan-instances?force=true')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Fresh scan completed:', data);
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    renderInstanceTree(data);
+                })
+                .catch(error => {
+                    console.error('Error performing fresh scan:', error);
+                    // Fallback to static instances if scan fails
+                    console.log('Falling back to static instances...');
+                    loadStaticInstancesAsFallback();
+                });
+        }
+        
+        // Function to load static instances as fallback
+        function loadStaticInstancesAsFallback() {
+            fetch('/instances')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Loaded static instances as fallback:', data);
+                    renderInstanceTree(data);
+                })
+                .catch(error => {
+                    console.error('Error loading static instances:', error);
+                    const treeContainer = document.getElementById('instances-tree');
+                    treeContainer.innerHTML = '<div class="error">Error loading instances: ' + error.message + '</div>';
+                });
+        }
+        
+        // Function to scan instances from AWS
+        function scanInstances() {
+            const scanButton = document.getElementById('scan-button');
+            const buttonText = scanButton.querySelector('span');
+            const buttonIcon = scanButton.querySelector('i');
+            
+            // Disable button and show loading state
+            scanButton.disabled = true;
+            buttonIcon.className = 'spinner';
+            buttonText.textContent = 'Scanning...';
+            
+            // Always force a fresh scan when the scan button is clicked
+            console.log('Scan button clicked - performing fresh scan with progress updates...');
+            performFreshScan()
+                .then(() => {
+                    console.log('Fresh scan completed from scan button');
+                })
+                .catch(error => {
+                    console.error('Error scanning instances:', error);
+                    const treeContainer = document.getElementById('instances-tree');
+                    treeContainer.innerHTML = `<div class="error">Error scanning instances: ${error.message}</div>`;
+                })
+                .finally(() => {
+                    // Re-enable scan button
+                    scanButton.disabled = false;
+                    buttonIcon.className = 'fas fa-sync-alt';
+                    buttonText.textContent = 'Scan Instances';
+                });
+        }
+        
+
+        
+        // Store the current data for filtering
+        let currentInstanceData = [];
+        
+        // Function to render the instance tree
+        function renderInstanceTree(data, searchTerm = '') {
+            const treeContainer = document.getElementById('instances-tree');
+            treeContainer.innerHTML = '';
+            
+            // Store the data for search functionality
+            currentInstanceData = data;
+            
+            // Filter data if search term is provided
+            const filteredData = searchTerm ? filterInstances(data, searchTerm) : data;
+            
+            if (filteredData.length === 0 && searchTerm) {
+                treeContainer.innerHTML = '<div class="error">No instances found matching "' + searchTerm + '"</div>';
+                return;
+            }
+            
+            filteredData.forEach(customer => {
+                const customerElement = createTreeItem(customer, searchTerm);
+                treeContainer.appendChild(customerElement);
             });
+        }
+        
+        // Function to filter instances based on search term
+        function filterInstances(data, searchTerm) {
+            const term = searchTerm.toLowerCase();
+            const filtered = [];
+            
+            data.forEach(item => {
+                if (item.type === 'account') {
+                    // Handle account-level filtering with regions
+                    const accountMatches = item.name.toLowerCase().includes(term);
+                    const filteredRegions = [];
+                    
+                    item.regions.forEach(region => {
+                        const regionMatches = region.name.toLowerCase().includes(term);
+                        const filteredCustomers = [];
+                        
+                        region.customers.forEach(customer => {
+                            const customerMatches = customer.name.toLowerCase().includes(term);
+                            const filteredEnvironments = [];
+                            
+                            customer.environments.forEach(env => {
+                                const envMatches = env.name.toLowerCase().includes(term);
+                                const filteredInstances = env.instances.filter(instance => {
+                                    return instance.name.toLowerCase().includes(term) ||
+                                           instance.id.toLowerCase().includes(term);
+                                });
+                                
+                                // Include environment if it matches, has matching instances, or any parent matches
+                                if (envMatches || filteredInstances.length > 0 || customerMatches || regionMatches || accountMatches) {
+                                    filteredEnvironments.push({
+                                        ...env,
+                                        instances: accountMatches || regionMatches || customerMatches || envMatches ? env.instances : filteredInstances
+                                    });
+                                }
+                            });
+                            
+                            // Include customer if it matches, has matching environments, or any parent matches
+                            if (customerMatches || filteredEnvironments.length > 0 || regionMatches || accountMatches) {
+                                filteredCustomers.push({
+                                    ...customer,
+                                    environments: filteredEnvironments
+                                });
+                            }
+                        });
+                        
+                        // Include region if it matches, has matching customers, or account matches
+                        if (regionMatches || filteredCustomers.length > 0 || accountMatches) {
+                            filteredRegions.push({
+                                ...region,
+                                customers: filteredCustomers
+                            });
+                        }
+                    });
+                    
+                    // Include account if it matches or has matching regions
+                    if (accountMatches || filteredRegions.length > 0) {
+                        filtered.push({
+                            ...item,
+                            regions: filteredRegions
+                        });
+                    }
+                } else {
+                    // Handle legacy customer-level structure (for static YAML)
+                    const customerMatches = item.name.toLowerCase().includes(term);
+                    const filteredEnvironments = [];
+                    
+                    item.environments.forEach(env => {
+                        const envMatches = env.name.toLowerCase().includes(term);
+                        const filteredInstances = env.instances.filter(instance => {
+                            return instance.name.toLowerCase().includes(term) ||
+                                   instance.id.toLowerCase().includes(term);
+                        });
+                        
+                        // Include environment if it matches, has matching instances, or customer matches
+                        if (envMatches || filteredInstances.length > 0 || customerMatches) {
+                            filteredEnvironments.push({
+                                ...env,
+                                instances: customerMatches || envMatches ? env.instances : filteredInstances
+                            });
+                        }
+                    });
+                    
+                    // Include customer if it matches or has matching environments
+                    if (customerMatches || filteredEnvironments.length > 0) {
+                        filtered.push({
+                            ...item,
+                            environments: filteredEnvironments
+                        });
+                    }
+                }
+            });
+            
+            return filtered;
+        }
+        
+        // Add event listeners for buttons
+        document.getElementById('scan-button').addEventListener('click', scanInstances);
+        
+        // Add search functionality
+        document.getElementById('search-input').addEventListener('input', function(e) {
+            const searchTerm = e.target.value;
+            renderInstanceTree(currentInstanceData, searchTerm);
+        });
+        
+        // Socket.IO connection and event handling for scan status updates
+        const socket = io();
+        
+        socket.on('scan_status', function(data) {
+            console.log('Received scan status update:', data);
+            
+            // Update progress bar and counts
+            const progressContainer = document.getElementById('scan-progress');
+            if (progressContainer) {
+                const progressPercent = (data.scanned_combinations / data.total_combinations) * 100;
+                progressContainer.innerHTML = `
+                    <div>Progress: ${data.scanned_combinations} of ${data.total_combinations} profile-region combinations scanned (${progressPercent.toFixed(0)}%)</div>
+                    <div>Profiles: ${data.total_profiles} | Regions: ${data.total_regions} | Instances found: ${data.total_instances}</div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: ${progressPercent}%"></div>
+                    </div>
+                `;
+            }
+            
+            // Update detailed results
+            const resultsContainer = document.getElementById('scan-results');
+            if (resultsContainer) {
+                // Group results by profile
+                const profileResults = {};
+                
+                data.results.forEach(result => {
+                    if (!profileResults[result.profile]) {
+                        profileResults[result.profile] = [];
+                    }
+                    profileResults[result.profile].push(result);
+                });
+                
+                // Clear previous results
+                resultsContainer.innerHTML = '';
+                
+                // Create profile sections with results
+                for (const profile in profileResults) {
+                    const results = profileResults[profile];
+                    
+                    // Create profile header
+                    const profileHeader = document.createElement('div');
+                    profileHeader.style.marginBottom = '5px';
+                    profileHeader.textContent = `Profile: ${profile}`;
+                    resultsContainer.appendChild(profileHeader);
+                    
+                    // Create results table
+                    results.forEach(result => {
+                        const row = document.createElement('div');
+                        row.style.display = 'flex';
+                        row.style.marginBottom = '2px';
+                        
+                        // Status icon
+                        const statusIcon = document.createElement('span');
+                        statusIcon.style.marginRight = '5px';
+                        statusIcon.style.width = '15px';
+                        
+                        // Region name
+                        const regionName = document.createElement('span');
+                        regionName.style.flex = '1';
+                        regionName.textContent = result.region;
+                        
+                        // Status/count
+                        const statusText = document.createElement('span');
+                        statusText.style.marginLeft = '10px';
+                        
+                        // Set status-specific styles and content
+                        switch(result.status) {
+                            case 'scanning':
+                                statusIcon.innerHTML = '🔄';
+                                statusText.textContent = 'Scanning...';
+                                break;
+                            case 'success':
+                                statusIcon.innerHTML = '✅';
+                                statusText.textContent = `${result.instance_count} instances`;
+                                statusText.style.color = '#4caf50';
+                                break;
+                            case 'empty':
+                                statusIcon.innerHTML = '⚪';
+                                statusText.textContent = 'No instances';
+                                statusText.style.color = '#9e9e9e';
+                                break;
+                            case 'access_denied':
+                                statusIcon.innerHTML = '🔒';
+                                statusText.textContent = 'Access denied';
+                                statusText.style.color = '#ff9800';
+                                break;
+                            case 'error':
+                                statusIcon.innerHTML = '❌';
+                                statusText.textContent = 'Error';
+                                statusText.style.color = '#f44336';
+                                break;
+                        }
+                        
+                        row.appendChild(statusIcon);
+                        row.appendChild(regionName);
+                        row.appendChild(statusText);
+                        resultsContainer.appendChild(row);
+                    });
+                }
+            }
+            
+            // Update final status when scan completes
+            if (data.status === 'completed') {
+                const statusContainer = document.querySelector('#scan-status-container > div:first-child');
+                statusContainer.innerHTML = '<i class="fas fa-check-circle"></i> Scan completed';
+            } else if (data.status === 'error') {
+                const statusContainer = document.querySelector('#scan-status-container > div:first-child');
+                statusContainer.innerHTML = '<i class="fas fa-exclamation-circle"></i> Scan error: ' + data.error;
+            }
+        });
+        
+        // Auto-scan instances on page load
+        autoScanInstances();
     </script>
 </body>
 </html>
