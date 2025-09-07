@@ -10,6 +10,7 @@ import fcntl
 import threading
 import subprocess
 import pty
+import configparser
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 import yaml
@@ -308,8 +309,8 @@ def get_instances():
                                                 'name': instance['name'],
                                                 'id': instance['instance_id'],
                                                 'type': 'instance',
-                                                'state': 'unknown',  # Default state for cached data
-                                                'platform': 'linux'  # Default platform for cached data
+                                                'state': instance.get('state', 'unknown'),  # Use state from YAML if available
+                                                'platform': instance.get('platform', 'linux')  # Use platform from YAML if available
                                             }
                                             env_node['instances'].append(instance_node)
                                     
@@ -505,11 +506,38 @@ def get_fallback_regions():
 
 def get_aws_profiles():
     """
-    Get known AWS profiles (hardcoded based on your setup)
+    Get AWS profiles from ~/.aws/credentials file
     """
-    # Use the known profiles from your setup
-    profiles = ['dev', 'prod']
-    print(f"Using AWS profiles: {profiles}")
+    profiles = []
+    credentials_path = os.path.expanduser('~/.aws/credentials')
+    
+    try:
+        if os.path.exists(credentials_path):
+            config = configparser.ConfigParser()
+            config.read(credentials_path)
+            
+            # Get all section names (profiles)
+            profiles = list(config.sections())
+            
+            # Filter out any empty sections
+            profiles = [profile for profile in profiles if profile.strip()]
+            
+            if profiles:
+                print(f"Found AWS profiles from {credentials_path}: {profiles}")
+            else:
+                print(f"No profiles found in {credentials_path}")
+                # Fallback to default profile if credentials file exists but has no sections
+                profiles = ['default']
+        else:
+            print(f"AWS credentials file not found at {credentials_path}")
+            # Fallback to default profile
+            profiles = ['default']
+            
+    except Exception as e:
+        print(f"Error reading AWS credentials file: {e}")
+        # Fallback to default profile on any error
+        profiles = ['default']
+    
     return profiles
 
 def get_aws_profiles_and_regions():
@@ -710,7 +738,9 @@ def convert_instances_to_yaml_format(instances, tag1_name, tag2_name):
                             'name': instance['name'],
                             'instance_id': instance['instance_id'],
                             'region': instance['region'],
-                            'aws_profile': instance['aws_profile']
+                            'aws_profile': instance['aws_profile'],
+                            'state': instance['state'],
+                            'platform': instance['platform']
                         })
     
     return yaml_data
@@ -797,6 +827,362 @@ def handle_terminal_resize(data):
     session = sessions.get(session_id)
     if session:
         session.resize_terminal(rows, cols)
+
+@app.route('/start-rdp-session', methods=['POST'])
+def start_rdp_session():
+    """
+    Start RDP port forwarding session for Windows instances
+    """
+    try:
+        data = request.get_json()
+        instance_id = data.get('instance_id')
+        instance_name = data.get('instance_name')
+        
+        if not instance_id:
+            return jsonify({'success': False, 'error': 'Instance ID is required'})
+        
+        # Get instance configuration
+        config = get_instance_config(instance_id)
+        if not config:
+            return jsonify({'success': False, 'error': f'No configuration found for instance {instance_id}'})
+        
+        aws_profile = config['aws_profile']
+        aws_region = config['region']
+        
+        # Check if instance is connected
+        if not check_instance_status(instance_id, aws_profile, aws_region):
+            return jsonify({'success': False, 'error': f'Instance {instance_id} is not connected to SSM'})
+        
+        # Find available local port
+        import socket
+        sock = socket.socket()
+        sock.bind(('', 0))
+        local_port = sock.getsockname()[1]
+        sock.close()
+        
+        # Start port forwarding using AWS CLI
+        import subprocess
+        import threading
+        
+        env = os.environ.copy()
+        env['AWS_PROFILE'] = aws_profile
+        env['AWS_DEFAULT_REGION'] = aws_region
+        
+        # Command to start port forwarding
+        cmd = [
+            'aws', 'ssm', 'start-session',
+            '--target', instance_id,
+            '--document-name', 'AWS-StartPortForwardingSession',
+            '--parameters', f'{{"portNumber":["3389"],"localPortNumber":["{local_port}"]}}'
+        ]
+        
+        print(f"Starting RDP port forwarding: {' '.join(cmd)}")
+        
+        # Start the port forwarding process
+        process = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        # Store the process for cleanup later
+        if not hasattr(app, 'rdp_sessions'):
+            app.rdp_sessions = {}
+        
+        app.rdp_sessions[instance_id] = {
+            'process': process,
+            'local_port': local_port,
+            'instance_name': instance_name
+        }
+        
+        # Give it a moment to establish
+        import time
+        time.sleep(2)
+        
+        # Check if process is still running
+        if process.poll() is None:
+            return jsonify({
+                'success': True,
+                'local_port': local_port,
+                'instance_id': instance_id,
+                'instance_name': instance_name
+            })
+        else:
+            stdout, stderr = process.communicate()
+            return jsonify({
+                'success': False,
+                'error': f'Port forwarding failed: {stderr or stdout}'
+            })
+            
+    except Exception as e:
+        print(f"Error starting RDP session: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/launch-rdp-client', methods=['POST'])
+def launch_rdp_client():
+    """
+    Launch specific RDP client chosen by user
+    """
+    try:
+        data = request.get_json()
+        local_port = data.get('local_port')
+        instance_name = data.get('instance_name', 'Windows Instance')
+        client_name = data.get('client_name')  # User's chosen client
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not local_port:
+            return jsonify({'success': False, 'error': 'Local port is required'})
+        
+        if not client_name:
+            return jsonify({'success': False, 'error': 'Client name is required'})
+        
+        import platform
+        import subprocess
+        
+        system = platform.system().lower()
+        rdp_connection = f"127.0.0.1:{local_port}"
+        
+        # Build client commands with optional credentials
+        def build_command(client_name, local_port, username=None, password=None):
+            base_commands = {
+                'darwin': {
+                    'MacFreeRDP': ['open', '-n', '-a', 'MacFreeRDP', '--args', '/cert:ignore', f'/v:127.0.0.1:{local_port}', '/w:1920', '/h:1080', f'/t:{instance_name}'],
+                    'Windows App': ['open', '-a', 'Windows App', '--args', f'rdp://127.0.0.1:{local_port}'],
+                },
+                'windows': {
+                    'Windows Remote Desktop': ['mstsc', f'/v:127.0.0.1:{local_port}']
+                },
+                'linux': {
+                    'FreeRDP (xfreerdp)': ['xfreerdp', f'/v:127.0.0.1:{local_port}', f'/cert:ignore', f'/title:{instance_name}'],
+                    'Remmina': ['remmina', '-c', f'rdp://127.0.0.1:{local_port}']
+                }
+            }
+            
+            command = base_commands[system][client_name].copy()
+            
+            # Add credentials for specific clients
+            if username and password:
+                if client_name == 'MacFreeRDP':
+                    command.extend([f'/u:{username}', f'/p:{password}'])
+                elif client_name in ['Windows Remote Desktop']:
+                    # mstsc doesn't support command line passwords for security
+                    pass
+                elif 'xfreerdp' in client_name:
+                    command.extend([f'/u:{username}', f'/p:{password}'])
+            
+            return command
+        
+        # Validate system and client
+        supported_clients = {
+            'darwin': ['MacFreeRDP', 'Windows App', 'Microsoft Remote Desktop', 'Royal TSX'],
+            'windows': ['Windows Remote Desktop'],
+            'linux': ['FreeRDP (xfreerdp)', 'Remmina']
+        }
+        
+        if system not in supported_clients:
+            return jsonify({'success': False, 'error': f'Unsupported operating system: {system}'})
+        
+        if client_name not in supported_clients[system]:
+            return jsonify({'success': False, 'error': f'Unknown client: {client_name}'})
+        
+        # Build command with credentials
+        command = build_command(client_name, local_port, username, password)
+        
+        try:
+            # Create masked command for logging and UI display
+            def mask_password_in_command(cmd_list):
+                masked_cmd = cmd_list.copy()
+                for i, arg in enumerate(masked_cmd):
+                    if arg.startswith('/p:') and len(arg) > 3:
+                        masked_cmd[i] = '/p:' + '*' * 8
+                return masked_cmd
+            
+            masked_command = mask_password_in_command(command)
+            masked_command_str = ' '.join(masked_command)
+            
+            print(f"Launching RDP client '{client_name}': {masked_command_str}")
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Give it a moment to start
+            import time
+            time.sleep(1)
+            
+            # Check if process started successfully
+            if process.poll() is None or process.returncode == 0:
+                return jsonify({
+                    'success': True,
+                    'client': client_name,
+                    'connection': rdp_connection,
+                    'command': masked_command_str
+                })
+            else:
+                stdout, stderr = process.communicate()
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to launch {client_name}: {stderr.decode() if stderr else "Unknown error"}'
+                })
+                
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Error launching {client_name}: {str(e)}'
+            })
+        
+    except Exception as e:
+        print(f"Error launching RDP client: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/detect-rdp-clients', methods=['GET'])
+def detect_rdp_clients():
+    """
+    Detect all available RDP clients on the system
+    """
+    try:
+        import platform
+        import subprocess
+        
+        system = platform.system().lower()
+        available_clients = []
+        
+        if system == 'darwin':  # macOS
+            # Define known RDP clients with their detection methods
+            known_clients = [
+                {
+                    'name': 'MacFreeRDP',
+                    'display_name': 'MacFreeRDP',
+                    'type': 'app',
+                    'icon': 'fas fa-desktop'
+                },
+                {
+                    'name': 'Windows App',
+                    'display_name': 'Windows App',
+                    'type': 'app',
+                    'icon': 'fab fa-microsoft'
+                },
+                {
+                    'name': 'Microsoft Remote Desktop',
+                    'display_name': 'Microsoft Remote Desktop',
+                    'type': 'app',
+                    'icon': 'fab fa-microsoft'
+                },
+                {
+                    'name': 'Royal TSX',
+                    'display_name': 'Royal TSX',
+                    'type': 'app',
+                    'icon': 'fas fa-crown'
+                }
+            ]
+            
+            # Check each known client (only apps for macOS)
+            for client in known_clients:
+                # Check if macOS app exists
+                result = subprocess.run([
+                    'mdfind', 
+                    f'kMDItemDisplayName == "{client["display_name"]}" && kMDItemKind == "Application"'
+                ], capture_output=True, text=True)
+                
+                if result.stdout.strip():
+                    client['available'] = True
+                    client['path'] = result.stdout.strip().split('\n')[0]
+                    available_clients.append(client)
+                else:
+                    # Try partial match for apps like "Windows App"
+                    result = subprocess.run([
+                        'mdfind', 
+                        f'kMDItemDisplayName == "*{client["display_name"]}*" && kMDItemKind == "Application"'
+                    ], capture_output=True, text=True)
+                    if result.stdout.strip():
+                        client['available'] = True
+                        client['path'] = result.stdout.strip().split('\n')[0]
+                        available_clients.append(client)
+        
+        elif system == 'windows':
+            # Windows RDP clients
+            known_clients = [
+                {
+                    'name': 'Windows Remote Desktop',
+                    'display_name': 'mstsc',
+                    'type': 'command',
+                    'icon': 'fab fa-windows'
+                }
+            ]
+            
+            for client in known_clients:
+                try:
+                    subprocess.run(['where', client['display_name']], check=True, capture_output=True)
+                    client['available'] = True
+                    available_clients.append(client)
+                except subprocess.CalledProcessError:
+                    pass
+        
+        elif system == 'linux':
+            # Linux RDP clients
+            known_clients = [
+                {
+                    'name': 'FreeRDP (xfreerdp)',
+                    'display_name': 'xfreerdp',
+                    'type': 'command',
+                    'icon': 'fas fa-desktop'
+                },
+                {
+                    'name': 'Remmina',
+                    'display_name': 'remmina',
+                    'type': 'command',
+                    'icon': 'fas fa-desktop'
+                }
+            ]
+            
+            for client in known_clients:
+                try:
+                    subprocess.run(['which', client['display_name']], check=True, capture_output=True)
+                    client['available'] = True
+                    available_clients.append(client)
+                except subprocess.CalledProcessError:
+                    pass
+        
+        return jsonify({
+            'system': system,
+            'available_clients': available_clients,
+            'total_found': len(available_clients)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/stop-rdp-session', methods=['POST'])
+def stop_rdp_session():
+    """
+    Stop RDP port forwarding session
+    """
+    try:
+        data = request.get_json()
+        instance_id = data.get('instance_id')
+        
+        if not instance_id:
+            return jsonify({'success': False, 'error': 'Instance ID is required'})
+        
+        if hasattr(app, 'rdp_sessions') and instance_id in app.rdp_sessions:
+            session = app.rdp_sessions[instance_id]
+            process = session['process']
+            
+            if process.poll() is None:  # Process is still running
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            
+            del app.rdp_sessions[instance_id]
+            return jsonify({'success': True, 'message': 'RDP session stopped'})
+        else:
+            return jsonify({'success': False, 'error': 'No active RDP session found'})
+            
+    except Exception as e:
+        print(f"Error stopping RDP session: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @socketio.on('close_session')
 def handle_close_session(data):

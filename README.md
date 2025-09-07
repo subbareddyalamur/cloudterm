@@ -2,7 +2,7 @@
 
 🚀 **A modern web-based terminal application that automatically discovers and organizes your AWS EC2 instances**
 
-CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manager Session Manager with intelligent 4-level hierarchical organization.
+CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manager Session Manager for Linux instances and RDP connections for Windows instances, with intelligent 4-level hierarchical organization.
 
 <img width="1683" height="1393" alt="image" src="https://github.com/user-attachments/assets/c9633efc-3c36-43b6-8443-d77e87115848" />
 
@@ -12,8 +12,9 @@ CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manage
 
 - **🔍 Dynamic Discovery**: Automatically scans AWS EC2 instances across multiple profiles and regions
 - **💾 Smart Caching**: Save discovered instances to YAML for fast terminal connections
-- **🏗️ 4-Level Hierarchy**: Organizes instances by AWS Account → Region → Application (TAG1) → Environment (TAG2)
+- **🏗️ 4-Level Hierarchy**: Organizes instances by AWS Account → Region → Customer (TAG1) → Environment (TAG2)
 - **🔐 Secure Access**: Uses AWS Systems Manager Session Manager for keyless, secure terminal connections
+- **🖥️ RDP Support**: Native RDP client integration for Windows instances (MacFreeRDP on macOS)
 - **🔍 Real-time Search**: Filter instances by name, ID, tags, or any metadata with auto-expansion
 - **📊 Visual Indicators**: Color-coded instance states (running, stopped, transitioning) and platform icons
 - **🐳 Container Ready**: Fully containerized with Docker and Docker Compose support
@@ -24,14 +25,15 @@ CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manage
 ### **Step 1: Scan & Auto-Save** 🔍💾
 - Click "Scan Instances" or wait for auto-scan on page load
 - Automatically discovers EC2 instances across all AWS profiles and regions
-- Organizes instances in a 4-level hierarchy (Account → Region → Application → Environment)
+- Organizes instances in a 4-level hierarchy (Account → Region → Customer → Environment)
 - **Automatically saves** discovered instances to `instances_list.yaml` for terminal connections
 - Shows real-time instance status and metadata
 
 ### **Step 2: Connect** 🔗
-- Click any instance to open a secure terminal session
-- Uses AWS Systems Manager Session Manager
-- No SSH keys or open ports required
+- **Linux Instances**: Click any Linux instance to open a secure terminal session via AWS Systems Manager Session Manager
+- **Windows Instances**: Click any Windows instance to establish RDP connection with automatic port forwarding and launch RDP client MacFreeRDP (MacOS only tested)
+- No SSH keys or open ports required for terminal connections
+- RDP connections use secure tunneling through AWS Session Manager
 - Instance connection details are automatically available from the saved configuration
 
 ### 🔐 **Security & Reliability**
@@ -41,8 +43,9 @@ CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manage
 - **Docker Containerized**: Isolated and portable deployment
 
 ### 🌐 **Modern Interface**
-- **Web-Based Terminal**: XtermJS-powered terminal interface
-- **Multiple Sessions**: Concurrent terminal connections
+- **Web-Based Terminal**: XtermJS-powered terminal interface for Linux instances
+- **RDP Integration**: Native RDP client (MacFreeRDP on MacOS) launching for Windows instances
+- **Multiple Sessions**: Concurrent terminal and RDP connections
 - **Responsive Design**: Works on desktop and mobile
 - **Real-Time Updates**: Live instance status monitoring
 
@@ -51,14 +54,14 @@ CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manage
 ```
 ☁️ AWS Account: 123456789012
   🌍 Region: us-east-1
-    📁 Application (TAG1): ACME Corp
+    📁 Customer (TAG1): ACME Corp
       📁 Environment (TAG2): production
         🖥️ 🟢 Web Server 1 (i-1234567890abcdef0)
         🖥️ 🟢 Database Server (i-0987654321fedcba0)
       📁 Environment (TAG2): development  
         🖥️ 🔴 Dev Server (i-1111222233334444)
   🌍 Region: eu-west-1
-    📁 Application (TAG1): ACME Corp
+    📁 Customer (TAG1): ACME Corp
       📁 Environment (TAG2): production
         🖥️ 🟢 EU Web Server (i-5555666677778888)
 ```
@@ -72,6 +75,7 @@ Choose your preferred deployment method based on your environment and requiremen
 - AWS credentials configured
 - Python 3.11+ (for manual deployment)
 - Docker (for containerized deployment)
+- **MacFreeRDP** (for RDP connections on macOS)
 
 ### 🔧 Initial Setup
 
@@ -108,7 +112,7 @@ output = json
 #### 3. Configure Tag-Based Organization
 ```bash
 # Set environment variables for instance grouping
-export TAG1="Application"     # Root level tag (e.g., Application, Project, Team)
+export TAG1="Customer"     # Root level tag (e.g., Customer, Project, Team)
 export TAG2="Environment"  # Branch level tag (e.g., Environment, Stage)
 
 # Or use the provided script
@@ -132,7 +136,9 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Step 2: Install AWS Session Manager Plugin
+### Step 2: Install Required Components
+
+#### AWS Session Manager Plugin
 ```bash
 # macOS
 brew install --cask session-manager-plugin
@@ -145,10 +151,15 @@ sudo dpkg -i session-manager-plugin.deb
 # Download and install from: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
 ```
 
+#### RDP Client (macOS only)
+```bash
+Download from https://dist.scaleft.com/repos/macos/stable/all/macfreerdp/
+```
+
 ### Step 3: Run Application
 ```bash
 # Set environment variables
-export TAG1="Application"
+export TAG1="Customer"
 export TAG2="Environment"
 export PORT=5000
 
@@ -158,6 +169,15 @@ python3 app.py
 
 ### Step 4: Access Application
 Open your browser: **http://localhost:5000**
+
+#### Using RDP Connections (Windows Instances)
+1. Click on any Windows instance in the interface
+2. The application will automatically:
+   - Start AWS Session Manager port forwarding
+   - Display available RDP clients (MacFreeRDP on macOS)
+   - Show the connection command for reference
+3. Enter your Windows credentials (domain\username format)
+4. Click "Launch RDP Client" to open MacFreeRDP with the connection
 
 ---
 
@@ -182,7 +202,7 @@ docker run -d \
   -p 5000:5000 \
   -v ~/.aws:/home/appuser/.aws:ro \
   -v $(pwd)/instances_list.yaml:/app/instances_list.yaml:rw \
-  -e TAG1="Application" \
+  -e TAG1="Customer" \
   -e TAG2="Environment" \
   -e AWS_DEFAULT_REGION="us-east-1" \
   cloudterm:latest
@@ -220,7 +240,7 @@ docker logs -f cloudterm-app
 # Update the docker-compose.yml file with TAG1 and TAG2 values
   ...
   environment:
-    - TAG1="Application"
+    - TAG1="Customer"
     - TAG2="Environment"
   ...
 ```
@@ -282,7 +302,8 @@ Regardless of your chosen deployment method, CloudTerm will:
 **Next Steps:**
 - Tag your EC2 instances with `TAG1` and `TAG2` values
 - Use the search functionality to find instances quickly
-- Connect to instances securely through the web interface
+- Connect to Linux instances securely through the web terminal interface
+- Connect to Windows instances using RDP client (MacFreeRDP on MacOS) with automatic port forwarding
 
 ## ⚙️ Configuration
 
@@ -290,7 +311,7 @@ Regardless of your chosen deployment method, CloudTerm will:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TAG1` | `Application` | Root level AWS tag for grouping |
+| `TAG1` | `Customer` | Root level AWS tag for grouping |
 | `TAG2` | `Environment` | Branch level AWS tag for grouping |
 | `PORT` | `5000` | Application port |
 
@@ -302,7 +323,7 @@ For optimal organization, tag your EC2 instances:
 # Example instance tags
 Tags:
   Name: "Web Server 1"           # Display name
-  Application: "ACME Corp"          # TAG1 - Root grouping
+  Customer: "ACME Corp"          # TAG1 - Root grouping
   Environment: "production"      # TAG2 - Branch grouping
   Project: "WebApp"              # Optional additional tags
 ```
@@ -314,7 +335,7 @@ Powerful search functionality across all hierarchy levels:
 ### Search Capabilities
 - 🏦 **Account IDs**: "123456789012", "prod-account"
 - 🌍 **Regions**: "us-east-1", "eu-west-1", "ap-south-1"
-- 📁 **Applications**: "ACME Corp", "ProjectX", "TeamAlpha"
+- 📁 **Customers**: "ACME Corp", "ProjectX", "TeamAlpha"
 - 🎯 **Environments**: "production", "dev", "staging"
 - 🖥️ **Instance Names**: "web-server", "database", "api"
 - 🏷️ **Instance IDs**: "i-1234567890abcdef0"
@@ -331,7 +352,7 @@ Powerful search functionality across all hierarchy levels:
 
 ```bash
 # Use different tag names for organization
-export TAG1="Project"       # Group by project instead of Application
+export TAG1="Project"       # Group by project instead of customer
 export TAG2="Stage"         # Group by stage instead of environment
 
 # Example: Project -> Stage hierarchy
@@ -433,7 +454,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Run with auto-scan enabled
-export TAG1="Application"
+export TAG1="Customer"
 export TAG2="Environment"
 python app.py
 ```
@@ -443,14 +464,18 @@ python app.py
 - `GET /scan-instances` - Auto-scan AWS instances
 - `POST /save-scanned-instances` - Save instances to YAML
 - `POST /connect/<instance_id>` - Start terminal session
+- `POST /start-rdp-session` - Start RDP port forwarding for Windows instances
+- `POST /launch-rdp-client` - Launch native RDP client (MacFreeRDP on macOS)
+- `GET /detect-rdp-clients` - Detect available RDP clients on the system
 
 ## 🔒 Security
 
-- ✅ **No open ports** - Uses AWS Session Manager
+- ✅ **No open ports** - Uses AWS Session Manager for both terminal and RDP connections
 - ✅ **Credential isolation** - AWS profiles from host system
 - ✅ **Non-root container** - Runs as unprivileged user
-- ✅ **Secure sessions** - Encrypted terminal connections
+- ✅ **Secure sessions** - Encrypted terminal and RDP connections through AWS tunneling
 - ✅ **IAM-based access** - Leverages AWS permissions
+- ✅ **RDP Security** - RDP connections tunneled through AWS Session Manager, no direct RDP exposure
 
 ## 🤝 Contributing
 
