@@ -56,14 +56,14 @@ CloudTerm provides secure access to AWS EC2 instances through AWS Systems Manage
   🌍 Region: us-east-1
     📁 Customer (TAG1): ACME Corp
       📁 Environment (TAG2): production
-        🖥️ 🟢 Web Server 1 (i-1234567890abcdef0)
-        🖥️ 🟢 Database Server (i-0987654321fedcba0)
+        🟢 🐧 Web Server 1 (i-1234567890abcdef0)
+        🟢 🐧 Database Server (i-0987654321fedcba0)
       📁 Environment (TAG2): development  
-        🖥️ 🔴 Dev Server (i-1111222233334444)
+        🔴 🪟 Dev Server (i-1111222233334444)
   🌍 Region: eu-west-1
     📁 Customer (TAG1): ACME Corp
       📁 Environment (TAG2): production
-        🖥️ 🟢 EU Web Server (i-5555666677778888)
+        🟢 🐧 EU Web Server (i-5555666677778888)
 ```
 
 ## 🚀 Deployment Guide
@@ -76,6 +76,10 @@ Choose your preferred deployment method based on your environment and requiremen
 - Python 3.11+ (for manual deployment)
 - Docker (for containerized deployment)
 - **MacFreeRDP** (for RDP connections on macOS)
+
+> **⚠️ Important for RDP Usage**: To use RDP functionality with Windows instances, you must run CloudTerm locally on the host machine (not in Docker). This is because:
+> - The host cannot access dynamic ports opened in the container by AWS SSM
+> - The container cannot launch host applications like MacFreeRDP
 
 ### 🔧 Initial Setup
 
@@ -123,7 +127,9 @@ export TAG2="Environment"  # Branch level tag (e.g., Environment, Stage)
 
 ## 🎯 Option 1: Manual Python Deployment
 
-**Best for**: Development, testing, and local debugging
+**Best for**: Development, testing, local debugging, and **RDP functionality**
+
+> **✅ Recommended for RDP**: This is the only deployment method that supports RDP connections to Windows instances.
 
 ### Step 1: Setup Python Environment
 ```bash
@@ -185,6 +191,8 @@ Open your browser: **http://localhost:5000**
 
 **Best for**: Isolated environments, testing, and single-container deployments
 
+> **⚠️ RDP Limitation**: Docker deployment does not support RDP connections to Windows instances due to port forwarding and application launching restrictions.
+
 ### Step 1: Build Docker Image
 ```bash
 # Build the CloudTerm image
@@ -234,6 +242,8 @@ docker logs -f cloudterm-app
 ## 🔧 Option 3: Docker Compose Deployment
 
 **Best for**: Production, automated deployments, and persistent services
+
+> **⚠️ RDP Limitation**: Docker Compose deployment does not support RDP connections to Windows instances due to port forwarding and application launching restrictions.
 
 ### Step 1: Update docker-compose.yml
 ```bash
