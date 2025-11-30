@@ -327,128 +327,151 @@ def get_instances():
         print(f"Error loading instances: {str(e)}")
         return jsonify([])
 
+def perform_scan(force_scan=False):
+    """
+    Core logic to scan EC2 instances from all AWS profiles and regions
+    """
+    global scan_cache
+    
+    # Check if we have cached data and it's less than 30 minutes old
+    current_time = time.time()
+    cache_age = current_time - scan_cache['timestamp']
+    
+    if not force_scan and scan_cache['data'] and cache_age < 1800:  # 30 minutes cache
+        print(f"Using cached scan results from {int(cache_age)} seconds ago")
+        return scan_cache['data']
+    
+    # Get environment variables for tag names
+    tag1_name = os.environ.get('TAG1', 'Customer')
+    tag2_name = os.environ.get('TAG2', 'Environment')
+    
+    print(f"Scanning instances with TAG1={tag1_name}, TAG2={tag2_name}")
+    
+    # Get all AWS profiles and regions
+    profiles = get_aws_profiles()
+    regions = get_all_aws_regions()
+    
+    # Initialize scan stats
+    all_instances = []
+    scanned_combinations = 0
+    successful_scans = 0
+    scan_stats = {
+        'total_regions': len(regions),
+        'total_profiles': len(profiles),
+        'total_combinations': len(regions) * len(profiles),
+        'scanned_combinations': 0,
+        'successful_regions': 0,
+        'total_instances': 0,
+        'results': [],
+        'status': 'scanning'
+    }
+    
+    # Emit initial scan status
+    socketio.emit('scan_status', scan_stats)
+    
+    # Scan instances from all profiles and regions
+    for profile in profiles:
+        for region in regions:
+            scanned_combinations += 1
+            scan_stats['scanned_combinations'] = scanned_combinations
+            
+            # Prepare result entry
+            result = {
+                'profile': profile,
+                'region': region,
+                'status': 'scanning'
+            }
+            scan_stats['results'].append(result)
+            
+            # Emit progress update
+            socketio.emit('scan_status', scan_stats)
+            
+            try:
+                instances = fetch_ec2_instances(profile, region, tag1_name, tag2_name)
+                if instances:
+                    result['status'] = 'success'
+                    result['instance_count'] = len(instances)
+                    print(f"Found {len(instances)} instances in profile {profile}, region {region}")
+                    all_instances.extend(instances)
+                    successful_scans += 1
+                    scan_stats['successful_regions'] = successful_scans
+                    scan_stats['total_instances'] += len(instances)
+                else:
+                    result['status'] = 'empty'
+                    result['instance_count'] = 0
+            except Exception as e:
+                error_msg = str(e)
+                result['status'] = 'error'
+                result['error'] = error_msg
+                
+                # Only log errors for profiles that should exist
+                if "InvalidClientTokenId" in error_msg:
+                    result['status'] = 'access_denied'
+                    # Suppress false logs for disabled regions/profiles unless DEBUG is on
+                    if os.environ.get('DEBUG', 'false').lower() == 'true':
+                        print(f"Error fetching instances from {profile}/{region}: {error_msg}")
+                elif "InvalidUserID.NotFound" not in error_msg and "UnauthorizedOperation" not in error_msg:
+                    print(f"Error scanning profile {profile}, region {region}: {error_msg}")
+                continue
+            
+            # Emit updated result
+            socketio.emit('scan_status', scan_stats)
+    
+    print(f"Scanned {scanned_combinations} profile-region combinations, {successful_scans} successful")
+    
+    # Update final scan status
+    scan_stats['status'] = 'completed'
+    socketio.emit('scan_status', scan_stats)
+    
+    # Organize instances by tags
+    tree = organize_instances_by_tags(all_instances, tag1_name, tag2_name)
+    
+    # Auto-save discovered instances to YAML
+    if all_instances:
+        yaml_data = convert_instances_to_yaml_format(all_instances, tag1_name, tag2_name)
+        with open('instances_list.yaml', 'w') as file:
+            yaml.dump(yaml_data, file, default_flow_style=False, sort_keys=False)
+        
+        print(f"Auto-saved {len(all_instances)} instances to instances_list.yaml")
+    else:
+        print("No instances found to save")
+    
+    # Update cache with new scan results
+    scan_cache['data'] = tree
+    scan_cache['timestamp'] = time.time()
+    print(f"Updated scan cache at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    return tree
+
 @app.route('/scan-instances')
 def scan_instances():
     """
     Scan EC2 instances from all AWS profiles and regions
     """
     try:
-        global scan_cache
-        
         # Check for force_scan parameter
         force_scan = request.args.get('force', 'false').lower() == 'true'
-        
-        # Check if we have cached data and it's less than 30 minutes old
-        current_time = time.time()
-        cache_age = current_time - scan_cache['timestamp']
-        
-        if not force_scan and scan_cache['data'] and cache_age < 1800:  # 30 minutes cache
-            print(f"Using cached scan results from {int(cache_age)} seconds ago")
-            return jsonify(scan_cache['data'])
-        
-        # Get environment variables for tag names
-        tag1_name = os.environ.get('TAG1', 'Customer')
-        tag2_name = os.environ.get('TAG2', 'Environment')
-        
-        print(f"Scanning instances with TAG1={tag1_name}, TAG2={tag2_name}")
-        
-        # Get all AWS profiles and regions
-        profiles = get_aws_profiles()
-        regions = get_all_aws_regions()
-        
-        # Initialize scan stats
-        all_instances = []
-        scanned_combinations = 0
-        successful_scans = 0
-        scan_stats = {
-            'total_regions': len(regions),
-            'total_profiles': len(profiles),
-            'total_combinations': len(regions) * len(profiles),
-            'scanned_combinations': 0,
-            'successful_regions': 0,
-            'total_instances': 0,
-            'results': [],
-            'status': 'scanning'
-        }
-        
-        # Emit initial scan status
-        socketio.emit('scan_status', scan_stats)
-        
-        # Scan instances from all profiles and regions
-        for profile in profiles:
-            for region in regions:
-                scanned_combinations += 1
-                scan_stats['scanned_combinations'] = scanned_combinations
-                
-                # Prepare result entry
-                result = {
-                    'profile': profile,
-                    'region': region,
-                    'status': 'scanning'
-                }
-                scan_stats['results'].append(result)
-                
-                # Emit progress update
-                socketio.emit('scan_status', scan_stats)
-                
-                try:
-                    instances = fetch_ec2_instances(profile, region, tag1_name, tag2_name)
-                    if instances:
-                        result['status'] = 'success'
-                        result['instance_count'] = len(instances)
-                        print(f"Found {len(instances)} instances in profile {profile}, region {region}")
-                        all_instances.extend(instances)
-                        successful_scans += 1
-                        scan_stats['successful_regions'] = successful_scans
-                        scan_stats['total_instances'] += len(instances)
-                    else:
-                        result['status'] = 'empty'
-                        result['instance_count'] = 0
-                except Exception as e:
-                    error_msg = str(e)
-                    result['status'] = 'error'
-                    result['error'] = error_msg
-                    
-                    # Only log errors for profiles that should exist
-                    if "InvalidClientTokenId" in error_msg:
-                        result['status'] = 'access_denied'
-                        print(f"Error fetching instances from {profile}/{region}: {error_msg}")
-                    elif "InvalidUserID.NotFound" not in error_msg and "UnauthorizedOperation" not in error_msg:
-                        print(f"Error scanning profile {profile}, region {region}: {error_msg}")
-                    continue
-                
-                # Emit updated result
-                socketio.emit('scan_status', scan_stats)
-        
-        print(f"Scanned {scanned_combinations} profile-region combinations, {successful_scans} successful")
-        
-        # Update final scan status
-        scan_stats['status'] = 'completed'
-        socketio.emit('scan_status', scan_stats)
-        
-        # Organize instances by tags
-        tree = organize_instances_by_tags(all_instances, tag1_name, tag2_name)
-        
-        # Auto-save discovered instances to YAML
-        if all_instances:
-            yaml_data = convert_instances_to_yaml_format(all_instances, tag1_name, tag2_name)
-            with open('instances_list.yaml', 'w') as file:
-                yaml.dump(yaml_data, file, default_flow_style=False, sort_keys=False)
-            
-            print(f"Auto-saved {len(all_instances)} instances to instances_list.yaml")
-        else:
-            print("No instances found to save")
-        
-        # Update cache with new scan results
-        scan_cache['data'] = tree
-        scan_cache['timestamp'] = time.time()
-        print(f"Updated scan cache at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
+        tree = perform_scan(force_scan=force_scan)
         return jsonify(tree)
     except Exception as e:
         print(f"Error scanning instances: {str(e)}")
         socketio.emit('scan_status', {'status': 'error', 'error': str(e)})
         return jsonify({'error': str(e)}), 500
+
+def background_scan_loop():
+    """
+    Background thread to scan instances every 30 minutes
+    """
+    print("Starting background scan loop...")
+    while True:
+        try:
+            print(f"Running background scan at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            perform_scan(force_scan=True)
+            print("Background scan completed. Sleeping for 30 minutes...")
+            time.sleep(1800)  # Sleep for 30 minutes
+        except Exception as e:
+            print(f"Error in background scan loop: {str(e)}")
+            time.sleep(60)  # Retry after 1 minute on error
 
 @app.route('/scan-status')
 def get_scan_status():
@@ -560,47 +583,43 @@ def fetch_ec2_instances(aws_profile, aws_region, tag1_name, tag2_name):
     """
     Fetch EC2 instances from AWS with their tags and metadata
     """
-    try:
-        # Create boto3 session with the specified profile
-        session = boto3.Session(profile_name=aws_profile, region_name=aws_region)
-        ec2 = session.client('ec2')
-        sts = session.client('sts')
-        
-        # Get AWS Account ID
-        account_info = sts.get_caller_identity()
-        account_id = account_info['Account']
-        
-        # Describe all instances
-        response = ec2.describe_instances()
-        
-        instances = []
-        
-        for reservation in response['Reservations']:
-            for instance in reservation['Instances']:
-                # Extract tags
-                tags = {tag['Key']: tag['Value'] for tag in instance.get('Tags', [])}
-                
-                # Get instance metadata
-                instance_data = {
-                    'instance_id': instance['InstanceId'],
-                    'name': tags.get('Name', instance['InstanceId']),
-                    'state': instance['State']['Name'],
-                    'platform': instance.get('Platform', 'linux'),  # 'windows' or defaults to 'linux'
-                    'instance_type': instance['InstanceType'],
-                    'aws_profile': aws_profile,
-                    'region': aws_region,
-                    'account_id': account_id,
-                    'tags': tags,
-                    tag1_name.lower(): tags.get(tag1_name, 'Unknown'),
-                    tag2_name.lower(): tags.get(tag2_name, 'Unknown')
-                }
-                
-                instances.append(instance_data)
-        
-        return instances
-    except Exception as e:
-        print(f"Error fetching instances from {aws_profile}/{aws_region}: {str(e)}")
-        return []
+    # Create boto3 session with the specified profile
+    session = boto3.Session(profile_name=aws_profile, region_name=aws_region)
+    ec2 = session.client('ec2')
+    sts = session.client('sts')
+    
+    # Get AWS Account ID
+    account_info = sts.get_caller_identity()
+    account_id = account_info['Account']
+    
+    # Describe all instances
+    response = ec2.describe_instances()
+    
+    instances = []
+    
+    for reservation in response['Reservations']:
+        for instance in reservation['Instances']:
+            # Extract tags
+            tags = {tag['Key']: tag['Value'] for tag in instance.get('Tags', [])}
+            
+            # Get instance metadata
+            instance_data = {
+                'instance_id': instance['InstanceId'],
+                'name': tags.get('Name', instance['InstanceId']),
+                'state': instance['State']['Name'],
+                'platform': instance.get('Platform', 'linux'),  # 'windows' or defaults to 'linux'
+                'instance_type': instance['InstanceType'],
+                'aws_profile': aws_profile,
+                'region': aws_region,
+                'account_id': account_id,
+                'tags': tags,
+                tag1_name.lower(): tags.get(tag1_name, 'Unknown'),
+                tag2_name.lower(): tags.get(tag2_name, 'Unknown')
+            }
+            
+            instances.append(instance_data)
+    
+    return instances
 
 def organize_instances_by_tags(instances, tag1_name, tag2_name):
     """
@@ -1193,4 +1212,10 @@ def handle_close_session(data):
         del sessions[session_id]
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    # Start background scanner
+    # We use a daemon thread so it shuts down when the main process exits
+    scan_thread = threading.Thread(target=background_scan_loop)
+    scan_thread.daemon = True
+    scan_thread.start()
+    
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
