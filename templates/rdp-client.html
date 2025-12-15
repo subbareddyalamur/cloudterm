@@ -491,23 +491,81 @@
                 // Solution: Use a Web Worker which isn't throttled.
 
                 let keepaliveWorker = null;
+                let lastPingTime = Date.now();
+                let connectionHealthy = true;
+                const CONNECTION_TIMEOUT = 30000; // 30 seconds without successful ping = dead
+
+                // Check connection health periodically
+                function checkConnectionHealth() {
+                    const timeSinceLastPing = Date.now() - lastPingTime;
+                    if (timeSinceLastPing > CONNECTION_TIMEOUT && connectionHealthy) {
+                        connectionHealthy = false;
+                        console.warn('Connection appears dead, attempting recovery...');
+                        // Try to recover by forcing a sync
+                        if (guac) {
+                            try {
+                                const display = guac.getDisplay();
+                                display.flush(function() {
+                                    updateDisplay();
+                                });
+                            } catch (err) {
+                                console.error('Recovery failed:', err);
+                            }
+                        }
+                    }
+                }
 
                 // Start Web Worker for keepalive pings
                 try {
                     keepaliveWorker = new Worker('/static/js/keepalive-worker.js');
                     keepaliveWorker.onmessage = function(e) {
-                        if (e.data === 'ping' && tunnel) {
-                            // Send keepalive through tunnel - keeps connection alive
-                            try {
+                        if (!tunnel) return;
+
+                        try {
+                            if (e.data.type === 'ping') {
+                                // Send keepalive through tunnel using internal ping format
+                                // This is the proper WebSocket tunnel ping format
                                 tunnel.sendMessage('nop');
-                            } catch (err) {
-                                // Connection might be closed, ignore
+
+                                // Also send a mouse state to keep the session truly active
+                                // This prevents RDP session idle timeout
+                                if (guac && document.visibilityState === 'hidden') {
+                                    // Subtle keepalive: send current mouse position
+                                    sendMouseState();
+                                }
+
+                                lastPingTime = Date.now();
+                                connectionHealthy = true;
+                            } else if (e.data.type === 'sync') {
+                                // Force display sync to recover frozen displays
+                                if (guac) {
+                                    const display = guac.getDisplay();
+                                    display.flush(function() {
+                                        // Display flushed, check if we need to update
+                                        if (document.visibilityState === 'visible') {
+                                            updateDisplay();
+                                        }
+                                    });
+                                }
+                                // Check connection health on sync interval
+                                checkConnectionHealth();
                             }
+                        } catch (err) {
+                            console.warn('Keepalive error:', err);
+                            connectionHealthy = false;
                         }
                     };
                     keepaliveWorker.postMessage('start');
                 } catch (err) {
                     console.warn('Web Worker not available for keepalive:', err);
+                    // Fallback: use regular setInterval (will be throttled but better than nothing)
+                    setInterval(function() {
+                        if (tunnel) {
+                            try {
+                                tunnel.sendMessage('nop');
+                            } catch (err) {}
+                        }
+                    }, 5000);
                 }
 
                 function resetInputState() {
@@ -520,19 +578,55 @@
                 function resumeSession() {
                     if (!guac) return;
 
+                    console.log('Resuming RDP session...');
+
                     // Reset all input state
                     resetInputState();
 
-                    // Force display to re-render
+                    // Reset connection health tracking
+                    lastPingTime = Date.now();
+                    connectionHealthy = true;
+
+                    // Force multiple display flushes to recover frozen canvas
                     const display = guac.getDisplay();
+
+                    // Immediate flush
                     display.flush(function() {
                         updateDisplay();
                     });
 
-                    // Send mouse state to sync
+                    // Send a series of sync signals to wake up the connection
+                    // and ensure the display is fully refreshed
                     setTimeout(function() {
+                        if (tunnel) {
+                            try {
+                                tunnel.sendMessage('nop');
+                            } catch (err) {}
+                        }
+                        display.flush(function() {
+                            updateDisplay();
+                        });
+                    }, 100);
+
+                    setTimeout(function() {
+                        if (tunnel) {
+                            try {
+                                tunnel.sendMessage('nop');
+                            } catch (err) {}
+                        }
+                        display.flush(function() {
+                            updateDisplay();
+                        });
+                        // Send mouse state to sync
                         sendMouseState();
-                    }, 50);
+                    }, 300);
+
+                    // Final sync after a brief delay
+                    setTimeout(function() {
+                        display.flush(function() {
+                            updateDisplay();
+                        });
+                    }, 1000);
                 }
 
                 document.addEventListener('visibilitychange', function() {

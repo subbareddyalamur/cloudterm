@@ -23,9 +23,17 @@ console.log(`WebSocket Port: ${WEBSOCKET_PORT}`);
 console.log(`Guacd Host: ${GUACD_HOST}:${GUACD_PORT}`);
 console.log(`Crypt Secret length: ${CRYPT_SECRET.length} bytes`);
 
-// WebSocket server options
+// WebSocket server options with keepalive
 const websocketOptions = {
-    port: WEBSOCKET_PORT
+    port: WEBSOCKET_PORT,
+
+    // WebSocket keepalive settings to prevent connection timeout
+    // These are critical for long-running RDP sessions
+    wsOptions: {
+        // Ping clients every 10 seconds to check if connection is alive
+        // This helps detect dead connections and keeps firewalls/proxies from closing idle connections
+        perMessageDeflate: false,  // Disable compression for lower latency
+    }
 };
 
 // Guacd connection options
@@ -113,14 +121,78 @@ guacServer.on('connection', (clientConnection) => {
     console.log('[GuacLite] EVENT: New connection received');
 });
 
-// Access the underlying WebSocket server for low-level debugging
+// Access the underlying WebSocket server for low-level debugging and keepalive
 const wsServer = guacServer.webSocketServer;
 if (wsServer) {
     console.log('[GuacLite] WebSocket server instance available');
+
+    // Set up WebSocket ping/pong keepalive
+    // This is CRITICAL for keeping long-running RDP sessions alive
+    const PING_INTERVAL = 15000;  // 15 seconds
+    const PONG_TIMEOUT = 30000;   // 30 seconds to receive pong before considering dead
+
     wsServer.on('connection', (ws, req) => {
         console.log('[GuacLite] WS: Raw WebSocket connection from:', req.socket.remoteAddress);
         console.log('[GuacLite] WS: URL:', req.url);
+
+        // Track if client is alive
+        ws.isAlive = true;
+        ws.lastPong = Date.now();
+
+        // Handle pong responses
+        ws.on('pong', () => {
+            ws.isAlive = true;
+            ws.lastPong = Date.now();
+        });
+
+        // Handle any message as a sign the connection is alive
+        ws.on('message', () => {
+            ws.isAlive = true;
+            ws.lastPong = Date.now();
+        });
+
+        // Set up ping interval for this connection
+        const pingInterval = setInterval(() => {
+            if (ws.readyState !== 1) {  // 1 = OPEN
+                clearInterval(pingInterval);
+                return;
+            }
+
+            // Check if we haven't received a pong in too long
+            if (Date.now() - ws.lastPong > PONG_TIMEOUT) {
+                console.log('[GuacLite] WS: Connection timed out - no pong received');
+                clearInterval(pingInterval);
+                ws.terminate();
+                return;
+            }
+
+            // Send ping
+            if (ws.isAlive === false) {
+                console.log('[GuacLite] WS: Connection appears dead, terminating');
+                clearInterval(pingInterval);
+                ws.terminate();
+                return;
+            }
+
+            ws.isAlive = false;
+            try {
+                ws.ping();
+            } catch (err) {
+                console.log('[GuacLite] WS: Failed to send ping:', err.message);
+                clearInterval(pingInterval);
+            }
+        }, PING_INTERVAL);
+
+        // Clean up on close
+        ws.on('close', () => {
+            clearInterval(pingInterval);
+        });
+
+        ws.on('error', () => {
+            clearInterval(pingInterval);
+        });
     });
+
     wsServer.on('error', (error) => {
         console.log('[GuacLite] WS: Server error:', error);
     });
