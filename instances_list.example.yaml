@@ -1,0 +1,34 @@
+# Example instances_list.yaml configuration
+# Copy this file to instances_list.yaml and update with your AWS instance details
+# This file is auto-populated by the app's scan feature, but you can also manually configure it
+
+AWS_Account_123456789012:
+  aws_profile: my-aws-profile
+  account_id: '123456789012'
+  regions:
+    us-east-1:
+      customers:
+        Example-Customer:
+          environments:
+            Production:
+              instances:
+              - name: Web-Server-Prod
+                instance_id: i-0123456789abcdef0
+                region: us-east-1
+                aws_profile: my-aws-profile
+                state: running
+                platform: linux
+              - name: Windows-Server-Prod
+                instance_id: i-0123456789abcdef1
+                region: us-east-1
+                aws_profile: my-aws-profile
+                state: running
+                platform: windows
+            Development:
+              instances:
+              - name: Dev-Server
+                instance_id: i-0123456789abcdef2
+                region: us-east-1
+                aws_profile: my-aws-profile
+                state: stopped
+                platform: linux

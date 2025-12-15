@@ -1,0 +1,215 @@
+# =============================================================================
+# CloudTerm - Modern AWS EC2 Terminal with Auto-Discovery
+# Docker Compose Configuration with Guacamole for Web-based RDP
+# =============================================================================
+
+services:
+  cloudterm:
+    container_name: cloudterm-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cloudterm:latest
+    ports:
+      - "5001:5000"  # Application port (mapped to 5001 on host to avoid conflict with local dev)
+    volumes:
+      # Mount AWS credentials (read-only for security)
+      - ~/.aws:/home/appuser/.aws:ro
+      # Mount instances configuration
+      - ./instances_list.yaml:/app/instances_list.yaml:rw
+    environment:
+      # Application settings
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PORT=5000
+
+      # Auto-scan configuration
+      - TAG1=Customer                 # Root level AWS tag for grouping
+      - TAG2=Environment              # Branch level AWS tag for grouping
+
+      # Guacamole-lite configuration for Docker RDP
+      - RDP_MODE=guacamole            # Use 'guacamole' for Docker, 'native' for localhost
+      - GUAC_WS_URL=ws://localhost:8080  # WebSocket URL for guacamole-lite
+      - GUAC_CRYPT_SECRET=cloudterm-guac-secret-key-32byte  # Must match guac-lite (32 bytes)
+
+      # SSM Forwarder configuration
+      - SSM_FORWARDER_HOST=ssm-forwarder
+      - SSM_FORWARDER_PORT=5001
+
+    # Resource limits for production use
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    depends_on:
+      - guacd
+      - guac-lite
+      - ssm-forwarder
+
+    networks:
+      - cloudterm-network
+
+  # =============================================================================
+  # Guacamole Daemon (guacd) - Handles RDP/VNC/SSH connections
+  # =============================================================================
+  guacd:
+    container_name: guacd
+    image: guacamole/guacd:latest
+    restart: unless-stopped
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    networks:
+      - cloudterm-network
+
+  # =============================================================================
+  # Guacamole-Lite - Lightweight WebSocket tunnel to guacd
+  # No authentication required - uses tokens from CloudTerm backend
+  # =============================================================================
+  guac-lite:
+    container_name: guac-lite
+    build:
+      context: ./guac-lite
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # WebSocket port for RDP connections
+
+    environment:
+      - WEBSOCKET_PORT=8080
+      - GUACD_HOST=guacd
+      - GUACD_PORT=4822
+      - CRYPT_SECRET=cloudterm-guac-secret-key-32byte
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+    depends_on:
+      - guacd
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080', (r) => process.exit(r.statusCode === 426 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    networks:
+      - cloudterm-network
+
+  # =============================================================================
+  # SSM Port Forwarder - Handles AWS SSM port forwarding for RDP
+  # This container runs SSM sessions and forwards ports that guacd connects to
+  # =============================================================================
+  ssm-forwarder:
+    container_name: ssm-forwarder
+    build:
+      context: .
+      dockerfile: Dockerfile.ssm-forwarder
+    restart: unless-stopped
+
+    # Expose the API port and RDP forwarding port range
+    expose:
+      - "5001"           # API port for CloudTerm to communicate
+      - "33890-33999"    # RDP port forwarding range for Guacamole
+
+    volumes:
+      # Mount AWS credentials (read-only for security)
+      - ~/.aws:/home/appuser/.aws:ro
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=5001
+      - PORT_RANGE_START=33890
+      - PORT_RANGE_END=33999
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    networks:
+      - cloudterm-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  cloudterm-network:
+    name: cloudterm-network
+    driver: bridge

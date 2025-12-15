@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CT: RDP Session</title>
+    <!-- Windows favicon using data URI for a simple Windows logo -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='13' height='13' fill='%230078D4'/><rect x='17' y='2' width='13' height='13' fill='%230078D4'/><rect x='2' y='17' width='13' height='13' fill='%230078D4'/><rect x='17' y='17' width='13' height='13' fill='%230078D4'/></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #rdp-header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 40px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+        }
+
+        #rdp-header .instance-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #rdp-header .instance-info i {
+            color: #0078d4;
+        }
+
+        #rdp-header .instance-name {
+            font-weight: 600;
+            color: #58a6ff;
+        }
+
+        #rdp-header .status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+
+        #rdp-header .status.connecting {
+            color: #d29922;
+        }
+
+        #rdp-header .status.connected {
+            color: #3fb950;
+        }
+
+        #rdp-header .status.error {
+            color: #f85149;
+        }
+
+        #rdp-header .actions button {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+
+        #rdp-header .actions button:hover {
+            background: #30363d;
+        }
+
+        #rdp-container {
+            position: fixed;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            overflow: hidden;
+        }
+
+        #rdp-display {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            cursor: none;  /* Hide local cursor - remote cursor will be shown */
+            overflow: hidden;
+        }
+
+        #rdp-display > div {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+        }
+
+        #rdp-display canvas {
+            cursor: none !important;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(13, 17, 23, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+
+        #loading-overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #loading-overlay .message {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #8b949e;
+        }
+
+        #error-overlay {
+            position: fixed;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(13, 17, 23, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+
+        #error-overlay.show {
+            display: flex;
+        }
+
+        #error-overlay .error-icon {
+            font-size: 48px;
+            color: #f85149;
+            margin-bottom: 20px;
+        }
+
+        #error-overlay .error-message {
+            font-size: 18px;
+            color: #f85149;
+            margin-bottom: 10px;
+        }
+
+        #error-overlay .error-details {
+            font-size: 14px;
+            color: #8b949e;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        #error-overlay button {
+            margin-top: 20px;
+            background: #238636;
+            border: none;
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        #error-overlay button:hover {
+            background: #2ea043;
+        }
+
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div id="rdp-header">
+        <div class="instance-info">
+            <i class="fab fa-windows fa-lg"></i>
+            <span class="instance-name" id="instance-name">Loading...</span>
+            <span class="instance-id" id="instance-id" style="font-size: 11px; color: #8b949e; margin-left: 8px;"></span>
+        </div>
+        <div class="status connecting" id="status">
+            <i class="fas fa-circle-notch fa-spin"></i>
+            <span>Connecting...</span>
+        </div>
+        <div class="actions">
+            <button onclick="toggleFullscreen()" title="Fullscreen">
+                <i class="fas fa-expand"></i> Fullscreen
+            </button>
+            <button onclick="sendCtrlAltDel()" title="Send Ctrl+Alt+Del">
+                <i class="fas fa-keyboard"></i> Ctrl+Alt+Del
+            </button>
+            <button onclick="disconnect()" title="Disconnect">
+                <i class="fas fa-sign-out-alt"></i> Disconnect
+            </button>
+        </div>
+    </div>
+
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div class="message" id="loading-message">Connecting to RDP session...</div>
+    </div>
+
+    <div id="error-overlay">
+        <div class="error-icon"><i class="fas fa-exclamation-circle"></i></div>
+        <div class="error-message" id="error-message">Connection Failed</div>
+        <div class="error-details" id="error-details">Unable to establish RDP connection.</div>
+        <button onclick="window.close()">Close Window</button>
+    </div>
+
+    <div id="rdp-container">
+        <div id="rdp-display"></div>
+    </div>
+
+    <!-- Guacamole JS Client - loaded locally for reliability -->
+    <script src="/static/js/guacamole-common.js"></script>
+
+    <script>
+        // Parse URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const instanceName = urlParams.get('name') || 'Windows Instance';
+        const instanceId = urlParams.get('id') || '';
+        const wsUrl = urlParams.get('ws') || 'ws://localhost:8080';
+
+        // Update UI
+        document.getElementById('instance-name').textContent = instanceName;
+        if (instanceId) {
+            document.getElementById('instance-id').textContent = `(${instanceId})`;
+            document.title = `CT: ${instanceName} (${instanceId})`;
+        } else {
+            document.title = `CT: ${instanceName}`;
+        }
+
+        // Guacamole client
+        let guac = null;
+        let tunnel = null;
+
+        function updateStatus(status, message, isError = false) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status ' + status;
+            statusEl.innerHTML = `<i class="fas ${isError ? 'fa-exclamation-circle' : (status === 'connected' ? 'fa-check-circle' : 'fa-circle-notch fa-spin')}"></i> <span>${message}</span>`;
+        }
+
+        function showError(message, details) {
+            document.getElementById('loading-overlay').classList.add('hidden');
+            document.getElementById('error-overlay').classList.add('show');
+            document.getElementById('error-message').textContent = message;
+            document.getElementById('error-details').textContent = details;
+            updateStatus('error', 'Disconnected', true);
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').classList.add('hidden');
+        }
+
+        function connect() {
+            if (!token) {
+                showError('Missing Token', 'No connection token provided. Please try again from CloudTerm.');
+                return;
+            }
+
+            try {
+                // Get container dimensions for optimal resolution
+                const container = document.getElementById('rdp-container');
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+
+                // Create WebSocket tunnel with encrypted token and dimensions
+                const wsFullUrl = wsUrl + '/?width=' + width + '&height=' + height + '&token=' + encodeURIComponent(token);
+                tunnel = new Guacamole.WebSocketTunnel(wsFullUrl);
+
+                // Create Guacamole client
+                guac = new Guacamole.Client(tunnel);
+
+                // Add display to DOM
+                const displayElement = document.getElementById('rdp-display');
+                displayElement.appendChild(guac.getDisplay().getElement());
+
+                // Handle errors
+                guac.onerror = function(error) {
+                    console.error('Guacamole error:', error);
+                    showError('Connection Error', error.message || 'An error occurred during the RDP session.');
+                };
+
+                // Handle state changes
+                guac.onstatechange = function(state) {
+                    switch(state) {
+                        case 0: // IDLE
+                            updateStatus('connecting', 'Initializing...');
+                            break;
+                        case 1: // CONNECTING
+                            updateStatus('connecting', 'Connecting to RDP...');
+                            document.getElementById('loading-message').textContent = 'Establishing RDP connection...';
+                            break;
+                        case 2: // WAITING
+                            updateStatus('connecting', 'Waiting for server...');
+                            document.getElementById('loading-message').textContent = 'Waiting for Windows server...';
+                            break;
+                        case 3: // CONNECTED
+                            updateStatus('connected', 'Connected');
+                            hideLoading();
+                            // Focus the display for keyboard input
+                            guac.getDisplay().getElement().focus();
+                            break;
+                        case 4: // DISCONNECTING
+                            updateStatus('connecting', 'Disconnecting...');
+                            break;
+                        case 5: // DISCONNECTED
+                            updateStatus('error', 'Disconnected', true);
+                            break;
+                    }
+                };
+
+                // Handle clipboard
+                guac.onclipboard = function(stream, mimetype) {
+                    if (mimetype === 'text/plain') {
+                        let data = '';
+                        stream.onblob = function(blob) {
+                            data += atob(blob);
+                        };
+                        stream.onend = function() {
+                            navigator.clipboard.writeText(data).catch(console.error);
+                        };
+                    }
+                };
+
+                // Handle clipboard from host to RDP (paste)
+                function sendClipboardToRDP(text) {
+                    if (!guac || !text) return;
+                    try {
+                        const stream = guac.createClipboardStream('text/plain');
+                        const writer = new Guacamole.StringWriter(stream);
+                        writer.sendText(text);
+                        writer.sendEnd();
+                        console.log('Clipboard sent to RDP:', text.substring(0, 50) + '...');
+                    } catch (err) {
+                        console.error('Failed to send clipboard to RDP:', err);
+                    }
+                }
+
+                // Sync clipboard when window gains focus
+                window.addEventListener('focus', function() {
+                    if (navigator.clipboard && navigator.clipboard.readText) {
+                        navigator.clipboard.readText().then(function(text) {
+                            if (text) sendClipboardToRDP(text);
+                        }).catch(function(err) {
+                            // Clipboard permission denied or empty - ignore
+                        });
+                    }
+                });
+
+                // Handle paste events (Ctrl+V)
+                document.addEventListener('paste', function(e) {
+                    const text = e.clipboardData.getData('text/plain');
+                    if (text) sendClipboardToRDP(text);
+                });
+
+                // Custom mouse handling using raw DOM events (more reliable than Guacamole.Mouse)
+                const rdpContainer = document.getElementById('rdp-container');
+
+                let mouseState = {
+                    x: 0, y: 0,
+                    left: false, middle: false, right: false,
+                    scrollUp: false, scrollDown: false
+                };
+
+                function sendMouseState() {
+                    if (!guac) return;
+                    const state = new Guacamole.Mouse.State(
+                        mouseState.x, mouseState.y,
+                        mouseState.left, mouseState.middle, mouseState.right,
+                        mouseState.scrollUp, mouseState.scrollDown
+                    );
+                    guac.sendMouseState(state);
+                }
+
+                function getMousePos(e) {
+                    const display = guac.getDisplay();
+                    const scale = display.getScale() || 1;
+                    // Get fresh reference each time to avoid stale values
+                    const el = display.getElement();
+                    const rect = el.getBoundingClientRect();
+                    return {
+                        x: Math.round((e.clientX - rect.left) / scale),
+                        y: Math.round((e.clientY - rect.top) / scale)
+                    };
+                }
+
+                // Mouse move
+                rdpContainer.addEventListener('mousemove', function(e) {
+                    const pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    sendMouseState();
+                });
+
+                // Mouse down
+                rdpContainer.addEventListener('mousedown', function(e) {
+                    const pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    if (e.button === 0) mouseState.left = true;
+                    if (e.button === 1) mouseState.middle = true;
+                    if (e.button === 2) mouseState.right = true;
+                    sendMouseState();
+                    e.preventDefault();
+                });
+
+                // Mouse up
+                rdpContainer.addEventListener('mouseup', function(e) {
+                    const pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    if (e.button === 0) mouseState.left = false;
+                    if (e.button === 1) mouseState.middle = false;
+                    if (e.button === 2) mouseState.right = false;
+                    sendMouseState();
+                    e.preventDefault();
+                });
+
+                // Mouse wheel
+                rdpContainer.addEventListener('wheel', function(e) {
+                    const pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    if (e.deltaY < 0) {
+                        mouseState.scrollUp = true;
+                        sendMouseState();
+                        mouseState.scrollUp = false;
+                    } else if (e.deltaY > 0) {
+                        mouseState.scrollDown = true;
+                        sendMouseState();
+                        mouseState.scrollDown = false;
+                    }
+                    sendMouseState();
+                    e.preventDefault();
+                });
+
+                // Prevent context menu
+                rdpContainer.addEventListener('contextmenu', function(e) {
+                    e.preventDefault();
+                });
+
+                // Keyboard events
+                const keyboard = new Guacamole.Keyboard(document);
+                keyboard.onkeydown = function(keysym) {
+                    guac.sendKeyEvent(1, keysym);
+                };
+                keyboard.onkeyup = function(keysym) {
+                    guac.sendKeyEvent(0, keysym);
+                };
+
+                // Handle tab visibility and keepalive
+                // Problem: Browsers throttle setInterval to ~1/minute for hidden tabs,
+                // causing Guacamole's built-in keepalive to fail.
+                // Solution: Use a Web Worker which isn't throttled.
+
+                let keepaliveWorker = null;
+
+                // Start Web Worker for keepalive pings
+                try {
+                    keepaliveWorker = new Worker('/static/js/keepalive-worker.js');
+                    keepaliveWorker.onmessage = function(e) {
+                        if (e.data === 'ping' && tunnel) {
+                            // Send keepalive through tunnel - keeps connection alive
+                            try {
+                                tunnel.sendMessage('nop');
+                            } catch (err) {
+                                // Connection might be closed, ignore
+                            }
+                        }
+                    };
+                    keepaliveWorker.postMessage('start');
+                } catch (err) {
+                    console.warn('Web Worker not available for keepalive:', err);
+                }
+
+                function resetInputState() {
+                    keyboard.reset();
+                    mouseState.left = false;
+                    mouseState.middle = false;
+                    mouseState.right = false;
+                }
+
+                function resumeSession() {
+                    if (!guac) return;
+
+                    // Reset all input state
+                    resetInputState();
+
+                    // Force display to re-render
+                    const display = guac.getDisplay();
+                    display.flush(function() {
+                        updateDisplay();
+                    });
+
+                    // Send mouse state to sync
+                    setTimeout(function() {
+                        sendMouseState();
+                    }, 50);
+                }
+
+                document.addEventListener('visibilitychange', function() {
+                    if (document.visibilityState === 'hidden') {
+                        // Release all keys/buttons when tab hidden
+                        resetInputState();
+                        sendMouseState();
+                    } else if (document.visibilityState === 'visible') {
+                        resumeSession();
+                    }
+                });
+
+                // Window blur - release all keys/buttons immediately
+                window.addEventListener('blur', function() {
+                    resetInputState();
+                    sendMouseState();
+                });
+
+                // Window focus - resume session
+                window.addEventListener('focus', resumeSession);
+
+                // Function to resize and scale display to fit container
+                function updateDisplay() {
+                    if (!guac) return;
+                    const display = guac.getDisplay();
+                    const container = document.getElementById('rdp-container');
+                    const displayEl = display.getElement();
+
+                    const containerWidth = container.clientWidth;
+                    const containerHeight = container.clientHeight;
+                    const displayWidth = display.getWidth();
+                    const displayHeight = display.getHeight();
+
+                    if (displayWidth && displayHeight) {
+                        // Scale to fill the container (fit within bounds)
+                        const scale = Math.min(
+                            containerWidth / displayWidth,
+                            containerHeight / displayHeight
+                        );
+                        display.scale(scale);
+
+                        // Position at top-left (no centering - fill available space)
+                        displayEl.style.marginLeft = '0';
+                        displayEl.style.marginTop = '0';
+                        displayEl.style.position = 'absolute';
+                        displayEl.style.left = '0';
+                        displayEl.style.top = '0';
+                    }
+                }
+
+                // Handle window resize - send new size to server for resolution update
+                let resizeTimeout;
+                window.addEventListener('resize', function() {
+                    // Update display scaling immediately
+                    updateDisplay();
+
+                    // Debounce sending resize to server
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(function() {
+                        if (guac) {
+                            const container = document.getElementById('rdp-container');
+                            // Send the new size to the server
+                            guac.sendSize(container.clientWidth, container.clientHeight);
+                        }
+                    }, 250);
+                });
+
+                // Scale display when remote size changes
+                guac.getDisplay().onresize = updateDisplay;
+
+                // Connect - dimensions are already in the WebSocket URL
+                // MUST pass empty string, not undefined, or it gets appended to URL
+                guac.connect('');
+
+            } catch (error) {
+                console.error('Failed to connect:', error);
+                showError('Connection Failed', error.message || 'Failed to initialize RDP client.');
+            }
+        }
+
+        function disconnect() {
+            // Stop keepalive worker
+            if (typeof keepaliveWorker !== 'undefined' && keepaliveWorker) {
+                keepaliveWorker.postMessage('stop');
+                keepaliveWorker.terminate();
+            }
+            if (guac) {
+                guac.disconnect();
+            }
+            window.close();
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function sendCtrlAltDel() {
+            if (guac) {
+                // Send Ctrl+Alt+Del sequence
+                guac.sendKeyEvent(1, 0xFFE3); // Ctrl down
+                guac.sendKeyEvent(1, 0xFFE9); // Alt down
+                guac.sendKeyEvent(1, 0xFFFF); // Delete down
+                guac.sendKeyEvent(0, 0xFFFF); // Delete up
+                guac.sendKeyEvent(0, 0xFFE9); // Alt up
+                guac.sendKeyEvent(0, 0xFFE3); // Ctrl up
+            }
+        }
+
+        // Disconnect on page close
+        window.addEventListener('beforeunload', function() {
+            if (guac) {
+                guac.disconnect();
+            }
+        });
+
+        // Start the connection immediately (script is at end of body)
+        connect();
+    </script>
+</body>
+</html>

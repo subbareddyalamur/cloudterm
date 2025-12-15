@@ -1,0 +1,72 @@
+# =============================================================================
+# SSM Port Forwarder - Manages AWS SSM port forwarding sessions for RDP
+# =============================================================================
+
+FROM python:3.11-slim
+
+# Metadata
+LABEL maintainer="CloudTerm Team" \
+      description="SSM Port Forwarder for CloudTerm RDP connections" \
+      version="1.0.0"
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies (including socat for port forwarding relay)
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    jq \
+    unzip \
+    procps \
+    socat \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install AWS CLI v2 (architecture-aware)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then \
+        curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "/tmp/awscliv2.zip"; \
+    else \
+        curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"; \
+    fi && \
+    unzip /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install && \
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# Install AWS Session Manager Plugin (architecture-aware)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then \
+        curl -sSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_arm64/session-manager-plugin.deb" \
+            -o "/tmp/session-manager-plugin.deb"; \
+    else \
+        curl -sSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o "/tmp/session-manager-plugin.deb"; \
+    fi && \
+    dpkg -i /tmp/session-manager-plugin.deb && \
+    rm -f /tmp/session-manager-plugin.deb
+
+# Install Python dependencies
+RUN pip install --no-cache-dir flask requests boto3
+
+# Create non-root user
+RUN useradd -m -s /bin/bash -u 1000 appuser \
+    && mkdir -p /home/appuser/.aws /app \
+    && chown -R appuser:appuser /home/appuser /app
+
+WORKDIR /app
+
+# Copy the SSM forwarder service
+COPY --chown=appuser:appuser ssm_forwarder.py ./
+
+USER appuser
+
+# Expose the forwarder API port
+EXPOSE 5001
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PORT=5001
+
+# Start the SSM forwarder service
+CMD ["python3", "ssm_forwarder.py"]

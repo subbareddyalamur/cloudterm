@@ -1,0 +1,79 @@
+# =============================================================================
+# CloudTerm - Localhost Mode (Native RDP Client Support)
+# Use this when running locally with native RDP clients like MacFreeRDP
+# =============================================================================
+#
+# Usage:
+#   docker-compose -f docker-compose-localhost.yml up -d
+#
+# This configuration:
+#   - Does NOT include Guacamole (uses native RDP clients)
+#   - Works only when CloudTerm container can map ports to host
+#   - Best for single-user localhost deployments
+#
+# For Docker deployments with browser-based RDP, use the main docker-compose.yml
+
+services:
+  cloudterm:
+    container_name: cloudterm-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cloudterm:latest
+    ports:
+      - "5000:5000"  # Application port
+    volumes:
+      # Mount AWS credentials (read-only for security)
+      - ~/.aws:/home/appuser/.aws:ro
+      # Mount instances configuration
+      - ./instances_list.yaml:/app/instances_list.yaml:rw
+    environment:
+      # Application settings
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PORT=5000
+
+      # Auto-scan configuration
+      - TAG1=Customer                 # Root level AWS tag for grouping
+      - TAG2=Environment              # Branch level AWS tag for grouping
+
+      # RDP Mode: native for local RDP clients (MacFreeRDP, Windows Remote Desktop, etc.)
+      - RDP_MODE=native
+
+    # Resource limits for production use
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  default:
+    name: cloudterm-network
+    driver: bridge
