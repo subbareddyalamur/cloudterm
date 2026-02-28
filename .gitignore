@@ -1,0 +1,20 @@
+# Compiled binaries (root-level only)
+/cloudterm
+/forwarder
+
+# Runtime cache
+instances_list.yaml
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

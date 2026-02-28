@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudTerm: RDP Session</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='13' height='13' fill='%2360a5fa'/><rect x='17' y='2' width='13' height='13' fill='%2360a5fa'/><rect x='2' y='17' width='13' height='13' fill='%2360a5fa'/><rect x='17' y='17' width='13' height='13' fill='%2360a5fa'/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:      #060911;
+            --s1:      #0b0f17;
+            --s2:      #111827;
+            --s3:      #1a2235;
+            --b1:      #1e2a3d;
+            --b2:      #2d3f5c;
+            --text:    #dce8ff;
+            --muted:   #6b82a8;
+            --dim:     #3a4d6b;
+            --rdp:     #60a5fa;
+            --rdp-dim: rgba(96,165,250,0.1);
+            --rdp-b:   rgba(96,165,250,0.28);
+            --ssh:     #3ddc84;
+            --red:     #f87171;
+            --yellow:  #fbbf24;
+            --orange:  #fb923c;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        /* ── Toolbar ── */
+        #toolbar {
+            height: 40px;
+            background: var(--s1);
+            border-bottom: 1px solid var(--b1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            transition: transform 0.2s ease;
+        }
+
+        #toolbar.toolbar-hidden {
+            transform: translateY(-100%);
+        }
+
+        #toolbar-show-trigger {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            z-index: 99;
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .instance-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .rdp-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .rdp-icon svg {
+            width: 16px;
+            height: 16px;
+            fill: var(--rdp);
+        }
+
+        .instance-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--rdp);
+        }
+
+        .instance-id {
+            font-size: 10px;
+            color: var(--dim);
+        }
+
+        .toolbar-divider {
+            width: 1px;
+            height: 20px;
+            background: var(--b1);
+            margin: 0 4px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+
+        .status-badge.connecting {
+            color: var(--yellow);
+            background: rgba(251,191,36,0.08);
+        }
+
+        .status-badge.connected {
+            color: var(--ssh);
+            background: rgba(61,220,132,0.08);
+        }
+
+        .status-badge.error {
+            color: var(--red);
+            background: rgba(248,113,113,0.08);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .status-badge.connecting .status-dot {
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        /* Toolbar buttons and controls */
+        .tb-btn {
+            background: var(--s2);
+            border: 1px solid var(--b1);
+            color: var(--muted);
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-family: inherit;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            white-space: nowrap;
+        }
+
+        .tb-btn:hover {
+            background: var(--s3);
+            color: var(--text);
+            border-color: var(--b2);
+        }
+
+        .tb-btn.danger:hover {
+            background: rgba(248,113,113,0.1);
+            color: var(--red);
+            border-color: rgba(248,113,113,0.3);
+        }
+
+        .tb-btn.active {
+            background: var(--rdp-dim);
+            color: var(--rdp);
+            border-color: var(--rdp-b);
+        }
+
+        .tb-btn svg {
+            width: 13px;
+            height: 13px;
+            fill: currentColor;
+            flex-shrink: 0;
+        }
+
+        .tb-select {
+            background: var(--s2);
+            border: 1px solid var(--b1);
+            color: var(--muted);
+            padding: 4px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: inherit;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .tb-select:hover {
+            border-color: var(--b2);
+            color: var(--text);
+        }
+
+        .tb-select:focus {
+            border-color: var(--rdp-b);
+        }
+
+        .tb-select option {
+            background: var(--s2);
+            color: var(--text);
+        }
+
+        /* ── Clipboard Panel ── */
+        #clipboard-panel {
+            position: fixed;
+            top: 40px;
+            right: 0;
+            width: 320px;
+            background: var(--s1);
+            border-left: 1px solid var(--b1);
+            border-bottom: 1px solid var(--b1);
+            z-index: 90;
+            display: none;
+            flex-direction: column;
+            border-bottom-left-radius: 6px;
+            box-shadow: -4px 4px 16px rgba(0,0,0,0.4);
+        }
+
+        #clipboard-panel.show {
+            display: flex;
+        }
+
+        .clipboard-header {
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            border-bottom: 1px solid var(--b1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .clipboard-close {
+            background: none;
+            border: none;
+            color: var(--dim);
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 2px;
+        }
+
+        .clipboard-close:hover {
+            color: var(--text);
+        }
+
+        #clipboard-text {
+            width: 100%;
+            height: 160px;
+            background: var(--s2);
+            border: none;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 10px 12px;
+            resize: none;
+            outline: none;
+        }
+
+        #clipboard-text::placeholder {
+            color: var(--dim);
+        }
+
+        .clipboard-actions {
+            padding: 8px 12px;
+            display: flex;
+            gap: 6px;
+        }
+
+        .clipboard-actions button {
+            flex: 1;
+        }
+
+        /* ── RDP Container ── */
+        #rdp-container {
+            position: fixed;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            overflow: hidden;
+            transition: top 0.2s ease;
+        }
+
+        #rdp-container.toolbar-hidden {
+            top: 0;
+        }
+
+        #rdp-display {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            cursor: none;
+            overflow: hidden;
+        }
+
+        #rdp-display > div {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+        }
+
+        #rdp-display canvas {
+            cursor: none !important;
+        }
+
+        /* ── Loading Overlay ── */
+        #loading-overlay {
+            position: fixed;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(6,9,17,0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+
+        #loading-overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 44px;
+            height: 44px;
+            border: 3px solid var(--b1);
+            border-top-color: var(--rdp);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            margin-top: 16px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .loading-sub {
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--dim);
+        }
+
+        /* ── Error Overlay ── */
+        #error-overlay {
+            position: fixed;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(6,9,17,0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+
+        #error-overlay.show {
+            display: flex;
+        }
+
+        .error-icon svg {
+            width: 48px;
+            height: 48px;
+            fill: var(--red);
+            margin-bottom: 16px;
+        }
+
+        .error-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--red);
+            margin-bottom: 8px;
+        }
+
+        .error-detail {
+            font-size: 12px;
+            color: var(--muted);
+            max-width: 420px;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .error-actions {
+            margin-top: 20px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .error-actions button {
+            padding: 7px 18px;
+            border-radius: 4px;
+            border: 1px solid var(--b1);
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .btn-reconnect {
+            background: var(--rdp-dim);
+            color: var(--rdp);
+            border-color: var(--rdp-b) !important;
+        }
+
+        .btn-reconnect:hover {
+            background: rgba(96,165,250,0.18);
+        }
+
+        .btn-close {
+            background: var(--s2);
+            color: var(--muted);
+        }
+
+        .btn-close:hover {
+            background: var(--s3);
+            color: var(--text);
+        }
+    </style>
+</head>
+<body>
+    <!-- Toolbar -->
+    <div id="toolbar">
+        <div class="toolbar-section">
+            <div class="instance-info">
+                <div class="rdp-icon">
+                    <svg viewBox="0 0 24 24"><path d="M21 2H3a2 2 0 00-2 2v12a2 2 0 002 2h7v2H8v2h8v-2h-2v-2h7a2 2 0 002-2V4a2 2 0 00-2-2zm0 14H3V4h18v12z"/></svg>
+                </div>
+                <span class="instance-name" id="instance-name">Loading...</span>
+                <span class="instance-id" id="instance-id"></span>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="status-badge connecting" id="status-badge">
+                <span class="status-dot"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </div>
+
+        <div class="toolbar-section">
+            <!-- Resolution -->
+            <select class="tb-select" id="resolution-select" title="Resolution">
+                <option value="auto">Auto</option>
+                <option value="1920x1080">1920 x 1080</option>
+                <option value="1680x1050">1680 x 1050</option>
+                <option value="1440x900">1440 x 900</option>
+                <option value="1280x1024">1280 x 1024</option>
+                <option value="1024x768">1024 x 768</option>
+            </select>
+
+            <div class="toolbar-divider"></div>
+
+            <!-- Clipboard -->
+            <button class="tb-btn" id="btn-clipboard" onclick="toggleClipboard()" title="Clipboard Sync">
+                <svg viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5a2 2 0 00-2 2v16a2 2 0 002 2h14a2 2 0 002-2V4a2 2 0 00-2-2zm-7 0a1 1 0 110 2 1 1 0 010-2zm7 18H5V4h2v3h10V4h2v16z"/></svg>
+                <span>Clipboard</span>
+            </button>
+
+            <!-- Ctrl+Alt+Del -->
+            <button class="tb-btn" onclick="sendCtrlAltDel()" title="Send Ctrl+Alt+Del">
+                <svg viewBox="0 0 24 24"><path d="M20 5H4a2 2 0 00-2 2v8a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2zM4 15V7h16v8H4zm2-6h2v2H6V9zm0 3h8v1H6v-1zm10 0h2v1h-2v-1zm-3-3h2v2h-2V9zm-3 0h2v2h-2V9zm-1 0H7v2h2V9z"/></svg>
+                <span>CtrlAltDel</span>
+            </button>
+
+            <!-- Fullscreen -->
+            <button class="tb-btn" id="btn-fullscreen" onclick="toggleFullscreen()" title="Fullscreen">
+                <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+            </button>
+
+            <!-- Hide Toolbar -->
+            <button class="tb-btn" onclick="toggleToolbar()" title="Hide Toolbar">
+                <svg viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
+            </button>
+
+            <div class="toolbar-divider"></div>
+
+            <!-- Disconnect -->
+            <button class="tb-btn danger" onclick="doDisconnect()" title="Disconnect">
+                <svg viewBox="0 0 24 24"><path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5a2 2 0 00-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"/></svg>
+                <span>Disconnect</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Toolbar show trigger (visible when toolbar is hidden) -->
+    <div id="toolbar-show-trigger" style="display:none;" onmouseenter="showToolbar()"></div>
+
+    <!-- Clipboard Panel -->
+    <div id="clipboard-panel">
+        <div class="clipboard-header">
+            <span>Clipboard Sync</span>
+            <button class="clipboard-close" onclick="toggleClipboard()">&times;</button>
+        </div>
+        <textarea id="clipboard-text" placeholder="Paste text here to send to the remote session, or copy from the remote session to see it here..."></textarea>
+        <div class="clipboard-actions">
+            <button class="tb-btn" onclick="sendClipboardToRemote()">
+                <svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+                Send to Remote
+            </button>
+            <button class="tb-btn" onclick="readClipboardFromLocal()">
+                <svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 1H4a2 2 0 00-2 2v14h2V3h12V1zm3 4H8a2 2 0 00-2 2v14a2 2 0 002 2h11a2 2 0 002-2V7a2 2 0 00-2-2zm0 16H8V7h11v14z"/></svg>
+                Paste from Local
+            </button>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loading-text">Connecting to RDP session...</div>
+        <div class="loading-sub" id="loading-sub">Establishing secure connection</div>
+    </div>
+
+    <!-- Error Overlay -->
+    <div id="error-overlay">
+        <div class="error-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+        </div>
+        <div class="error-title" id="error-title">Connection Failed</div>
+        <div class="error-detail" id="error-detail">Unable to establish RDP connection.</div>
+        <div class="error-actions">
+            <button class="btn-reconnect" onclick="reconnect()">Reconnect</button>
+            <button class="btn-close" onclick="window.close()">Close</button>
+        </div>
+    </div>
+
+    <!-- RDP Display Container -->
+    <div id="rdp-container">
+        <div id="rdp-display"></div>
+    </div>
+
+    <!-- Guacamole JS Client -->
+    <script src="/static/vendor/guacamole/guacamole-common.js"></script>
+
+    <script>
+        // ── URL Parameters ──
+        var urlParams = new URLSearchParams(window.location.search);
+        var token = urlParams.get('token');
+        var instanceName = urlParams.get('name') || 'Windows Instance';
+        var instanceId = urlParams.get('id') || '';
+        var wsUrl = urlParams.get('ws') || 'ws://localhost:8080';
+
+        // ── UI Init ──
+        document.getElementById('instance-name').textContent = instanceName;
+        if (instanceId) {
+            document.getElementById('instance-id').textContent = '(' + instanceId + ')';
+            document.title = 'CloudTerm: ' + instanceName + ' (' + instanceId + ')';
+        } else {
+            document.title = 'CloudTerm: ' + instanceName;
+        }
+
+        // ── State ──
+        var guac = null;
+        var tunnel = null;
+        var keyboard = null;
+        var toolbarVisible = true;
+        var clipboardVisible = false;
+        var lastRemoteClipboard = '';
+
+        var mouseState = {
+            x: 0, y: 0,
+            left: false, middle: false, right: false,
+            scrollUp: false, scrollDown: false
+        };
+
+        // ── Status ──
+        function updateStatus(cls, text) {
+            var badge = document.getElementById('status-badge');
+            badge.className = 'status-badge ' + cls;
+            document.getElementById('status-text').textContent = text;
+        }
+
+        function showError(title, detail) {
+            document.getElementById('loading-overlay').classList.add('hidden');
+            var overlay = document.getElementById('error-overlay');
+            overlay.classList.add('show');
+            document.getElementById('error-title').textContent = title;
+            document.getElementById('error-detail').textContent = detail;
+            updateStatus('error', 'Disconnected');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').classList.add('hidden');
+        }
+
+        // ── Toolbar ──
+        function toggleToolbar() {
+            toolbarVisible = !toolbarVisible;
+            var toolbar = document.getElementById('toolbar');
+            var container = document.getElementById('rdp-container');
+            var trigger = document.getElementById('toolbar-show-trigger');
+            var clipPanel = document.getElementById('clipboard-panel');
+            var loadOverlay = document.getElementById('loading-overlay');
+
+            if (toolbarVisible) {
+                toolbar.classList.remove('toolbar-hidden');
+                container.classList.remove('toolbar-hidden');
+                trigger.style.display = 'none';
+                loadOverlay.style.top = '40px';
+            } else {
+                toolbar.classList.add('toolbar-hidden');
+                container.classList.add('toolbar-hidden');
+                trigger.style.display = 'block';
+                loadOverlay.style.top = '0';
+                // Also hide clipboard panel
+                if (clipboardVisible) toggleClipboard();
+            }
+            // Recalculate display scaling
+            setTimeout(updateDisplay, 50);
+        }
+
+        function showToolbar() {
+            if (!toolbarVisible) toggleToolbar();
+        }
+
+        // ── Clipboard Panel ──
+        function toggleClipboard() {
+            clipboardVisible = !clipboardVisible;
+            var panel = document.getElementById('clipboard-panel');
+            var btn = document.getElementById('btn-clipboard');
+
+            if (clipboardVisible) {
+                panel.classList.add('show');
+                btn.classList.add('active');
+                // Try to read local clipboard into the textarea
+                readClipboardFromLocal();
+            } else {
+                panel.classList.remove('show');
+                btn.classList.remove('active');
+            }
+        }
+
+        function sendClipboardToRemote() {
+            var text = document.getElementById('clipboard-text').value;
+            if (!guac || !text) return;
+            try {
+                var stream = guac.createClipboardStream('text/plain');
+                var writer = new Guacamole.StringWriter(stream);
+                writer.sendText(text);
+                writer.sendEnd();
+            } catch (err) {
+                console.error('Failed to send clipboard:', err);
+            }
+        }
+
+        function readClipboardFromLocal() {
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(function(text) {
+                    if (text) {
+                        document.getElementById('clipboard-text').value = text;
+                    }
+                }).catch(function() {
+                    // Permission denied - ignore
+                });
+            }
+        }
+
+        // ── Fullscreen ──
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(function() {});
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // ── Ctrl+Alt+Del ──
+        function sendCtrlAltDel() {
+            if (!guac) return;
+            guac.sendKeyEvent(1, 0xFFE3); // Ctrl down
+            guac.sendKeyEvent(1, 0xFFE9); // Alt down
+            guac.sendKeyEvent(1, 0xFFFF); // Delete down
+            guac.sendKeyEvent(0, 0xFFFF); // Delete up
+            guac.sendKeyEvent(0, 0xFFE9); // Alt up
+            guac.sendKeyEvent(0, 0xFFE3); // Ctrl up
+        }
+
+        // ── Mouse Handling ──
+        function sendMouseState() {
+            if (!guac) return;
+            var state = new Guacamole.Mouse.State(
+                mouseState.x, mouseState.y,
+                mouseState.left, mouseState.middle, mouseState.right,
+                mouseState.scrollUp, mouseState.scrollDown
+            );
+            guac.sendMouseState(state);
+        }
+
+        function getMousePos(e) {
+            var display = guac.getDisplay();
+            var scale = display.getScale() || 1;
+            var el = display.getElement();
+            var rect = el.getBoundingClientRect();
+            return {
+                x: Math.round((e.clientX - rect.left) / scale),
+                y: Math.round((e.clientY - rect.top) / scale)
+            };
+        }
+
+        function resetInputState() {
+            if (keyboard) keyboard.reset();
+            mouseState.left = false;
+            mouseState.middle = false;
+            mouseState.right = false;
+        }
+
+        // ── Display Scaling ──
+        function updateDisplay() {
+            if (!guac) return;
+            var display = guac.getDisplay();
+            var container = document.getElementById('rdp-container');
+            var displayEl = display.getElement();
+
+            var cw = container.clientWidth;
+            var ch = container.clientHeight;
+            var dw = display.getWidth();
+            var dh = display.getHeight();
+
+            if (dw && dh) {
+                var scale = Math.min(cw / dw, ch / dh);
+                display.scale(scale);
+                displayEl.style.position = 'absolute';
+                displayEl.style.left = '0';
+                displayEl.style.top = '0';
+                displayEl.style.marginLeft = '0';
+                displayEl.style.marginTop = '0';
+            }
+        }
+
+        // ── Resolution Change ──
+        document.getElementById('resolution-select').addEventListener('change', function() {
+            if (!guac) return;
+            var val = this.value;
+            var container = document.getElementById('rdp-container');
+
+            if (val === 'auto') {
+                guac.sendSize(container.clientWidth, container.clientHeight);
+            } else {
+                var parts = val.split('x');
+                guac.sendSize(parseInt(parts[0], 10), parseInt(parts[1], 10));
+            }
+        });
+
+        // ── Connect ──
+        function connect() {
+            if (!token) {
+                showError('Missing Token', 'No connection token provided. Please try again from CloudTerm.');
+                return;
+            }
+
+            try {
+                var container = document.getElementById('rdp-container');
+                var width = container.clientWidth;
+                var height = container.clientHeight;
+
+                // Build WebSocket URL with token and dimensions
+                var wsFullUrl = wsUrl + '/?width=' + width + '&height=' + height + '&token=' + encodeURIComponent(token);
+                tunnel = new Guacamole.WebSocketTunnel(wsFullUrl);
+
+                guac = new Guacamole.Client(tunnel);
+
+                // Attach display
+                var displayElement = document.getElementById('rdp-display');
+                displayElement.appendChild(guac.getDisplay().getElement());
+
+                // ── Error handler ──
+                guac.onerror = function(error) {
+                    console.error('Guacamole error:', error);
+                    showError('Connection Error', error.message || 'An error occurred during the RDP session.');
+                };
+
+                // ── State changes ──
+                guac.onstatechange = function(state) {
+                    switch (state) {
+                        case 0: // IDLE
+                            updateStatus('connecting', 'Initializing...');
+                            break;
+                        case 1: // CONNECTING
+                            updateStatus('connecting', 'Connecting...');
+                            document.getElementById('loading-text').textContent = 'Establishing RDP connection...';
+                            document.getElementById('loading-sub').textContent = 'Negotiating with remote server';
+                            break;
+                        case 2: // WAITING
+                            updateStatus('connecting', 'Waiting...');
+                            document.getElementById('loading-text').textContent = 'Waiting for Windows server...';
+                            document.getElementById('loading-sub').textContent = 'Server is preparing the session';
+                            break;
+                        case 3: // CONNECTED
+                            updateStatus('connected', 'Connected');
+                            hideLoading();
+                            guac.getDisplay().getElement().focus();
+                            break;
+                        case 4: // DISCONNECTING
+                            updateStatus('connecting', 'Disconnecting...');
+                            break;
+                        case 5: // DISCONNECTED
+                            updateStatus('error', 'Disconnected');
+                            break;
+                    }
+                };
+
+                // ── Remote clipboard -> local ──
+                guac.onclipboard = function(stream, mimetype) {
+                    if (mimetype === 'text/plain') {
+                        var data = '';
+                        stream.onblob = function(blob) {
+                            data += atob(blob);
+                        };
+                        stream.onend = function() {
+                            lastRemoteClipboard = data;
+                            // Update clipboard textarea if panel is open
+                            if (clipboardVisible) {
+                                document.getElementById('clipboard-text').value = data;
+                            }
+                            // Copy to system clipboard
+                            navigator.clipboard.writeText(data).catch(function() {});
+                        };
+                    }
+                };
+
+                // ── Local clipboard -> remote on focus ──
+                window.addEventListener('focus', function() {
+                    if (navigator.clipboard && navigator.clipboard.readText) {
+                        navigator.clipboard.readText().then(function(text) {
+                            if (text && guac) {
+                                try {
+                                    var stream = guac.createClipboardStream('text/plain');
+                                    var writer = new Guacamole.StringWriter(stream);
+                                    writer.sendText(text);
+                                    writer.sendEnd();
+                                } catch (err) { /* ignore */ }
+                            }
+                        }).catch(function() {});
+                    }
+                });
+
+                // ── Paste event -> remote ──
+                document.addEventListener('paste', function(e) {
+                    var text = e.clipboardData.getData('text/plain');
+                    if (text && guac) {
+                        try {
+                            var stream = guac.createClipboardStream('text/plain');
+                            var writer = new Guacamole.StringWriter(stream);
+                            writer.sendText(text);
+                            writer.sendEnd();
+                        } catch (err) { /* ignore */ }
+                    }
+                });
+
+                // ── Mouse events ──
+                var rdpContainer = document.getElementById('rdp-container');
+
+                rdpContainer.addEventListener('mousemove', function(e) {
+                    var pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    sendMouseState();
+                });
+
+                rdpContainer.addEventListener('mousedown', function(e) {
+                    var pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    if (e.button === 0) mouseState.left = true;
+                    if (e.button === 1) mouseState.middle = true;
+                    if (e.button === 2) mouseState.right = true;
+                    sendMouseState();
+                    e.preventDefault();
+                });
+
+                rdpContainer.addEventListener('mouseup', function(e) {
+                    var pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    if (e.button === 0) mouseState.left = false;
+                    if (e.button === 1) mouseState.middle = false;
+                    if (e.button === 2) mouseState.right = false;
+                    sendMouseState();
+                    e.preventDefault();
+                });
+
+                rdpContainer.addEventListener('wheel', function(e) {
+                    var pos = getMousePos(e);
+                    mouseState.x = pos.x;
+                    mouseState.y = pos.y;
+                    if (e.deltaY < 0) {
+                        mouseState.scrollUp = true;
+                        sendMouseState();
+                        mouseState.scrollUp = false;
+                    } else if (e.deltaY > 0) {
+                        mouseState.scrollDown = true;
+                        sendMouseState();
+                        mouseState.scrollDown = false;
+                    }
+                    sendMouseState();
+                    e.preventDefault();
+                });
+
+                rdpContainer.addEventListener('contextmenu', function(e) {
+                    e.preventDefault();
+                });
+
+                // ── Keyboard ──
+                keyboard = new Guacamole.Keyboard(document);
+
+                keyboard.onkeydown = function(keysym) {
+                    if (!guac) return false;
+                    guac.sendKeyEvent(1, keysym);
+                    return true; // Prevent browser default
+                };
+
+                keyboard.onkeyup = function(keysym) {
+                    if (!guac) return;
+                    guac.sendKeyEvent(0, keysym);
+                };
+
+                // ── Keepalive via Web Worker ──
+                var keepaliveInterval = null;
+                try {
+                    var workerBlob = new Blob([
+                        'var iv=null;' +
+                        'onmessage=function(e){' +
+                        '  if(e.data==="start"){' +
+                        '    iv=setInterval(function(){postMessage("ping")},5000);' +
+                        '  }else if(e.data==="stop"){' +
+                        '    clearInterval(iv);' +
+                        '  }' +
+                        '};'
+                    ], { type: 'application/javascript' });
+                    var keepaliveWorker = new Worker(URL.createObjectURL(workerBlob));
+                    keepaliveWorker.onmessage = function() {
+                        if (tunnel) {
+                            try { tunnel.sendMessage('nop'); } catch (err) { /* ignore */ }
+                        }
+                        if (guac && document.visibilityState === 'hidden') {
+                            sendMouseState();
+                        }
+                    };
+                    keepaliveWorker.postMessage('start');
+
+                    window.addEventListener('beforeunload', function() {
+                        keepaliveWorker.postMessage('stop');
+                        keepaliveWorker.terminate();
+                    });
+                } catch (err) {
+                    // Fallback: regular interval (throttled in hidden tabs, but acceptable)
+                    keepaliveInterval = setInterval(function() {
+                        if (tunnel) {
+                            try { tunnel.sendMessage('nop'); } catch (err) { /* ignore */ }
+                        }
+                    }, 5000);
+                }
+
+                // ── Visibility changes ──
+                document.addEventListener('visibilitychange', function() {
+                    if (document.visibilityState === 'hidden') {
+                        resetInputState();
+                        sendMouseState();
+                    } else if (document.visibilityState === 'visible') {
+                        resetInputState();
+                        if (guac) {
+                            var display = guac.getDisplay();
+                            display.flush(function() { updateDisplay(); });
+                            setTimeout(function() {
+                                if (tunnel) {
+                                    try { tunnel.sendMessage('nop'); } catch (err) { /* ignore */ }
+                                }
+                                display.flush(function() { updateDisplay(); });
+                            }, 200);
+                        }
+                    }
+                });
+
+                window.addEventListener('blur', function() {
+                    resetInputState();
+                    sendMouseState();
+                });
+
+                // ── Window resize ──
+                var resizeTimeout;
+                window.addEventListener('resize', function() {
+                    updateDisplay();
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(function() {
+                        if (!guac) return;
+                        var sel = document.getElementById('resolution-select');
+                        if (sel.value === 'auto') {
+                            var c = document.getElementById('rdp-container');
+                            guac.sendSize(c.clientWidth, c.clientHeight);
+                        }
+                    }, 250);
+                });
+
+                // ── Display resize callback ──
+                guac.getDisplay().onresize = updateDisplay;
+
+                // ── Connect (empty string so nothing is appended to URL) ──
+                guac.connect('');
+
+            } catch (error) {
+                console.error('Failed to connect:', error);
+                showError('Connection Failed', error.message || 'Failed to initialize the RDP client.');
+            }
+        }
+
+        // ── Disconnect ──
+        function doDisconnect() {
+            if (guac) {
+                guac.disconnect();
+            }
+            window.close();
+        }
+
+        // ── Reconnect ──
+        function reconnect() {
+            // Clear previous state
+            document.getElementById('error-overlay').classList.remove('show');
+            document.getElementById('loading-overlay').classList.remove('hidden');
+            document.getElementById('loading-text').textContent = 'Reconnecting...';
+            document.getElementById('loading-sub').textContent = 'Establishing secure connection';
+            updateStatus('connecting', 'Reconnecting...');
+
+            // Clear old display
+            var displayEl = document.getElementById('rdp-display');
+            while (displayEl.firstChild) {
+                displayEl.removeChild(displayEl.firstChild);
+            }
+
+            guac = null;
+            tunnel = null;
+            keyboard = null;
+
+            connect();
+        }
+
+        // ── Disconnect on page close ──
+        window.addEventListener('beforeunload', function() {
+            if (guac) {
+                guac.disconnect();
+            }
+        });
+
+        // ── Start ──
+        connect();
+    </script>
+</body>
+</html>
