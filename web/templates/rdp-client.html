@@ -574,7 +574,23 @@
         var token = urlParams.get('token');
         var instanceName = urlParams.get('name') || 'Windows Instance';
         var instanceId = urlParams.get('id') || '';
-        var wsUrl = urlParams.get('ws') || 'ws://localhost:8080';
+        var wsUrlParam = urlParams.get('ws') || 'ws://localhost:8080';
+        // Derive WebSocket URL from the browser's current hostname so that
+        // non-localhost access (e.g. cloudterm.lvh.me) connects to the right host.
+        var wsUrl = (function() {
+            try {
+                var parsed = new URL(wsUrlParam);
+                var pageHost = window.location.hostname;
+                // If the server gave us localhost but the page is served from a different host, fix it.
+                if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+                    pageHost !== 'localhost' && pageHost !== '127.0.0.1') {
+                    parsed.hostname = pageHost;
+                }
+                return parsed.toString().replace(/\/$/, '');
+            } catch (e) {
+                return wsUrlParam;
+            }
+        })();
 
         // ── UI Init ──
         document.getElementById('instance-name').textContent = instanceName;
@@ -777,6 +793,42 @@
             }
         });
 
+        // ── Auto-reconnect state ──
+        var reconnectAttempts = 0;
+        var maxReconnectAttempts = 5;
+        var reconnectTimer = null;
+        var wasConnected = false;  // true once state 3 reached; distinguishes drops from initial failures
+        var cleanDisconnect = false; // true if state 4 (DISCONNECTING) seen before state 5 — user sign-out or server-side termination
+
+        function scheduleReconnect() {
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                showError('Connection Lost', 'Unable to reconnect after ' + maxReconnectAttempts + ' attempts. Click Reconnect to try again.');
+                reconnectAttempts = 0;
+                return;
+            }
+            reconnectAttempts++;
+            var delay = Math.min(2000 * Math.pow(1.5, reconnectAttempts - 1), 10000); // 2s, 3s, 4.5s, 6.75s, 10s
+            updateStatus('connecting', 'Reconnecting (' + reconnectAttempts + '/' + maxReconnectAttempts + ')...');
+
+            // Show loading overlay with reconnect info
+            var loadingOverlay = document.getElementById('loading-overlay');
+            loadingOverlay.classList.remove('hidden');
+            document.getElementById('loading-text').textContent = 'Reconnecting... (attempt ' + reconnectAttempts + '/' + maxReconnectAttempts + ')';
+            document.getElementById('loading-sub').textContent = 'Retrying in ' + Math.round(delay / 1000) + 's';
+
+            reconnectTimer = setTimeout(function() {
+                reconnectTimer = null;
+                // Clear old display
+                var displayEl = document.getElementById('rdp-display');
+                while (displayEl.firstChild) displayEl.removeChild(displayEl.firstChild);
+                guac = null;
+                tunnel = null;
+                keyboard = null;
+                document.getElementById('loading-sub').textContent = 'Establishing secure connection';
+                connect();
+            }, delay);
+        }
+
         // ── Connect ──
         function connect() {
             if (!token) {
@@ -802,6 +854,8 @@
                 // ── Error handler ──
                 guac.onerror = function(error) {
                     console.error('Guacamole error:', error);
+                    // If auto-reconnect is in progress or pending, suppress the error overlay
+                    if (reconnectAttempts > 0 || reconnectTimer) return;
                     showError('Connection Error', error.message || 'An error occurred during the RDP session.');
                 };
 
@@ -825,12 +879,24 @@
                             updateStatus('connected', 'Connected');
                             hideLoading();
                             guac.getDisplay().getElement().focus();
+                            wasConnected = true;
+                            cleanDisconnect = false;
+                            reconnectAttempts = 0;
                             break;
                         case 4: // DISCONNECTING
+                            cleanDisconnect = true; // went through orderly disconnect (sign-out, server kick, etc.)
                             updateStatus('connecting', 'Disconnecting...');
                             break;
                         case 5: // DISCONNECTED
-                            updateStatus('error', 'Disconnected');
+                            if (wasConnected && !cleanDisconnect) {
+                                // Abrupt drop (no state 4 first) — auto-reconnect
+                                wasConnected = false;
+                                scheduleReconnect();
+                            } else {
+                                // Clean disconnect (sign-out, server-side termination) — don't reconnect
+                                wasConnected = false;
+                                updateStatus('error', 'Disconnected');
+                            }
                             break;
                     }
                 };
@@ -902,6 +968,7 @@
                     if (e.button === 2) mouseState.right = true;
                     sendMouseState();
                     e.preventDefault();
+                    window.focus(); // Ensure iframe gets keyboard focus
                 });
 
                 rdpContainer.addEventListener('mouseup', function(e) {
@@ -936,17 +1003,78 @@
                     e.preventDefault();
                 });
 
-                // ── Keyboard ──
+                // ── Keyboard (with Mac Cmd→Ctrl remapping) ──
                 keyboard = new Guacamole.Keyboard(document);
+
+                // Keysym constants
+                var KEY_LMETA  = 0xFFE7; // Left Cmd / Super
+                var KEY_RMETA  = 0xFFE8; // Right Cmd / Super
+                var KEY_LCTRL  = 0xFFE3;
+                var KEY_RCTRL  = 0xFFE4;
+                var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+                var metaHeld = false; // track whether Cmd is down
+
+                // Map of keysyms that should be remapped from Cmd+key → Ctrl+key on Mac.
+                // Letters a-z (keysym 0x61-0x7a), plus common shortcuts.
+                function shouldRemapMeta(keysym) {
+                    // a-z lowercase
+                    if (keysym >= 0x61 && keysym <= 0x7a) return true;
+                    // A-Z uppercase
+                    if (keysym >= 0x41 && keysym <= 0x5a) return true;
+                    return false;
+                }
+
+                // Block dangerous Win+key combos that affect the remote OS
+                function shouldBlockWinKey(keysym) {
+                    // l/L = Win+L (lock), d/D = Win+D (show desktop)
+                    return keysym === 0x6C || keysym === 0x4C ||
+                           keysym === 0x64 || keysym === 0x44;
+                }
 
                 keyboard.onkeydown = function(keysym) {
                     if (!guac) return false;
+
+                    if (isMac) {
+                        // Track Cmd key state
+                        if (keysym === KEY_LMETA || keysym === KEY_RMETA) {
+                            metaHeld = true;
+                            // Don't send Windows key down — we'll send Ctrl instead when a letter follows
+                            return true;
+                        }
+
+                        if (metaHeld) {
+                            if (shouldBlockWinKey(keysym)) return true; // swallow Win+L etc.
+                            if (shouldRemapMeta(keysym)) {
+                                // Send Ctrl+key instead of Win+key
+                                guac.sendKeyEvent(1, KEY_LCTRL);
+                                guac.sendKeyEvent(1, keysym);
+                                return true;
+                            }
+                        }
+                    }
+
                     guac.sendKeyEvent(1, keysym);
-                    return true; // Prevent browser default
+                    return true;
                 };
 
                 keyboard.onkeyup = function(keysym) {
                     if (!guac) return;
+
+                    if (isMac) {
+                        if (keysym === KEY_LMETA || keysym === KEY_RMETA) {
+                            metaHeld = false;
+                            // Release Ctrl if it was being used as remap
+                            guac.sendKeyEvent(0, KEY_LCTRL);
+                            return;
+                        }
+
+                        if (metaHeld && shouldRemapMeta(keysym)) {
+                            guac.sendKeyEvent(0, keysym);
+                            guac.sendKeyEvent(0, KEY_LCTRL);
+                            return;
+                        }
+                    }
+
                     guac.sendKeyEvent(0, keysym);
                 };
 
@@ -1030,8 +1158,10 @@
                 // ── Display resize callback ──
                 guac.getDisplay().onresize = updateDisplay;
 
-                // ── Connect (empty string so nothing is appended to URL) ──
-                guac.connect('');
+                // ── Connect (with short delay for SSM tunnel stabilization) ──
+                setTimeout(function() {
+                    guac.connect('');
+                }, reconnectAttempts > 0 ? 500 : 1000);
 
             } catch (error) {
                 console.error('Failed to connect:', error);
@@ -1039,16 +1169,24 @@
             }
         }
 
-        // ── Disconnect ──
+        // ── Disconnect (user-initiated) ──
         function doDisconnect() {
+            wasConnected = false; // prevent auto-reconnect on intentional disconnect
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
             if (guac) {
                 guac.disconnect();
             }
             window.close();
         }
 
-        // ── Reconnect ──
+        // ── Reconnect (manual) ──
         function reconnect() {
+            // Cancel any pending auto-reconnect
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            reconnectAttempts = 0;
+            wasConnected = false;
+            cleanDisconnect = false;
+
             // Clear previous state
             document.getElementById('error-overlay').classList.remove('show');
             document.getElementById('loading-overlay').classList.remove('hidden');

@@ -32,7 +32,7 @@ RUN useradd -m cloudterm
 WORKDIR /app
 COPY --from=builder /build/cloudterm .
 COPY web/ ./web/
-RUN mkdir -p /app/cache && chown cloudterm:cloudterm /app/cache
+RUN mkdir -p /app/cache && chown -R cloudterm:cloudterm /app
 USER cloudterm
 EXPOSE 5000
 CMD ["./cloudterm"]

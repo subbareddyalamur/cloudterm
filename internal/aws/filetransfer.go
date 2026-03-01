@@ -232,10 +232,14 @@ func ssmExec(ctx context.Context, client *ssm.Client, instanceID, command, docNa
 }
 
 func ssmExecOutput(ctx context.Context, client *ssm.Client, instanceID, command, docName string) (string, error) {
+	return ssmExecOutputLines(ctx, client, instanceID, []string{command}, docName)
+}
+
+func ssmExecOutputLines(ctx context.Context, client *ssm.Client, instanceID string, commands []string, docName string) (string, error) {
 	resp, err := client.SendCommand(ctx, &ssm.SendCommandInput{
 		InstanceIds:  []string{instanceID},
 		DocumentName: aws.String(docName),
-		Parameters:   map[string][]string{"commands": {command}},
+		Parameters:   map[string][]string{"commands": commands},
 	})
 	if err != nil {
 		return "", fmt.Errorf("SSM SendCommand: %w", err)

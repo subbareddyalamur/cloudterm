@@ -45,7 +45,7 @@ const clientOptions = {
     },
 
     log: {
-        level: 'DEBUG',
+        level: 'ERRORS',
         stdLog: (...args) => console.log('[GuacLite]', new Date().toISOString(), ...args),
         errorLog: (...args) => console.error('[GuacLite Error]', new Date().toISOString(), ...args)
     },
@@ -65,7 +65,10 @@ const clientOptions = {
             'enable-desktop-composition': 'false',
             'enable-menu-animations': 'false',
             'disable-bitmap-caching': 'false',
-            'disable-offscreen-caching': 'false'
+            'disable-offscreen-caching': 'false',
+            'disable-copy': 'false',
+            'disable-paste': 'false',
+            'enable-audio': 'false'
         }
     }
 };

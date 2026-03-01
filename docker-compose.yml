@@ -17,6 +17,8 @@ services:
       - SSM_FORWARDER_HOST=ssm-forwarder
       - SSM_FORWARDER_PORT=5001
       - INSTANCES_FILE=/app/cache/instances_list.yaml
+      - AUDIT_LOG_FILE=/app/cache/audit.log
+      - PREFERENCES_FILE=/app/cache/preferences.json
     depends_on:
       guacd:
         condition: service_started

@@ -18,7 +18,9 @@ type Config struct {
 	PortRangeEnd     int
 	Debug            bool
 	CacheTTLSeconds  int
-	InstancesFile    string
+	InstancesFile   string
+	AuditLogFile    string
+	PreferencesFile string
 }
 
 func Load() *Config {
@@ -35,7 +37,9 @@ func Load() *Config {
 		PortRangeEnd:     envInt("PORT_RANGE_END", 33999),
 		Debug:            envStr("DEBUG", "false") == "true",
 		CacheTTLSeconds:  1800, // 30 minutes
-		InstancesFile:    envStr("INSTANCES_FILE", "instances_list.yaml"),
+		InstancesFile:   envStr("INSTANCES_FILE", "instances_list.yaml"),
+		AuditLogFile:    envStr("AUDIT_LOG_FILE", "audit.log"),
+		PreferencesFile: envStr("PREFERENCES_FILE", "preferences.json"),
 	}
 }
 

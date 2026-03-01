@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"cloudterm-go/internal/audit"
 	"cloudterm-go/internal/aws"
 	"cloudterm-go/internal/config"
 	"cloudterm-go/internal/handlers"
@@ -27,8 +28,11 @@ func main() {
 	// Initialize session manager
 	sessionMgr := session.NewManager(logger)
 
+	// Initialize audit logger
+	auditLogger := audit.NewLogger(cfg.AuditLogFile)
+
 	// Initialize HTTP/WS handler
-	handler := handlers.New(cfg, discovery, sessionMgr, logger)
+	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger)
 
 	// Start background scanner
 	ctx, cancel := context.WithCancel(context.Background())

@@ -18,12 +18,15 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - Full xterm.js emulation with resize, scroll, Ctrl+C interrupt
 - Multiple concurrent sessions as tabbed panels
 - Zoom controls and configurable terminal font size
-- Multiple terminal color themes (GitHub Dark, Nord, Dracula, Monokai, etc.)
+- Multiple terminal color themes (GitHub Dark, Nord, Dracula, Monokai, Catppuccin, Warp, etc.)
 
 ### RDP (Windows instances)
 - Browser-based RDP via Apache Guacamole integration
 - SSM port forwarding — no public IPs or open RDP ports required
 - Resolution selector and fullscreen mode
+- Clipboard sync between local and remote
+- Mac Cmd-to-Ctrl key remapping (Cmd+C/V/A work as Ctrl+C/V/A in Windows)
+- Auto-reconnect on transient connection drops with exponential backoff
 - RDP sessions appear as tabs alongside SSH sessions
 
 ### File Transfer
@@ -32,6 +35,48 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - Supports both Linux (bash) and Windows (PowerShell)
 - Real-time progress bar via NDJSON streaming
 - Transfers use SSM SendCommand — no S3 buckets or agents needed
+
+### Remote File Browser
+- Visual directory navigator for remote instances
+- Breadcrumb path navigation with click-to-navigate
+- Lists files with size, permissions, and modification time
+- Click a folder to browse into it, click a file to download
+- Upload to the currently browsed directory
+- Works on both Linux and Windows instances
+
+### Broadcast Commands
+- Run the same command across multiple instances simultaneously
+- Instance selection with search/filter and Select All / Deselect All
+- Concurrent SSM execution with semaphore (limit 10 parallel)
+- Per-instance results with success/error badges and output display
+- Accessible from the toolbar or the instance context menu
+
+### Saved Command Snippets
+- Quick-access library of reusable commands
+- Seeded with common defaults (df, free, top, uptime, ss, systemctl)
+- Add, edit, delete, and organize custom snippets
+- One-click insert into the active SSH terminal
+- Export/import as JSON for sharing across setups
+
+### Session History & Audit Log
+- Tracks all session activity: SSH start/stop, RDP connections, file transfers, broadcasts
+- JSON-lines format (`audit.log`) for easy parsing
+- History modal with searchable, paginated event list
+- Each event shows action, instance, timestamp, and details
+
+### Instance Quick Metrics
+- CPU load and core count
+- Memory usage (used/total with percentage)
+- Disk usage (used/total with percentage)
+- System uptime
+- Color-coded gauge bars (green < 70%, orange 70-90%, red > 90%)
+- Works on both Linux and Windows
+
+### Favorites / Pinned Instances
+- Star frequently-used instances for quick access
+- Dedicated favorites section at the top of the sidebar
+- One-click to connect, persisted across sessions
+- Toggle from the context menu or directly in the sidebar
 
 ### Fleet Summary
 - Dashboard showing total/running/stopped counts per account
@@ -45,41 +90,44 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 ![Context Menu and Instance Details](docs/screenshots/context-menu-details.png)
 
 ### UI Themes
-- **App themes**: Dark (default), Nord, Dracula, Light
-- **Terminal themes**: GitHub Dark, Atom One Dark, Nord, Dracula, Solarized Dark, Monokai
+- **App themes**: Dark (default), Nord, Dracula, Cyberpunk, Warp Hero, Light
+- **Terminal themes**: GitHub Dark, Atom One Dark, Nord, Dracula, Solarized Dark, Monokai, Catppuccin Mocha, Warp
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Browser                             │
-│   xterm.js terminals  │  Guacamole RDP  │  File I/O     │
-└────────────┬──────────┴────────┬────────┴──────┬────────┘
-             │ WebSocket         │ WebSocket      │ HTTP
-             ▼                   ▼                ▼
-┌────────────────────┐  ┌──────────────┐  ┌──────────────┐
-│    CloudTerm (Go)  │  │  guac-lite   │  │  CloudTerm   │
-│    Port 5000       │  │  (Node.js)   │  │  /upload     │
-│                    │  │  Port 8080   │  │  /download   │
-│  - EC2 Discovery   │  └──────┬───────┘  └──────────────┘
-│  - SSM Sessions    │         │
-│  - File Transfer   │         ▼
-│  - REST API        │  ┌──────────────┐
-└────────┬───────────┘  │    guacd     │
-         │              │  Port 4822   │
-         ▼              └──────────────┘
-┌────────────────────┐
-│  SSM Forwarder     │
-│  (Go) Port 5001    │
-│  - RDP tunnels     │
-│  - Port allocation │
-└────────────────────┘
-         │
-         ▼
++---------------------------------------------------------+
+|                       Browser                           |
+|   xterm.js terminals | Guacamole RDP | File I/O        |
++----------+-----------+-------+-------+------+-----------+
+           | WebSocket         | WebSocket     | HTTP
+           v                   v               v
++--------------------+  +--------------+  +--------------+
+|  CloudTerm (Go)    |  |  guac-lite   |  |  CloudTerm   |
+|  Port 5000         |  |  (Node.js)   |  |  /upload     |
+|                    |  |  Port 8080   |  |  /download   |
+|  - EC2 Discovery   |  +------+-------+  +--------------+
+|  - SSM Sessions    |         |
+|  - File Transfer   |         v
+|  - Broadcast       |  +--------------+
+|  - Audit Log       |  |    guacd     |
+|  - REST API        |  |  Port 4822   |
++--------+-----------+  +--------------+
+         |
+         v
++--------------------+
+|  SSM Forwarder     |
+|  (Go) Port 5001    |
+|  - RDP tunnels     |
+|  - Port allocation |
++--------------------+
+         |
+         v
     AWS SSM / EC2
 ```
 
 **Services:**
+
 | Service | Role | Base Image |
 |---------|------|------------|
 | `cloudterm` | Main web app, terminal sessions, API | amazonlinux:2023 + AWS CLI |
@@ -90,15 +138,15 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 ## Prerequisites
 
 - **Docker** and **Docker Compose**
-- **AWS credentials** configured in `~/.aws/` (profiles)
+- **AWS credentials** configured in `~/.aws/` (profiles with `credentials` and/or `config`)
 - EC2 instances must have the **SSM Agent** installed and an appropriate **IAM instance profile**
 
 ## Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/subbareddyalamur/cloudterm-go.git
-cd cloudterm-go
+git clone https://github.com/subbareddyalamur/cloudterm.git
+cd cloudterm
 
 # Start all services
 docker compose up -d
@@ -116,47 +164,53 @@ All configuration is via environment variables (set in `docker-compose.yml` or s
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `5000` | Web server port |
-| `TAG1` | `App` | Primary tag for grouping instances |
+| `TAG1` | `App` | Primary tag for grouping instances in sidebar |
 | `TAG2` | `Environment` | Secondary tag for grouping instances |
-| `RDP_MODE` | `native` | RDP mode: `native` or `guacamole` |
+| `RDP_MODE` | `native` | RDP mode: `native` (local client) or `guacamole` (browser) |
 | `GUAC_WS_URL` | `ws://localhost:8080` | Guacamole WebSocket URL |
-| `GUAC_CRYPT_SECRET` | — | 32-byte AES key for Guacamole tokens |
+| `GUAC_CRYPT_SECRET` | — | 32-byte AES key for Guacamole token encryption |
 | `SSM_FORWARDER_HOST` | `ssm-forwarder` | Forwarder service hostname |
 | `SSM_FORWARDER_PORT` | `5001` | Forwarder service port |
-| `INSTANCES_FILE` | `instances_list.yaml` | Path to cache discovered instances |
+| `INSTANCES_FILE` | `instances_list.yaml` | Cached instance data filename |
 | `CACHE_TTL_SECONDS` | `1800` | Instance cache TTL (seconds) |
-| `PORT_RANGE_START` | `33890` | Start of port range for RDP tunnels |
-| `PORT_RANGE_END` | `33999` | End of port range for RDP tunnels |
+| `PORT_RANGE_START` | `33890` | Start of dynamic port range for RDP tunnels |
+| `PORT_RANGE_END` | `33999` | End of dynamic port range |
+| `AUDIT_LOG_FILE` | `audit.log` | Audit log filename |
+| `PREFERENCES_FILE` | `preferences.json` | User preferences filename |
 | `DEBUG` | `false` | Enable debug logging |
 
 ## Project Structure
 
 ```
-cloudterm-go/
+cloudterm/
 ├── cmd/
-│   ├── cloudterm/main.go          # Main app entry point
-│   └── forwarder/main.go          # RDP forwarder entry point
+│   ├── cloudterm/main.go              # Main app entry point
+│   └── forwarder/main.go             # RDP forwarder entry point
 ├── internal/
+│   ├── audit/logger.go               # Session audit logging (JSON lines)
 │   ├── aws/
-│   │   ├── discovery.go           # EC2 discovery, scanning, caching
-│   │   └── filetransfer.go        # File upload/download via SSM
-│   ├── config/config.go           # Environment variable config
-│   ├── guacamole/token.go         # Guacamole token encryption (AES-256-CBC)
-│   ├── handlers/handlers.go       # HTTP + WebSocket handlers
-│   ├── session/manager.go         # Terminal session lifecycle (PTY)
-│   └── types/types.go             # Shared data structures
+│   │   ├── discovery.go              # EC2 discovery, scanning, caching
+│   │   ├── filetransfer.go           # File upload/download via SSM
+│   │   ├── filebrowser.go            # Remote directory browsing via SSM
+│   │   ├── broadcast.go              # Multi-instance command execution
+│   │   └── metrics.go                # Instance CPU/memory/disk metrics
+│   ├── config/config.go              # Environment variable config
+│   ├── guacamole/token.go            # Guacamole token encryption (AES-256-CBC)
+│   ├── handlers/handlers.go          # HTTP + WebSocket handlers
+│   ├── session/manager.go            # Terminal session lifecycle (PTY)
+│   └── types/types.go                # Shared data structures
 ├── web/
 │   ├── static/
-│   │   ├── js/app.js              # Frontend application
-│   │   └── vendor/                # xterm.js, guacamole-common.js
+│   │   ├── js/app.js                 # Frontend application
+│   │   └── vendor/                   # xterm.js, guacamole-common.js
 │   └── templates/
-│       ├── index.html             # Main UI
-│       └── rdp-client.html        # RDP client page
+│       ├── index.html                # Main UI
+│       └── rdp-client.html           # RDP client page
 ├── docker/
-│   └── guac-lite/                 # Guacamole-Lite server (Node.js)
-├── Dockerfile                     # Main app container
-├── Dockerfile.forwarder           # Forwarder container
-└── docker-compose.yml             # Full stack orchestration
+│   └── guac-lite/                    # Guacamole-Lite server (Node.js)
+├── Dockerfile                        # Main app container
+├── Dockerfile.forwarder              # Forwarder container
+└── docker-compose.yml                # Full stack orchestration
 ```
 
 ## AWS Services Used
@@ -164,7 +218,7 @@ cloudterm-go/
 | Service | Purpose |
 |---------|---------|
 | **EC2** | `DescribeInstances` for discovery |
-| **SSM** | `StartSession` for terminals, `SendCommand` for file transfer |
+| **SSM** | `StartSession` for terminals, `SendCommand` for file transfer, broadcast, and metrics |
 | **STS** | `GetCallerIdentity` for account ID resolution |
 | **IAM** | `ListAccountAliases` for account alias lookup |
 
@@ -203,13 +257,14 @@ EC2 instances must have an IAM instance profile with the `AmazonSSMManagedInstan
 - **Containers**: Docker with multi-stage builds on amazonlinux:2023
 - **RDP Proxy**: Apache Guacamole (guacd + guacamole-lite)
 
-## Security Notes
+## Security
 
 - All instance access goes through AWS SSM — no SSH keys, no open ports
 - AWS credentials are mounted read-only from the host
-- Guacamole tokens are encrypted with AES-256-CBC
+- Guacamole RDP tokens are encrypted with AES-256-CBC
 - File transfers are chunked via SSM with timeouts that scale with file size
 - Each terminal session runs in an isolated PTY with its own process group
+- All actions are logged to an append-only audit log
 
 ## License
 

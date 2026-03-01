@@ -14,8 +14,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 
+	"cloudterm-go/internal/audit"
 	"cloudterm-go/internal/aws"
 	"cloudterm-go/internal/config"
 	"cloudterm-go/internal/guacamole"
@@ -31,6 +33,7 @@ type Handler struct {
 	discovery *aws.Discovery
 	sessions  *session.Manager
 	logger    *log.Logger
+	audit     *audit.Logger
 	upgrader  websocket.Upgrader
 	clients   map[*websocket.Conn][]string // conn -> session IDs
 	clientsMu sync.Mutex
@@ -38,7 +41,7 @@ type Handler struct {
 }
 
 // New creates a Handler wired to the given dependencies.
-func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger) *Handler {
+func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger, auditLogger *audit.Logger) *Handler {
 	tmpl := template.Must(template.ParseGlob(filepath.Join("web", "templates", "*.html")))
 
 	return &Handler{
@@ -46,6 +49,7 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 		discovery: discovery,
 		sessions:  sessions,
 		logger:    logger,
+		audit:     auditLogger,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -84,6 +88,16 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /stop-guacamole-rdp", h.handleStopGuacamoleRDP)
 	mux.HandleFunc("POST /upload-file", h.handleUploadFile)
 	mux.HandleFunc("POST /download-file", h.handleDownloadFile)
+	mux.HandleFunc("POST /browse-directory", h.handleBrowseDirectory)
+	mux.HandleFunc("POST /broadcast-command", h.handleBroadcastCommand)
+
+	// API — audit & metrics
+	mux.HandleFunc("GET /audit-log", h.handleAuditLog)
+	mux.HandleFunc("GET /instance-metrics", h.handleInstanceMetrics)
+
+	// API — user preferences
+	mux.HandleFunc("GET /preferences", h.handleGetPreferences)
+	mux.HandleFunc("PUT /preferences", h.handlePutPreferences)
 
 	// WebSocket
 	mux.HandleFunc("GET /ws", h.handleWebSocket)
@@ -456,6 +470,14 @@ func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.Log(audit.AuditEvent{
+		Action:     "file_upload",
+		InstanceID: instanceID,
+		Profile:    profile,
+		Region:     region,
+		Details:    fmt.Sprintf("path=%s", remotePath),
+	})
+
 	sendProgress(aws.TransferProgress{Progress: 100, Message: "Upload complete", Status: "complete"})
 }
 
@@ -511,6 +533,14 @@ func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
 		return
 	}
+
+	h.audit.Log(audit.AuditEvent{
+		Action:     "file_download",
+		InstanceID: req.InstanceID,
+		Profile:    profile,
+		Region:     region,
+		Details:    fmt.Sprintf("path=%s", req.RemotePath),
+	})
 
 	// Send file data as base64 in the final NDJSON message.
 	finalMsg := struct {
@@ -661,6 +691,15 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		return
 	}
 
+	// Audit log the session start.
+	h.audit.Log(audit.AuditEvent{
+		Action:     "session_start",
+		InstanceID: instanceID,
+		Profile:    awsProfile,
+		Region:     awsRegion,
+		Details:    fmt.Sprintf("session_id=%s", sessionID),
+	})
+
 	// Track this session against the connection for cleanup.
 	h.clientsMu.Lock()
 	h.clients[conn] = append(h.clients[conn], sessionID)
@@ -750,6 +789,146 @@ func (h *Handler) wsCloseSession(conn *websocket.Conn, payload interface{}) {
 }
 
 // ---------------------------------------------------------------------------
+// Audit, metrics, file browser, broadcast handlers
+// ---------------------------------------------------------------------------
+
+func (h *Handler) findPlatform(instanceID string) string {
+	instances, _ := h.discovery.GetAllInstances()
+	for _, inst := range instances {
+		if inst.InstanceID == instanceID {
+			return inst.Platform
+		}
+	}
+	return "linux"
+}
+
+func (h *Handler) handleAuditLog(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	offset := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	events := h.audit.Recent(limit, offset)
+	if events == nil {
+		events = []audit.AuditEvent{}
+	}
+	jsonResponse(w, events)
+}
+
+func (h *Handler) handleInstanceMetrics(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.URL.Query().Get("instance_id")
+	if instanceID == "" {
+		jsonError(w, "instance_id is required", http.StatusBadRequest)
+		return
+	}
+
+	profile, region, err := h.discovery.GetInstanceConfig(instanceID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	platform := h.findPlatform(instanceID)
+
+	metrics, err := h.discovery.GetInstanceMetrics(profile, region, instanceID, platform)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, metrics)
+}
+
+func (h *Handler) handleBrowseDirectory(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InstanceID string `json:"instance_id"`
+		Path       string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.InstanceID == "" || req.Path == "" {
+		jsonError(w, "instance_id and path are required", http.StatusBadRequest)
+		return
+	}
+
+	profile, region, err := h.discovery.GetInstanceConfig(req.InstanceID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	platform := h.findPlatform(req.InstanceID)
+
+	entries, err := h.discovery.BrowseDirectory(profile, region, req.InstanceID, req.Path, platform)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if entries == nil {
+		entries = []aws.FileEntry{}
+	}
+	jsonResponse(w, entries)
+}
+
+func (h *Handler) handleBroadcastCommand(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InstanceIDs []string `json:"instance_ids"`
+		Command     string   `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.InstanceIDs) == 0 || req.Command == "" {
+		jsonError(w, "instance_ids and command are required", http.StatusBadRequest)
+		return
+	}
+
+	var targets []aws.BroadcastTarget
+	for _, id := range req.InstanceIDs {
+		profile, region, err := h.discovery.GetInstanceConfig(id)
+		if err != nil {
+			continue
+		}
+		inst := h.discovery.GetInstance(id)
+		name := id
+		platform := "linux"
+		if inst != nil {
+			name = inst.Name
+			platform = inst.Platform
+		}
+		targets = append(targets, aws.BroadcastTarget{
+			InstanceID: id,
+			Name:       name,
+			Profile:    profile,
+			Region:     region,
+			Platform:   platform,
+		})
+	}
+
+	if len(targets) == 0 {
+		jsonError(w, "no valid instances found", http.StatusBadRequest)
+		return
+	}
+
+	h.audit.Log(audit.AuditEvent{
+		Action:  "broadcast_command",
+		Details: fmt.Sprintf("targets=%d cmd=%s", len(targets), req.Command),
+	})
+
+	results := h.discovery.BroadcastCommand(targets, req.Command)
+	jsonResponse(w, results)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -768,4 +947,39 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 
 func (h *Handler) forwarderURL() string {
 	return fmt.Sprintf("http://%s:%d", h.cfg.SSMForwarderHost, h.cfg.SSMForwarderPort)
+}
+
+// ---------------------------------------------------------------------------
+// User Preferences
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleGetPreferences(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile(h.cfg.PreferencesFile)
+	if err != nil {
+		// No preferences file yet — return empty object
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{}"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
+func (h *Handler) handlePutPreferences(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MB max
+	if err != nil {
+		jsonError(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	// Validate it's valid JSON
+	var check json.RawMessage
+	if json.Unmarshal(data, &check) != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := os.WriteFile(h.cfg.PreferencesFile, data, 0644); err != nil {
+		jsonError(w, "failed to save preferences: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "ok"})
 }

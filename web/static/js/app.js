@@ -22,22 +22,44 @@ const PAGE_THEMES = {
     dark: {
         '--bg': '#060911', '--s1': '#0b0f17', '--s2': '#111827', '--s3': '#1a2235',
         '--b1': '#1e2a3d', '--b2': '#2d3f5c', '--text': '#dce8ff',
-        '--muted': '#6b82a8', '--dim': '#3a4d6b'
+        '--muted': '#6b82a8', '--dim': '#3a4d6b',
+        '--ssh': '#3ddc84', '--rdp': '#60a5fa', '--orange': '#fb923c',
+        '--red': '#f87171', '--yellow': '#fbbf24', '--purple': '#a78bfa'
     },
     nord: {
         '--bg': '#2e3440', '--s1': '#3b4252', '--s2': '#434c5e', '--s3': '#4c566a',
         '--b1': '#4c566a', '--b2': '#5e6779', '--text': '#eceff4',
-        '--muted': '#81a1c1', '--dim': '#616e88'
+        '--muted': '#81a1c1', '--dim': '#616e88',
+        '--ssh': '#a3be8c', '--rdp': '#88c0d0', '--orange': '#d08770',
+        '--red': '#bf616a', '--yellow': '#ebcb8b', '--purple': '#b48ead'
     },
     dracula: {
         '--bg': '#282a36', '--s1': '#21222c', '--s2': '#343746', '--s3': '#3e4154',
         '--b1': '#44475a', '--b2': '#6272a4', '--text': '#f8f8f2',
-        '--muted': '#6272a4', '--dim': '#565967'
+        '--muted': '#6272a4', '--dim': '#565967',
+        '--ssh': '#50fa7b', '--rdp': '#8be9fd', '--orange': '#ffb86c',
+        '--red': '#ff5555', '--yellow': '#f1fa8c', '--purple': '#bd93f9'
+    },
+    cyber: {
+        '--bg': '#0a0a12', '--s1': '#0e0e1a', '--s2': '#141422', '--s3': '#1c1c30',
+        '--b1': '#2a1e42', '--b2': '#3d2d5c', '--text': '#e4dfff',
+        '--muted': '#8b7eb0', '--dim': '#554d70',
+        '--ssh': '#00ff88', '--rdp': '#00d4ff', '--orange': '#ff6b9d',
+        '--red': '#ff4466', '--yellow': '#ffe156', '--purple': '#c084fc'
+    },
+    'warp-hero': {
+        '--bg': '#0c110e', '--s1': '#121a15', '--s2': '#18211d', '--s3': '#1f2b24',
+        '--b1': '#263330', '--b2': '#345045', '--text': '#e0f0e8',
+        '--muted': '#6b9880', '--dim': '#3d5c4c',
+        '--ssh': '#40a02b', '--rdp': '#1e66f5', '--orange': '#df8e1d',
+        '--red': '#d20f39', '--yellow': '#df8e1d', '--purple': '#ea76cb'
     },
     light: {
-        '--bg': '#f5f5f5', '--s1': '#ffffff', '--s2': '#e8e8e8', '--s3': '#d4d4d4',
-        '--b1': '#cccccc', '--b2': '#aaaaaa', '--text': '#1a1a1a',
-        '--muted': '#666666', '--dim': '#999999'
+        '--bg': '#f0f2f5', '--s1': '#ffffff', '--s2': '#e4e7ec', '--s3': '#d1d5db',
+        '--b1': '#c0c5ce', '--b2': '#9ca3af', '--text': '#111827',
+        '--muted': '#4b5563', '--dim': '#9ca3af',
+        '--ssh': '#16a34a', '--rdp': '#2563eb', '--orange': '#ea580c',
+        '--red': '#dc2626', '--yellow': '#ca8a04', '--purple': '#7c3aed'
     }
 };
 
@@ -95,6 +117,33 @@ const TERMINAL_THEMES = {
         brightBlack: '#75715e', brightRed: '#f92672', brightGreen: '#a6e22e',
         brightYellow: '#f4bf75', brightBlue: '#66d9ef', brightMagenta: '#ae81ff',
         brightCyan: '#a1efe4', brightWhite: '#f9f8f5'
+    },
+    'warp-hero-dark': {
+        background: '#18211d', foreground: '#ffffff', cursor: '#33895c',
+        selectionBackground: '#2a4a3a',
+        black: '#5c5f77', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d',
+        blue: '#1e66f5', magenta: '#ea76cb', cyan: '#179299', white: '#acb0be',
+        brightBlack: '#6c6f85', brightRed: '#d20f39', brightGreen: '#40a02b',
+        brightYellow: '#df8e1d', brightBlue: '#1e66f5', brightMagenta: '#ea76cb',
+        brightCyan: '#179299', brightWhite: '#bcc0cc'
+    },
+    'warp-dark': {
+        background: '#20262c', foreground: '#f1fcf9', cursor: '#00c2ff',
+        selectionBackground: '#344050',
+        black: '#20262c', red: '#db86ba', green: '#74dd91', yellow: '#e49186',
+        blue: '#75dbe1', magenta: '#b4a1db', cyan: '#9ee9ea', white: '#f1fcf9',
+        brightBlack: '#465463', brightRed: '#d04e9d', brightGreen: '#4bc66d',
+        brightYellow: '#db695b', brightBlue: '#3dbac2', brightMagenta: '#825ece',
+        brightCyan: '#62cdcd', brightWhite: '#e0e5e5'
+    },
+    'catppuccin-mocha': {
+        background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc',
+        selectionBackground: '#45475a',
+        black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
+        blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
+        brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1',
+        brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#f5c2e7',
+        brightCyan: '#94e2d5', brightWhite: '#a6adc8'
     }
 };
 
@@ -558,6 +607,7 @@ class SidebarTree {
                                         '<span class="inst-id">' + this._esc(inst.instance_id) + '</span>' +
                                         '</span>' +
                                         '<span class="os-ico">' + osIcon + '</span>' +
+                                        '<span class="fav-star' + (this._favorites && this._favorites.isFavorite(inst.instance_id) ? ' active' : '') + '" data-fav-id="' + this._esc(inst.instance_id) + '">\u2605</span>' +
                                         '</div>';
                                 }
                             }
@@ -649,13 +699,15 @@ class SidebarTree {
     }
 
     updateActiveStates(activeTabMap) {
-        // activeTabMap: Map of tabID -> type
+        // activeTabMap: Map of instanceID -> Set of types ('ssh', 'rdp')
         const instances = this.container.querySelectorAll('.t-inst');
         instances.forEach(el => {
             const id = el.dataset.id;
             el.classList.remove('active-ssh', 'active-rdp');
-            if (activeTabMap.has(id)) {
-                el.classList.add(activeTabMap.get(id) === 'rdp' ? 'active-rdp' : 'active-ssh');
+            const types = activeTabMap.get(id);
+            if (types) {
+                if (types.has('ssh')) el.classList.add('active-ssh');
+                if (types.has('rdp')) el.classList.add('active-rdp');
             }
         });
     }
@@ -700,14 +752,13 @@ class SidebarTree {
             });
         });
 
-        // Instance click -> open session.
+        // Instance click -> always open SSH session (RDP via context menu).
         this.container.querySelectorAll('.t-inst').forEach(el => {
             el.addEventListener('click', () => {
                 const id = el.dataset.id;
                 const name = el.dataset.name;
-                const type = el.dataset.type;
                 if (this.onInstanceClick) {
-                    this.onInstanceClick(id, name, type);
+                    this.onInstanceClick(id, name, 'ssh');
                 }
             });
 
@@ -715,6 +766,19 @@ class SidebarTree {
             el.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 this._showContextMenu(e, el.dataset.id, el.dataset.name, el.dataset.type);
+            });
+        });
+
+        // Favorite star click
+        this.container.querySelectorAll('.fav-star').forEach(star => {
+            star.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = star.dataset.favId;
+                if (this._favorites) {
+                    this._favorites.toggle(id);
+                    star.classList.toggle('active');
+                    if (this._onFavoritesChanged) this._onFavoritesChanged();
+                }
             });
         });
     }
@@ -779,15 +843,175 @@ class SidebarTree {
 
     _accountBadgeStyle(alias) {
         if (!alias) return '';
-        if (alias.includes('dev')) {
-            return ' style="color:#a78bfa;background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.3)"';
-        }
-        return '';
+        const palette = [
+            { c: '#60a5fa', bg: 'rgba(96,165,250,.12)', b: 'rgba(96,165,250,.3)' },
+            { c: '#a78bfa', bg: 'rgba(167,139,250,.12)', b: 'rgba(167,139,250,.3)' },
+            { c: '#34d399', bg: 'rgba(52,211,153,.12)', b: 'rgba(52,211,153,.3)' },
+            { c: '#f472b6', bg: 'rgba(244,114,182,.12)', b: 'rgba(244,114,182,.3)' },
+            { c: '#fbbf24', bg: 'rgba(251,191,36,.12)', b: 'rgba(251,191,36,.3)' },
+            { c: '#22d3ee', bg: 'rgba(34,211,238,.12)', b: 'rgba(34,211,238,.3)' },
+            { c: '#fb923c', bg: 'rgba(251,146,60,.12)', b: 'rgba(251,146,60,.3)' },
+            { c: '#a3e635', bg: 'rgba(163,230,53,.12)', b: 'rgba(163,230,53,.3)' },
+        ];
+        let h = 0;
+        for (let i = 0; i < alias.length; i++) h = ((h << 5) - h + alias.charCodeAt(i)) | 0;
+        const p = palette[Math.abs(h) % palette.length];
+        return ' style="color:' + p.c + ';background:' + p.bg + ';border-color:' + p.b + '"';
     }
 
     _esc(str) {
         if (!str) return '';
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Favorites Manager
+// ---------------------------------------------------------------------------
+
+class FavoritesManager {
+    constructor(onFavoriteClick) {
+        this.favorites = this._load();
+        this.onFavoriteClick = onFavoriteClick;
+    }
+
+    _load() {
+        try {
+            const raw = localStorage.getItem('cloudterm_favorites');
+            return new Set(raw ? JSON.parse(raw) : []);
+        } catch { return new Set(); }
+    }
+
+    _save() {
+        localStorage.setItem('cloudterm_favorites', JSON.stringify([...this.favorites]));
+        if (this.onSave) this.onSave();
+    }
+
+    toggle(instanceID) {
+        if (this.favorites.has(instanceID)) {
+            this.favorites.delete(instanceID);
+        } else {
+            this.favorites.add(instanceID);
+        }
+        this._save();
+    }
+
+    isFavorite(instanceID) {
+        return this.favorites.has(instanceID);
+    }
+
+    render(container, instanceDataFn, contextMenuFn) {
+        const ids = [...this.favorites];
+        if (ids.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+        container.style.display = '';
+        let html = '<div class="fav-header">\u2605 Favorites</div>';
+        let anyRendered = false;
+        for (const id of ids) {
+            const inst = instanceDataFn(id);
+            if (!inst) continue;
+            anyRendered = true;
+            const connType = inst.platform === 'windows' ? 'rdp' : 'ssh';
+            const stateClass = inst.state === 'running' ? 'run' : inst.state === 'stopped' ? 'stop' : 'pend';
+            html += '<div class="fav-row" data-id="' + id + '" data-name="' + (inst.name || '').replace(/"/g, '&quot;') + '" data-type="' + connType + '">' +
+                '<div class="sdot ' + stateClass + '" style="width:6px;height:6px;"></div>' +
+                '<span class="fav-row-name">' + (inst.name || id) + '</span>' +
+                '<span class="fav-row-unstar" data-id="' + id + '" title="Remove from favorites">\u2715</span>' +
+                '</div>';
+        }
+        if (!anyRendered) {
+            container.style.display = 'none';
+            return;
+        }
+        container.innerHTML = html;
+
+        // Click to open session
+        container.querySelectorAll('.fav-row').forEach(row => {
+            row.addEventListener('click', (e) => {
+                if (e.target.classList.contains('fav-row-unstar')) return;
+                this.onFavoriteClick(row.dataset.id, row.dataset.name, 'ssh');
+            });
+            row.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                if (contextMenuFn) contextMenuFn(e, row.dataset.id, row.dataset.name, row.dataset.type);
+            });
+        });
+
+        // Unstar button
+        container.querySelectorAll('.fav-row-unstar').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggle(btn.dataset.id);
+                this.render(container, instanceDataFn, contextMenuFn);
+            });
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Snippets Manager
+// ---------------------------------------------------------------------------
+
+class SnippetsManager {
+    constructor() {
+        this.snippets = this._load();
+    }
+
+    _defaultSnippets() {
+        return [
+            { id: 'd1', name: 'Disk Usage', command: 'df -h', description: 'Show disk space usage' },
+            { id: 'd2', name: 'Memory Usage', command: 'free -m', description: 'Show memory in MB' },
+            { id: 'd3', name: 'Top Processes', command: 'top -b -n1 | head -20', description: 'Snapshot of top processes' },
+            { id: 'd4', name: 'System Uptime', command: 'uptime', description: 'System uptime and load' },
+            { id: 'd5', name: 'Network Connections', command: 'ss -tunlp', description: 'Listening ports and connections' },
+            { id: 'd6', name: 'Service Status', command: 'systemctl status', description: 'Overview of systemd services' }
+        ];
+    }
+
+    _load() {
+        try {
+            const raw = localStorage.getItem('cloudterm_snippets');
+            if (raw) return JSON.parse(raw);
+        } catch {}
+        const defaults = this._defaultSnippets();
+        this._saveRaw(defaults);
+        return defaults;
+    }
+
+    _save() { this._saveRaw(this.snippets); if (this.onSave) this.onSave(); }
+    _saveRaw(data) { localStorage.setItem('cloudterm_snippets', JSON.stringify(data)); }
+
+    getAll() { return this.snippets; }
+
+    add(name, command, description) {
+        this.snippets.push({ id: 'u' + Date.now(), name, command, description: description || '' });
+        this._save();
+    }
+
+    update(id, name, command, description) {
+        const s = this.snippets.find(s => s.id === id);
+        if (s) { s.name = name; s.command = command; s.description = description || ''; this._save(); }
+    }
+
+    remove(id) {
+        this.snippets = this.snippets.filter(s => s.id !== id);
+        this._save();
+    }
+
+    exportJSON() { return JSON.stringify(this.snippets, null, 2); }
+
+    importJSON(jsonStr) {
+        const arr = JSON.parse(jsonStr);
+        if (!Array.isArray(arr)) throw new Error('Expected array');
+        this.snippets = arr.map(s => ({
+            id: s.id || ('i' + Date.now() + Math.random()),
+            name: s.name || 'Untitled',
+            command: s.command || '',
+            description: s.description || ''
+        }));
+        this._save();
     }
 }
 
@@ -882,13 +1106,17 @@ class CloudTermApp {
             document.getElementById('treeContainer') || document.getElementById('tree'),
             (id, name, type) => this.openSession(id, name, type)
         );
+        this.favorites = new FavoritesManager((id, name, type) => this.openSession(id, name, type));
+        this.snippets = new SnippetsManager();
+        this.sidebar._favorites = this.favorites;
+        this.sidebar._onFavoritesChanged = () => this._renderFavorites();
         this.sidebar.onRefresh = () => {
             this._loadInstances();
             this._loadFleetStats();
         };
 
-        this.currentPageTheme = 'dark';
-        this.currentTermTheme = 'github-dark';
+        this.currentPageTheme = localStorage.getItem('cloudterm_page_theme') || 'dark';
+        this.currentTermTheme = localStorage.getItem('cloudterm_term_theme') || 'github-dark';
         this.zoomLevel = 100;
         this.rdpMode = config.rdpMode || 'native';
         this.guacWSURL = config.guacWSURL || '';
@@ -903,11 +1131,24 @@ class CloudTermApp {
         this._setupEventListeners();
         this._setupZoomControls();
         this._setupThemeSelector();
+        // Apply saved themes from localStorage.
+        if (this.currentPageTheme !== 'dark') this._setPageTheme(this.currentPageTheme);
+        if (this.currentTermTheme !== 'github-dark') this._setTermTheme(this.currentTermTheme);
         this._setupFilterInput();
         this._setupScanButton();
         this._setupContextMenu();
         this._setupDetailsModal();
         this._setupSummaryButton();
+        this._setupSnippetsButton();
+        this._setupHistoryButton();
+        this._setupBroadcastButton();
+
+        // Wire up server preference sync callbacks
+        this.favorites.onSave = () => this._pushPreferencesToServer();
+        this.snippets.onSave = () => this._pushPreferencesToServer();
+
+        // Load preferences from server (overrides localStorage if server has data)
+        this._loadServerPreferences();
     }
 
     // -- WebSocket message handlers ------------------------------------------
@@ -951,6 +1192,7 @@ class CloudTermApp {
             const data = await resp.json();
             this.sidebar.render(data);
             this._syncSidebarActiveStates();
+            this._renderFavorites();
         } catch (e) {
             console.error('Failed to load instances:', e);
         }
@@ -1055,9 +1297,9 @@ class CloudTermApp {
     // -- Session management --------------------------------------------------
 
     openSession(instanceID, instanceName, type) {
-        const tabID = instanceID;
+        const tabID = instanceID + '-' + type;
 
-        // Reuse existing tab.
+        // Reuse existing tab of same type.
         if (this.tabManager.tabs.has(tabID)) {
             this.tabManager.switchTab(tabID);
             if (type === 'ssh') {
@@ -1068,6 +1310,9 @@ class CloudTermApp {
 
         // Create tab.
         this.tabManager.openTab(tabID, instanceName, type);
+        // Store the raw instanceID on tab info for backend API calls.
+        const tabInfo = this.tabManager.tabs.get(tabID);
+        if (tabInfo) tabInfo.instanceID = instanceID;
 
         if (type === 'ssh') {
             const panel = document.getElementById('panel-' + tabID);
@@ -1081,29 +1326,15 @@ class CloudTermApp {
                 });
             }
         } else if (type === 'rdp') {
-            this._startRDPSession(instanceID, instanceName);
+            this._startRDPSession(tabID, instanceID, instanceName);
         }
 
-        this._syncSidebarActiveStates();
-    }
-
-    _closeSession(tabID) {
-        const info = this.tabManager.tabs.get(tabID);
-        if (!info) return;
-
-        if (info.type === 'ssh') {
-            this.termManager.closeTerminal(tabID);
-        } else if (info.type === 'rdp') {
-            this._stopRDPSession(tabID);
-        }
-
-        this.tabManager.closeTab(tabID);
         this._syncSidebarActiveStates();
     }
 
     // -- RDP -----------------------------------------------------------------
 
-    async _startRDPSession(instanceID, instanceName) {
+    async _startRDPSession(tabID, instanceID, instanceName) {
         if (this.rdpMode === 'guacamole') {
             try {
                 const creds = await showRDPCredentialModal(instanceID, instanceName);
@@ -1131,13 +1362,19 @@ class CloudTermApp {
                 const data = await resp.json();
 
                 // Place an iframe in the RDP panel.
-                const panel = document.getElementById('panel-' + instanceID);
+                const panel = document.getElementById('panel-' + tabID);
                 if (panel) {
                     const viewport = panel.querySelector('.rdp-viewport');
                     if (viewport) {
                         viewport.innerHTML = '<iframe src="' + data.url + '" ' +
                             'style="width:100%;height:100%;border:none;" ' +
                             'allow="clipboard-read; clipboard-write"></iframe>';
+                        const rdpIframe = viewport.querySelector('iframe');
+                        if (rdpIframe) {
+                            rdpIframe.addEventListener('load', () => {
+                                rdpIframe.contentWindow.focus();
+                            });
+                        }
                     }
                 }
             } catch (e) {
@@ -1197,9 +1434,12 @@ class CloudTermApp {
     // -- Sidebar active state sync -------------------------------------------
 
     _syncSidebarActiveStates() {
+        // Build map of instanceID -> Set of active types (ssh, rdp, or both).
         const activeMap = new Map();
-        for (const [id, info] of this.tabManager.tabs) {
-            activeMap.set(id, info.type);
+        for (const [, info] of this.tabManager.tabs) {
+            const instID = info.instanceID || info.sessionID;
+            if (!activeMap.has(instID)) activeMap.set(instID, new Set());
+            activeMap.get(instID).add(info.type);
         }
         this.sidebar.updateActiveStates(activeMap);
     }
@@ -1255,22 +1495,23 @@ class CloudTermApp {
     }
 
     _updateScanStatus(status) {
-        const el = document.getElementById('scanStatus');
-        if (!el) return;
+        const btn = document.getElementById('scanBtn');
+        if (!btn) return;
         if (status.status === 'scanning') {
-            el.innerHTML = '<div class="scan-dot" style="animation:pulse .8s ease-in-out infinite"></div>Scanning... (' + (status.total_instances || 0) + ' found)';
+            btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Scanning... (' + (status.total_instances || 0) + ')';
         } else if (status.status === 'completed') {
-            el.innerHTML = '<div class="scan-dot"></div>Scanned just now';
+            btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Scan Instances';
+            btn.classList.remove('scanning');
         } else if (status.status === 'error') {
-            el.innerHTML = '<div class="scan-dot" style="background:var(--red);box-shadow:0 0 5px var(--red)"></div>Scan error';
+            btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Scan Instances';
+            btn.classList.remove('scanning');
+            showToast('Scan failed');
         }
     }
 
     _updateConnectionIndicator(connected) {
-        const el = document.getElementById('scanStatus');
-        if (!el) return;
         if (!connected) {
-            el.innerHTML = '<div class="scan-dot" style="background:var(--red);box-shadow:0 0 5px var(--red)"></div>Disconnected';
+            showToast('WebSocket disconnected — reconnecting...');
         }
     }
 
@@ -1332,12 +1573,21 @@ class CloudTermApp {
             root.style.setProperty(prop, val);
         }
         this.currentPageTheme = name;
+        try { localStorage.setItem('cloudterm_page_theme', name); } catch (e) {}
+        this._pushPreferencesToServer();
 
-        // Update active checkmark in dropdown.
         document.querySelectorAll('[data-page-theme]').forEach(el => {
-            el.classList.toggle('active', el.dataset.pageTheme === name);
-            const check = el.querySelector('.check');
-            if (check) check.style.display = el.dataset.pageTheme === name ? '' : 'none';
+            const isActive = el.dataset.pageTheme === name;
+            el.classList.toggle('active', isActive);
+            let check = el.querySelector('.check');
+            if (isActive && !check) {
+                check = document.createElement('span');
+                check.className = 'check';
+                check.textContent = '\u2713';
+                el.appendChild(check);
+            } else if (!isActive && check) {
+                check.remove();
+            }
         });
     }
 
@@ -1345,12 +1595,71 @@ class CloudTermApp {
         if (!TERMINAL_THEMES[name]) return;
         this.currentTermTheme = name;
         this.termManager.applyTheme(name);
+        try { localStorage.setItem('cloudterm_term_theme', name); } catch (e) {}
+        this._pushPreferencesToServer();
 
         document.querySelectorAll('[data-term-theme]').forEach(el => {
-            el.classList.toggle('active', el.dataset.termTheme === name);
-            const check = el.querySelector('.check');
-            if (check) check.style.display = el.dataset.termTheme === name ? '' : 'none';
+            const isActive = el.dataset.termTheme === name;
+            el.classList.toggle('active', isActive);
+            let check = el.querySelector('.check');
+            if (isActive && !check) {
+                check = document.createElement('span');
+                check.className = 'check';
+                check.textContent = '\u2713';
+                el.appendChild(check);
+            } else if (!isActive && check) {
+                check.remove();
+            }
         });
+    }
+
+    // -- Server preferences sync ---------------------------------------------
+
+    async _loadServerPreferences() {
+        try {
+            const resp = await fetch('/preferences');
+            if (!resp.ok) return;
+            const prefs = await resp.json();
+            if (!prefs || Object.keys(prefs).length === 0) return;
+
+            // Update in-memory state from server data
+            if (prefs.favorites) {
+                this.favorites.favorites = new Set(prefs.favorites);
+                localStorage.setItem('cloudterm_favorites', JSON.stringify(prefs.favorites));
+            }
+            if (prefs.snippets && prefs.snippets.length > 0) {
+                this.snippets.snippets = prefs.snippets;
+                localStorage.setItem('cloudterm_snippets', JSON.stringify(prefs.snippets));
+            }
+            if (prefs.page_theme && prefs.page_theme !== this.currentPageTheme) {
+                this._setPageTheme(prefs.page_theme);
+            }
+            if (prefs.term_theme && prefs.term_theme !== this.currentTermTheme) {
+                this._setTermTheme(prefs.term_theme);
+            }
+
+            // Re-render favorites section if data changed
+            this._renderFavorites();
+        } catch (e) {
+            // Server unavailable — localStorage is the fallback
+        }
+    }
+
+    _pushPreferencesToServer() {
+        clearTimeout(this._prefsSaveTimer);
+        this._prefsSaveTimer = setTimeout(() => {
+            const prefs = {
+                favorites: [...this.favorites.favorites],
+                snippets: this.snippets.getAll(),
+                page_theme: this.currentPageTheme,
+                term_theme: this.currentTermTheme
+            };
+            fetch('/preferences', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(prefs)
+            }).catch(() => {});
+        }, 500);
     }
 
     // -- Filter input --------------------------------------------------------
@@ -1404,6 +1713,16 @@ class CloudTermApp {
                     this._showUploadModal(id, name);
                 } else if (text.includes('download file')) {
                     this._showDownloadModal(id, name);
+                } else if (text.includes('toggle favorite')) {
+                    this.favorites.toggle(id);
+                    this._renderFavorites();
+                    // Update star in sidebar tree
+                    const star = this.sidebar.container.querySelector('.fav-star[data-fav-id="' + id + '"]');
+                    if (star) star.classList.toggle('active');
+                } else if (text.includes('browse files')) {
+                    this._showFileBrowserModal(id, name);
+                } else if (text.includes('broadcast command')) {
+                    this._showBroadcastModal(id);
                 } else if (text.includes('close all')) {
                     this._closeSession(id);
                 }
@@ -1457,8 +1776,15 @@ class CloudTermApp {
             }
         }
 
+        // Metrics section
+        html += '<div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--b1);">' +
+            '<button id="metricsLoadBtn" style="padding:6px 16px;background:var(--s3);border:1px solid var(--b1);border-radius:5px;color:var(--muted);font-size:10px;cursor:pointer;">Load Metrics</button>' +
+            '<div id="metricsContainer" style="margin-top:10px;display:none;"></div>' +
+            '</div>';
+
         body.innerHTML = html;
         modal.classList.add('show');
+        document.getElementById('metricsLoadBtn')?.addEventListener('click', () => this._loadInstanceMetrics(instanceID));
     }
 
     _setupDetailsModal() {
@@ -1731,6 +2057,542 @@ class CloudTermApp {
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
+    // -- Favorites ---------------------------------------------------------------
+
+    _renderFavorites() {
+        const container = document.getElementById('favoritesSection');
+        if (!container) return;
+        this.favorites.render(container,
+            (id) => this.sidebar.getInstance(id),
+            (e, id, name, type) => this.sidebar._showContextMenu(e, id, name, type)
+        );
+    }
+
+    // -- Snippets ----------------------------------------------------------------
+
+    _setupSnippetsButton() {
+        const btn = document.getElementById('snippetsBtn');
+        if (btn) btn.addEventListener('click', () => this._showSnippetsModal());
+    }
+
+    _showSnippetsModal() {
+        const modal = document.getElementById('snippetsModal');
+        const body = document.getElementById('snippetsBody');
+        if (!modal || !body) return;
+        this._renderSnippetsList(body);
+        modal.classList.add('show');
+
+        document.getElementById('snippetExportBtn')?.addEventListener('click', () => {
+            const json = this.snippets.exportJSON();
+            const blob = new Blob([json], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'cloudterm-snippets.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+            showToast('Snippets exported');
+        });
+
+        document.getElementById('snippetImportBtn')?.addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = () => {
+                const file = input.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    try {
+                        this.snippets.importJSON(reader.result);
+                        this._renderSnippetsList(body);
+                        showToast('Snippets imported');
+                    } catch (e) {
+                        showToast('Import failed: ' + e.message, 5000);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        });
+    }
+
+    _renderSnippetsList(body) {
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+        const snippets = this.snippets.getAll();
+
+        let html = '<div class="snippet-add-form">' +
+            '<input class="snippet-input" id="snippetNewName" placeholder="Name">' +
+            '<textarea class="snippet-input" id="snippetNewCmd" rows="3" placeholder="Command or script (multi-line supported)" style="font-family:\'JetBrains Mono\',monospace;resize:vertical;"></textarea>' +
+            '<input class="snippet-input" id="snippetNewDesc" placeholder="Description (optional)">' +
+            '<button id="snippetAddBtn" style="padding:6px;background:var(--ssh-dim);border:1px solid var(--ssh-b);border-radius:5px;color:var(--ssh);font-size:10px;cursor:pointer;">Add Snippet</button>' +
+            '</div>';
+
+        for (const s of snippets) {
+            const cmdId = 'snip_' + s.id;
+            html += '<div class="snippet-row">' +
+                '<div style="flex:1;min-width:0;">' +
+                '<div class="snippet-name">' + esc(s.name) + '</div>' +
+                '<pre class="snippet-cmd" style="white-space:pre-wrap;margin:0;">' + esc(s.command) + '</pre>' +
+                (s.description ? '<div class="snippet-desc">' + esc(s.description) + '</div>' : '') +
+                '</div>' +
+                '<div class="snippet-actions">' +
+                '<button class="snippet-btn" data-action="insert" data-snip-id="' + s.id + '" title="Insert into terminal">\u25B6</button>' +
+                '<button class="snippet-btn" data-action="copy" data-snip-id="' + s.id + '" title="Copy to clipboard">\u2398</button>' +
+                '<button class="snippet-btn" data-action="delete" data-id="' + s.id + '" title="Delete">\u2715</button>' +
+                '</div></div>';
+        }
+
+        body.innerHTML = html;
+
+        // Add snippet
+        document.getElementById('snippetAddBtn')?.addEventListener('click', () => {
+            const name = document.getElementById('snippetNewName')?.value?.trim();
+            const cmd = document.getElementById('snippetNewCmd')?.value?.trim();
+            const desc = document.getElementById('snippetNewDesc')?.value?.trim();
+            if (!name || !cmd) { showToast('Name and command are required'); return; }
+            this.snippets.add(name, cmd, desc);
+            this._renderSnippetsList(body);
+        });
+
+        // Action buttons
+        body.querySelectorAll('.snippet-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const action = btn.dataset.action;
+                if (action === 'insert') {
+                    const snip = this.snippets.getAll().find(s => s.id === btn.dataset.snipId);
+                    if (snip) this._insertSnippetToTerminal(snip.command);
+                } else if (action === 'copy') {
+                    const snip = this.snippets.getAll().find(s => s.id === btn.dataset.snipId);
+                    if (snip) navigator.clipboard.writeText(snip.command).then(() => showToast('Copied to clipboard'));
+                } else if (action === 'delete') {
+                    this.snippets.remove(btn.dataset.id);
+                    this._renderSnippetsList(body);
+                }
+            });
+        });
+    }
+
+    _insertSnippetToTerminal(command) {
+        const tabID = this.tabManager.activeTab;
+        if (!tabID) { showToast('No active terminal'); return; }
+        const info = this.tabManager.tabs.get(tabID);
+        if (!info || info.type !== 'ssh') { showToast('Active tab is not an SSH session'); return; }
+        const entry = this.termManager.terminals.get(tabID);
+        if (entry) entry.term.paste(command);
+    }
+
+    // -- History / Audit Log ---------------------------------------------------
+
+    _setupHistoryButton() {
+        const btn = document.getElementById('historyBtn');
+        if (btn) btn.addEventListener('click', () => this._showHistoryModal());
+    }
+
+    async _showHistoryModal() {
+        const modal = document.getElementById('historyModal');
+        const body = document.getElementById('historyBody');
+        if (!modal || !body) return;
+        body.innerHTML = '<div style="text-align:center;color:var(--dim);padding:20px">Loading...</div>';
+        modal.classList.add('show');
+        await this._loadAuditEvents(body);
+
+        document.getElementById('historyRefreshBtn')?.addEventListener('click', () => this._loadAuditEvents(body));
+    }
+
+    async _loadAuditEvents(body) {
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+        try {
+            const resp = await fetch('/audit-log?limit=100&offset=0');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const events = await resp.json();
+
+            const actionIcons = {
+                session_start: '\u25B6', session_end: '\u25A0',
+                file_upload: '\u2B06', file_download: '\u2B07',
+                broadcast_command: '\u{1F4E1}'
+            };
+            const actionColors = {
+                session_start: 'var(--ssh)', session_end: 'var(--dim)',
+                file_upload: 'var(--orange)', file_download: 'var(--rdp)',
+                broadcast_command: 'var(--purple)'
+            };
+
+            let html = '';
+            for (const ev of events) {
+                const icon = actionIcons[ev.action] || '\u25CF';
+                const color = actionColors[ev.action] || 'var(--muted)';
+                const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleString() : '';
+                html += '<div class="audit-row">' +
+                    '<span class="audit-icon" style="color:' + color + '">' + icon + '</span>' +
+                    '<span class="audit-action">' + esc(ev.action ? ev.action.replace(/_/g, ' ') : '') + '</span>' +
+                    '<span class="audit-instance">' + esc(ev.instance_name || ev.instance_id) + '</span>' +
+                    '<span class="audit-detail">' + esc(ev.details) + '</span>' +
+                    '<span class="audit-time">' + esc(ts) + '</span>' +
+                    '</div>';
+            }
+            body.innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--dim)">No events recorded yet</div>';
+        } catch (e) {
+            body.innerHTML = '<div style="color:var(--red);padding:20px">Failed to load history: ' + e.message + '</div>';
+        }
+    }
+
+    // -- Instance Metrics --------------------------------------------------------
+
+    _loadInstanceMetrics(instanceID) {
+        const container = document.getElementById('metricsContainer');
+        const btn = document.getElementById('metricsLoadBtn');
+        if (!container) return;
+        container.style.display = '';
+        container.innerHTML = '<div style="text-align:center;color:var(--dim);padding:10px">Loading metrics...</div>';
+        if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+
+        fetch('/instance-metrics?instance_id=' + encodeURIComponent(instanceID))
+            .then(resp => { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
+            .then(m => {
+                const gauge = (label, pct, used, total, unit) => {
+                    const color = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--orange)' : 'var(--ssh)';
+                    return '<div class="metric-gauge">' +
+                        '<div class="metric-label">' + label + '</div>' +
+                        '<div class="metric-bar-bg"><div class="metric-bar-fill" style="width:' + Math.min(pct, 100) + '%;background:' + color + '"></div></div>' +
+                        '<div class="metric-value">' + used + ' / ' + total + ' ' + unit + ' (' + pct.toFixed(1) + '%)</div>' +
+                        '</div>';
+                };
+                const cpuPct = m.cpu_count > 0 ? (m.cpu_load / m.cpu_count) * 100 : 0;
+                container.innerHTML =
+                    gauge('CPU Load', cpuPct, m.cpu_load.toFixed(2), m.cpu_count + ' cores', '') +
+                    gauge('Memory', m.mem_used_pct, m.mem_used_mb, m.mem_total_mb, 'MB') +
+                    gauge('Disk (/)', m.disk_used_pct, m.disk_used_gb.toFixed(1), m.disk_total_gb.toFixed(1), 'GB') +
+                    '<div class="metric-uptime">Uptime: ' + (m.uptime || 'N/A') + '</div>';
+            })
+            .catch(e => {
+                container.innerHTML = '<div style="color:var(--red);font-size:11px">Failed to load metrics: ' + e.message + '</div>';
+            })
+            .finally(() => {
+                if (btn) { btn.disabled = false; btn.textContent = 'Refresh Metrics'; }
+            });
+    }
+
+    // -- File Browser -----------------------------------------------------------
+
+    async _showFileBrowserModal(instanceID, instanceName) {
+        const modal = document.getElementById('fileBrowserModal');
+        if (!modal) return;
+        document.getElementById('fbTarget').textContent = instanceName + ' (' + instanceID + ')';
+        this._fbInstanceID = instanceID;
+        this._fbInstanceName = instanceName;
+        const inst = this.sidebar.getInstance(instanceID);
+        const startPath = (inst && inst.platform === 'windows') ? 'C:\\' : '/';
+        modal.classList.add('show');
+
+        document.getElementById('fbUploadBtn')?.addEventListener('click', () => {
+            document.getElementById('fileBrowserModal')?.classList.remove('show');
+            this._showUploadModal(this._fbInstanceID, this._fbInstanceName);
+            const remotePathEl = document.getElementById('uploadRemotePath');
+            if (remotePathEl && this._fbCurrentPath) {
+                const sep = (inst && inst.platform === 'windows') ? '\\' : '/';
+                remotePathEl.value = this._fbCurrentPath.replace(/[\/\\]$/, '') + sep;
+            }
+        });
+
+        this._browsePath(startPath);
+    }
+
+    async _browsePath(path) {
+        const body = document.getElementById('fbBody');
+        const breadcrumb = document.getElementById('fbBreadcrumb');
+        if (!body) return;
+        this._fbCurrentPath = path;
+        body.innerHTML = '<div style="text-align:center;color:var(--dim);padding:30px">Loading...</div>';
+
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+
+        // Render breadcrumb
+        if (breadcrumb) {
+            const parts = path.split(/[\/\\]/).filter(Boolean);
+            let html = '<span class="fb-crumb" data-path="/">/</span>';
+            let accumulated = '';
+            for (const p of parts) {
+                accumulated += '/' + p;
+                html += ' <span class="fb-sep">\u25B8</span> <span class="fb-crumb" data-path="' + esc(accumulated) + '">' + esc(p) + '</span>';
+            }
+            breadcrumb.innerHTML = html;
+            breadcrumb.querySelectorAll('.fb-crumb').forEach(el => {
+                el.addEventListener('click', () => this._browsePath(el.dataset.path));
+            });
+        }
+
+        try {
+            const resp = await fetch('/browse-directory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ instance_id: this._fbInstanceID, path: path })
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const entries = await resp.json();
+
+            if (!entries || entries.length === 0) {
+                body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--dim)">Empty directory</div>';
+                return;
+            }
+
+            let html = '<table class="fb-table"><thead><tr><th></th><th>Name</th><th>Size</th><th>Modified</th><th>Perms</th><th></th></tr></thead><tbody>';
+            // Parent directory
+            if (path !== '/' && path !== 'C:\\') {
+                const parent = path.replace(/[\/\\][^\/\\]+[\/\\]?$/, '') || '/';
+                html += '<tr class="fb-row fb-dir" data-path="' + esc(parent) + '" data-is-dir="true"><td class="fb-icon">\u{1F4C1}</td><td>..</td><td></td><td></td><td></td><td></td></tr>';
+            }
+            for (const entry of entries) {
+                const fullPath = path.replace(/[\/\\]$/, '') + '/' + entry.name;
+                const sizeStr = entry.is_dir ? '' : this._formatSize(entry.size);
+                const icon = entry.is_dir ? '\u{1F4C1}' : '\u{1F4C4}';
+                const dlBtn = entry.is_dir ? '' : '<button class="fb-dl-btn" data-dl-path="' + esc(fullPath) + '" title="Download">\u2B07</button>';
+                html += '<tr class="fb-row ' + (entry.is_dir ? 'fb-dir' : 'fb-file') + '" data-path="' + esc(fullPath) + '" data-is-dir="' + entry.is_dir + '">' +
+                    '<td class="fb-icon">' + icon + '</td>' +
+                    '<td class="fb-name">' + esc(entry.name) + '</td>' +
+                    '<td class="fb-size">' + sizeStr + '</td>' +
+                    '<td class="fb-modified">' + esc(entry.modified) + '</td>' +
+                    '<td class="fb-perms">' + esc(entry.permissions) + '</td>' +
+                    '<td>' + dlBtn + '</td></tr>';
+            }
+            html += '</tbody></table>';
+            body.innerHTML = html;
+
+            // Navigate into directories on row click
+            body.querySelectorAll('.fb-row').forEach(row => {
+                row.addEventListener('click', (e) => {
+                    if (e.target.closest('.fb-dl-btn')) return;
+                    if (row.dataset.isDir === 'true') {
+                        this._browsePath(row.dataset.path);
+                    }
+                });
+            });
+
+            // Download button per file — bump z-index so download modal renders above file browser
+            body.querySelectorAll('.fb-dl-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const dlModal = document.getElementById('downloadModal');
+                    if (dlModal) dlModal.style.zIndex = '510';
+                    this._showDownloadModal(this._fbInstanceID, this._fbInstanceName);
+                    const remotePathEl = document.getElementById('downloadRemotePath');
+                    if (remotePathEl) remotePathEl.value = btn.dataset.dlPath;
+                });
+            });
+        } catch (e) {
+            body.innerHTML = '<div style="color:var(--red);padding:20px">Browse failed: ' + e.message + '</div>';
+        }
+    }
+
+    // -- Broadcast ---------------------------------------------------------------
+
+    _setupBroadcastButton() {
+        const btn = document.getElementById('broadcastBtn');
+        if (btn) btn.addEventListener('click', () => this._toggleBroadcastBar());
+        this._setupBroadcastBar();
+    }
+
+    _toggleBroadcastBar() {
+        const bar = document.getElementById('broadcastBar');
+        if (!bar) return;
+        const visible = bar.style.display !== 'none';
+        bar.style.display = visible ? 'none' : 'flex';
+        if (!visible) {
+            this._updateBroadcastBarCount();
+            document.getElementById('bbInput')?.focus();
+        }
+    }
+
+    _setupBroadcastBar() {
+        const bar = document.getElementById('broadcastBar');
+        if (!bar) return;
+
+        const input = document.getElementById('bbInput');
+        const closeBtn = document.getElementById('bbCloseBtn');
+        const sendBtn = document.getElementById('bbSendBtn');
+
+        if (closeBtn) closeBtn.addEventListener('click', () => { bar.style.display = 'none'; });
+        const scriptBtn = document.getElementById('bbScriptMode');
+        if (scriptBtn) scriptBtn.addEventListener('click', () => this._showBroadcastModal());
+
+        const doSend = () => {
+            const cmd = input.value;
+            if (!cmd.trim()) return;
+            this._broadcastToSessions(cmd);
+            input.value = '';
+            input.style.height = 'auto';
+            input.style.height = input.scrollHeight + 'px';
+        };
+
+        if (sendBtn) sendBtn.addEventListener('click', doSend);
+
+        if (input) {
+            // Auto-resize textarea as content grows
+            input.addEventListener('input', () => {
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+            });
+            input.addEventListener('keydown', (e) => {
+                // Ctrl+Enter (or Cmd+Enter on Mac) sends the command
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    doSend();
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    bar.style.display = 'none';
+                }
+            });
+        }
+    }
+
+    _updateBroadcastBarCount() {
+        const el = document.getElementById('bbSessionCount');
+        if (!el) return;
+        let count = 0;
+        for (const [tabID,] of this.termManager.terminals) {
+            const info = this.tabManager.tabs.get(tabID);
+            if (info && info.type === 'ssh') count++;
+        }
+        el.textContent = count + ' session' + (count !== 1 ? 's' : '');
+    }
+
+    _broadcastToSessions(command) {
+        // Replace newlines with \r so each line acts as Enter in the terminal PTY
+        const payload = command.replace(/\r?\n/g, '\r') + '\r';
+        let count = 0;
+        for (const [tabID, entry] of this.termManager.terminals) {
+            const info = this.tabManager.tabs.get(tabID);
+            if (info && info.type === 'ssh') {
+                this.ws.send('terminal_input', {
+                    session_id: tabID,
+                    input: payload
+                });
+                count++;
+            }
+        }
+        if (count === 0) {
+            showToast('No active SSH sessions to broadcast to');
+        } else {
+            const lines = command.split(/\r?\n/).filter(l => l.trim()).length;
+            showToast('Sent ' + lines + ' line' + (lines !== 1 ? 's' : '') + ' to ' + count + ' session' + (count !== 1 ? 's' : ''));
+        }
+        this._updateBroadcastBarCount();
+    }
+
+    _showBroadcastModal(preselectedID) {
+        const modal = document.getElementById('broadcastModal');
+        if (!modal) return;
+
+        const list = document.getElementById('bcInstanceList');
+        const instances = this.sidebar._allInstances.filter(i => i.state === 'running');
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+
+        let html = '';
+        for (const inst of instances) {
+            const checked = preselectedID === inst.instance_id ? 'checked' : '';
+            html += '<label class="bc-inst-row" data-name="' + esc(inst.name).toLowerCase() + '" data-id="' + inst.instance_id.toLowerCase() + '">' +
+                '<input type="checkbox" class="bc-check" value="' + inst.instance_id + '" ' + checked + '>' +
+                '<span class="bc-inst-name">' + esc(inst.name) + '</span>' +
+                '<span class="bc-inst-id">' + inst.instance_id + '</span>' +
+                '</label>';
+        }
+        list.innerHTML = html;
+
+        const updateCount = () => {
+            const count = list.querySelectorAll('.bc-check:checked').length;
+            const el = document.getElementById('bcSelectedCount');
+            if (el) el.textContent = count + ' selected';
+        };
+
+        // Search filter
+        const searchInput = document.getElementById('bcSearchFilter');
+        if (searchInput) {
+            searchInput.value = '';
+            const newSearch = searchInput.cloneNode(true);
+            searchInput.parentNode.replaceChild(newSearch, searchInput);
+            newSearch.addEventListener('input', () => {
+                const q = newSearch.value.toLowerCase();
+                list.querySelectorAll('.bc-inst-row').forEach(row => {
+                    const match = !q || row.dataset.name.includes(q) || row.dataset.id.includes(q);
+                    row.classList.toggle('bc-hidden', !match);
+                });
+            });
+        }
+
+        document.getElementById('bcSelectAll')?.replaceWith(document.getElementById('bcSelectAll')?.cloneNode(true));
+        document.getElementById('bcDeselectAll')?.replaceWith(document.getElementById('bcDeselectAll')?.cloneNode(true));
+
+        document.getElementById('bcSelectAll')?.addEventListener('click', () => {
+            list.querySelectorAll('.bc-inst-row:not(.bc-hidden) .bc-check').forEach(cb => { cb.checked = true; });
+            updateCount();
+        });
+        document.getElementById('bcDeselectAll')?.addEventListener('click', () => {
+            list.querySelectorAll('.bc-check').forEach(cb => { cb.checked = false; });
+            updateCount();
+        });
+        list.addEventListener('change', updateCount);
+
+        const runBtn = document.getElementById('bcRunBtn');
+        if (runBtn) {
+            const newBtn = runBtn.cloneNode(true);
+            runBtn.parentNode.replaceChild(newBtn, runBtn);
+            newBtn.addEventListener('click', () => this._doBroadcast());
+        }
+
+        document.getElementById('bcResults').style.display = 'none';
+        document.getElementById('bcCommand').value = '';
+        modal.classList.add('show');
+        updateCount();
+    }
+
+    async _doBroadcast() {
+        const list = document.getElementById('bcInstanceList');
+        const checked = list.querySelectorAll('.bc-check:checked');
+        const ids = Array.from(checked).map(cb => cb.value);
+        const command = document.getElementById('bcCommand')?.value;
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+
+        if (ids.length === 0) { showToast('Select at least one instance'); return; }
+        if (!command) { showToast('Enter a command'); return; }
+
+        const runBtn = document.getElementById('bcRunBtn');
+        const results = document.getElementById('bcResults');
+        if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running...'; }
+        if (results) {
+            results.style.display = '';
+            results.innerHTML = '<div style="text-align:center;color:var(--dim);padding:20px">Executing on ' + ids.length + ' instance(s)...</div>';
+        }
+
+        try {
+            const resp = await fetch('/broadcast-command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ instance_ids: ids, command: command })
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+
+            let html = '<div class="bc-results-grid">';
+            for (const r of data) {
+                const badge = r.success
+                    ? '<span class="bc-badge success">OK</span>'
+                    : '<span class="bc-badge error">FAIL</span>';
+                const output = r.success ? r.output : r.error;
+                html += '<div class="bc-result">' +
+                    '<div class="bc-result-header">' + badge +
+                    '<span class="bc-result-name">' + esc(r.name || r.instance_id) + '</span>' +
+                    '<span class="bc-result-id">' + r.instance_id + '</span></div>' +
+                    '<pre class="bc-result-output">' + esc(output || '(no output)') + '</pre></div>';
+            }
+            html += '</div>';
+            results.innerHTML = html;
+        } catch (e) {
+            results.innerHTML = '<div style="color:var(--red);padding:10px">Broadcast failed: ' + e.message + '</div>';
+        } finally {
+            if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Command'; }
+        }
+    }
+
     // -- Global event listeners ----------------------------------------------
 
     _setupEventListeners() {
@@ -1750,7 +2612,7 @@ class CloudTermApp {
             if (info && info.type === 'ssh') {
                 this.termManager.closeTerminal(id);
             } else if (info && info.type === 'rdp') {
-                this._stopRDPSession(id);
+                this._stopRDPSession(info.instanceID || id);
             }
             origClose(id);
             this._syncSidebarActiveStates();
@@ -1765,6 +2627,14 @@ class CloudTermApp {
                 requestAnimationFrame(() => {
                     this.termManager.fitTerminal(id);
                     this.termManager.focusTerminal(id);
+                });
+            } else if (info && info.type === 'rdp') {
+                requestAnimationFrame(() => {
+                    const panel = document.getElementById('panel-' + id);
+                    if (panel) {
+                        const iframe = panel.querySelector('iframe');
+                        if (iframe && iframe.contentWindow) iframe.contentWindow.focus();
+                    }
                 });
             }
         };
