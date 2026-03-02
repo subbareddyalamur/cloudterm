@@ -664,6 +664,75 @@ body {
   font-size:12px; cursor:pointer; transition:all .2s;
 }
 .modal-cancel:hover { border-color:var(--b2); color:var(--text); }
+
+/* ── Transfer Manager Panel ── */
+.transfer-panel {
+  position:fixed; bottom:16px; right:16px; z-index:450;
+  width:340px; background:var(--s2); border:1px solid var(--b2);
+  border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,.6);
+  font-family:'Lato',sans-serif; overflow:hidden;
+  transform:translateY(calc(100% + 20px)); opacity:0;
+  transition:transform .3s cubic-bezier(.4,0,.2,1), opacity .3s;
+}
+.transfer-panel.visible { transform:translateY(0); opacity:1; }
+.transfer-panel.collapsed .transfer-body { display:none; }
+.transfer-header {
+  display:flex; align-items:center; padding:10px 14px;
+  background:var(--s3); cursor:pointer; user-select:none;
+}
+.transfer-header-title {
+  font-size:12px; font-weight:700; color:var(--text); flex:1;
+}
+.transfer-header-count {
+  font-size:10px; background:var(--b2); color:var(--muted);
+  padding:1px 6px; border-radius:8px; margin-left:6px;
+}
+.transfer-header-btn {
+  width:22px; height:22px; border:none; background:none;
+  color:var(--muted); cursor:pointer; font-size:14px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:4px; transition:all .15s; margin-left:4px;
+}
+.transfer-header-btn:hover { color:var(--text); background:var(--b1); }
+.transfer-body { max-height:240px; overflow-y:auto; }
+.transfer-row {
+  display:flex; flex-direction:column; padding:10px 14px;
+  border-top:1px solid var(--b1); gap:4px;
+}
+.transfer-row-top { display:flex; align-items:center; gap:8px; }
+.transfer-row-icon { font-size:12px; flex-shrink:0; }
+.transfer-row-name {
+  font-size:11px; color:var(--text); flex:1;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.transfer-row-pct {
+  font-size:10px; font-family:'JetBrains Mono',monospace;
+  color:var(--muted); min-width:32px; text-align:right;
+}
+.transfer-row-dismiss {
+  width:18px; height:18px; border:none; background:none;
+  color:var(--dim); cursor:pointer; font-size:12px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:3px; flex-shrink:0;
+}
+.transfer-row-dismiss:hover { color:var(--text); background:var(--b1); }
+.transfer-row-bar {
+  height:4px; background:var(--s3); border-radius:2px; overflow:hidden;
+}
+.transfer-row-bar-fill {
+  height:100%; border-radius:2px; transition:width .3s;
+}
+.transfer-row-msg {
+  font-size:10px; color:var(--dim);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.transfer-row.upload .transfer-row-bar-fill { background:var(--ssh); }
+.transfer-row.upload .transfer-row-icon { color:var(--ssh); }
+.transfer-row.download .transfer-row-bar-fill { background:var(--rdp); }
+.transfer-row.download .transfer-row-icon { color:var(--rdp); }
+.transfer-row.error .transfer-row-msg { color:#f87171; }
+.transfer-row.done .transfer-row-pct { color:var(--ssh); }
+
 .det-row { display:grid; grid-template-columns:120px 1fr; padding:5px 0; border-bottom:1px solid var(--b1); font-size:12px; gap:8px; }
 .det-label { color:var(--muted); }
 .det-val { color:var(--text); text-align:left; word-break:break-all; }
@@ -1049,15 +1118,6 @@ body {
     <div id="uploadFileName" style="font-size:12px;color:var(--text);margin-bottom:8px;display:none;"></div>
     <input id="uploadRemotePath" type="text" placeholder="Remote path (e.g. /tmp/myfile.txt)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;margin-bottom:12px;">
     <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Large files transfer slowly via SSM (base64 chunked)</div>
-    <div id="uploadProgress" style="display:none;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <div style="flex:1;background:var(--s3);border-radius:4px;height:6px;overflow:hidden;">
-          <div id="uploadProgressBar" style="width:0%;height:100%;background:var(--ssh);transition:width .3s;"></div>
-        </div>
-        <span id="uploadProgressPct" style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;min-width:32px;text-align:right;">0%</span>
-      </div>
-      <div id="uploadProgressMsg" style="font-size:11px;color:var(--dim);margin-top:4px;"></div>
-    </div>
     <div style="display:flex;gap:8px;">
       <button id="uploadBtn" disabled style="flex:1;padding:8px;background:linear-gradient(135deg,rgba(61,220,132,.2),rgba(108,92,231,.15));border:1px solid rgba(61,220,132,.4);border-radius:7px;color:var(--ssh);font-family:'Lato',sans-serif;font-size:12px;cursor:pointer;">Upload</button>
       <button class="modal-cancel" onclick="document.getElementById('uploadModal').classList.remove('show')" style="flex:1;">Cancel</button>
@@ -1071,15 +1131,6 @@ body {
     <div class="modal-title">Download File</div>
     <div id="downloadTarget" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
     <input id="downloadRemotePath" type="text" placeholder="Remote file path (e.g. /var/log/syslog)" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;margin-bottom:12px;">
-    <div id="downloadProgress" style="display:none;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <div style="flex:1;background:var(--s3);border-radius:4px;height:6px;overflow:hidden;">
-          <div id="downloadProgressBar" style="width:0%;height:100%;background:var(--rdp);transition:width .3s;"></div>
-        </div>
-        <span id="downloadProgressPct" style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;min-width:32px;text-align:right;">0%</span>
-      </div>
-      <div id="downloadProgressMsg" style="font-size:11px;color:var(--dim);margin-top:4px;"></div>
-    </div>
     <div style="display:flex;gap:8px;">
       <button id="downloadBtn" style="flex:1;padding:8px;background:linear-gradient(135deg,rgba(96,165,250,.2),rgba(108,92,231,.15));border:1px solid rgba(96,165,250,.4);border-radius:7px;color:var(--rdp);font-family:'Lato',sans-serif;font-size:12px;cursor:pointer;">Download</button>
       <button class="modal-cancel" onclick="document.getElementById('downloadModal').classList.remove('show')" style="flex:1;">Cancel</button>
@@ -1152,6 +1203,17 @@ body {
     </div>
     <div id="bcResults" style="display:none;flex:1;overflow:hidden;"></div>
   </div>
+</div>
+
+<!-- TRANSFER MANAGER PANEL -->
+<div class="transfer-panel" id="transferPanel">
+  <div class="transfer-header" id="transferHeader">
+    <span class="transfer-header-title">Transfers</span>
+    <span class="transfer-header-count" id="transferCount">0</span>
+    <button class="transfer-header-btn" id="transferCollapseBtn" title="Collapse">&#x2015;</button>
+    <button class="transfer-header-btn" id="transferCloseBtn" title="Close all">&times;</button>
+  </div>
+  <div class="transfer-body" id="transferBody"></div>
 </div>
 
 <!-- TOAST -->

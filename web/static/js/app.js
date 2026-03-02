@@ -1089,6 +1089,133 @@ function showRDPCredentialModal(instanceID, instanceName) {
 }
 
 // ---------------------------------------------------------------------------
+// Transfer Manager – bottom-right progress panel (Google Drive style)
+// ---------------------------------------------------------------------------
+
+class TransferManager {
+    constructor() {
+        this._transfers = new Map();
+        this._nextID = 1;
+        this._panel = document.getElementById('transferPanel');
+        this._body = document.getElementById('transferBody');
+        this._countEl = document.getElementById('transferCount');
+        this._collapsed = false;
+
+        document.getElementById('transferHeader')?.addEventListener('click', (e) => {
+            if (e.target.closest('#transferCloseBtn')) return;
+            this._collapsed = !this._collapsed;
+            this._panel?.classList.toggle('collapsed', this._collapsed);
+            const btn = document.getElementById('transferCollapseBtn');
+            if (btn) btn.textContent = this._collapsed ? '\u25B4' : '\u2015';
+        });
+
+        document.getElementById('transferCloseBtn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.clearAll();
+        });
+    }
+
+    add(type, name) {
+        const id = this._nextID++;
+
+        const row = document.createElement('div');
+        row.className = 'transfer-row ' + type;
+        row.dataset.transferId = id;
+
+        const top = document.createElement('div');
+        top.className = 'transfer-row-top';
+
+        const icon = document.createElement('span');
+        icon.className = 'transfer-row-icon';
+        icon.textContent = type === 'upload' ? '\u2B06' : '\u2B07';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'transfer-row-name';
+        nameEl.textContent = name;
+
+        const pct = document.createElement('span');
+        pct.className = 'transfer-row-pct';
+        pct.textContent = '0%';
+
+        const dismiss = document.createElement('button');
+        dismiss.className = 'transfer-row-dismiss';
+        dismiss.title = 'Dismiss';
+        dismiss.textContent = '\u00D7';
+        dismiss.addEventListener('click', () => this.remove(id));
+
+        top.append(icon, nameEl, pct, dismiss);
+
+        const barWrap = document.createElement('div');
+        barWrap.className = 'transfer-row-bar';
+        const barFill = document.createElement('div');
+        barFill.className = 'transfer-row-bar-fill';
+        barFill.style.width = '0%';
+        barWrap.appendChild(barFill);
+
+        const msg = document.createElement('div');
+        msg.className = 'transfer-row-msg';
+        msg.textContent = 'Starting...';
+
+        row.append(top, barWrap, msg);
+        this._body?.appendChild(row);
+        this._transfers.set(id, { type, name, progress: 0, message: '', status: 'active', el: row });
+        this._updateCount();
+        this._show();
+        return id;
+    }
+
+    update(id, progress, message, status) {
+        const t = this._transfers.get(id);
+        if (!t) return;
+        t.progress = progress;
+        t.message = message || '';
+        t.status = status || 'active';
+
+        const fill = t.el.querySelector('.transfer-row-bar-fill');
+        const pct = t.el.querySelector('.transfer-row-pct');
+        const msg = t.el.querySelector('.transfer-row-msg');
+
+        if (fill) fill.style.width = progress + '%';
+        if (pct) pct.textContent = progress + '%';
+        if (msg) msg.textContent = message || '';
+
+        if (status === 'complete') {
+            t.el.classList.add('done');
+            if (pct) pct.textContent = '\u2713';
+            this._autoRemove(id, 5000);
+        } else if (status === 'error') {
+            t.el.classList.add('error');
+            if (pct) pct.textContent = '\u2717';
+        }
+    }
+
+    remove(id) {
+        const t = this._transfers.get(id);
+        if (!t) return;
+        t.el.remove();
+        this._transfers.delete(id);
+        this._updateCount();
+        if (this._transfers.size === 0) this._hide();
+    }
+
+    clearAll() {
+        for (const [id, t] of this._transfers) {
+            if (t.status === 'complete' || t.status === 'error') {
+                t.el.remove();
+                this._transfers.delete(id);
+            }
+        }
+        this._updateCount();
+        if (this._transfers.size === 0) this._hide();
+    }
+
+    _autoRemove(id, delay) { setTimeout(() => this.remove(id), delay); }
+    _updateCount() { if (this._countEl) this._countEl.textContent = this._transfers.size; }
+    _show() { this._panel?.classList.add('visible'); }
+    _hide() { this._panel?.classList.remove('visible'); }
+}
+
+// ---------------------------------------------------------------------------
 // CloudTerm Application
 // ---------------------------------------------------------------------------
 
@@ -1108,6 +1235,7 @@ class CloudTermApp {
         );
         this.favorites = new FavoritesManager((id, name, type) => this.openSession(id, name, type));
         this.snippets = new SnippetsManager();
+        this.transfers = new TransferManager();
         this.sidebar._favorites = this.favorites;
         this.sidebar._onFavoritesChanged = () => this._renderFavorites();
         this.sidebar.onRefresh = () => {
@@ -1808,16 +1936,12 @@ class CloudTermApp {
         const fileInput = document.getElementById('uploadFileInput');
         const fileNameEl = document.getElementById('uploadFileName');
         const remotePathEl = document.getElementById('uploadRemotePath');
-        const progressEl = document.getElementById('uploadProgress');
-        const progressBar = document.getElementById('uploadProgressBar');
         const uploadBtn = document.getElementById('uploadBtn');
         const dropZone = document.getElementById('uploadDropZone');
 
         if (fileInput) fileInput.value = '';
         if (fileNameEl) { fileNameEl.style.display = 'none'; fileNameEl.textContent = ''; }
         if (remotePathEl) remotePathEl.value = '';
-        if (progressEl) progressEl.style.display = 'none';
-        if (progressBar) progressBar.style.width = '0%';
         if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = 'Upload'; }
 
         this._uploadFile = null;
@@ -1895,12 +2019,10 @@ class CloudTermApp {
         if (!remotePath) { showToast('Remote path is required'); return; }
 
         const inst = this.sidebar.getInstance(instanceID);
-        const progressEl = document.getElementById('uploadProgress');
-        const progressBar = document.getElementById('uploadProgressBar');
-        const uploadBtn = document.getElementById('uploadBtn');
 
-        if (progressEl) progressEl.style.display = '';
-        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = 'Uploading...'; }
+        // Close modal immediately and add to transfer panel.
+        document.getElementById('uploadModal')?.classList.remove('show');
+        const tid = this.transfers.add('upload', file.name);
 
         const form = new FormData();
         form.append('file', file);
@@ -1914,23 +2036,20 @@ class CloudTermApp {
 
         try {
             const resp = await fetch('/upload-file', { method: 'POST', body: form });
-            const pctEl = document.getElementById('uploadProgressPct');
-            const msgEl = document.getElementById('uploadProgressMsg');
             await this._readNDJSON(resp, (msg) => {
-                if (progressBar) progressBar.style.width = msg.progress + '%';
-                if (pctEl) pctEl.textContent = msg.progress + '%';
-                if (msgEl) msgEl.textContent = msg.message || '';
                 if (msg.status === 'error') {
+                    this.transfers.update(tid, msg.progress || 100, msg.message, 'error');
                     showToast('Upload failed: ' + msg.message, 5000);
                 } else if (msg.status === 'complete') {
+                    this.transfers.update(tid, 100, 'Complete', 'complete');
                     showToast('Upload complete: ' + remotePath);
-                    setTimeout(() => document.getElementById('uploadModal')?.classList.remove('show'), 1000);
+                } else {
+                    this.transfers.update(tid, msg.progress || 0, msg.message || '', 'active');
                 }
             });
         } catch (e) {
+            this.transfers.update(tid, 0, e.message, 'error');
             showToast('Upload failed: ' + e.message, 5000);
-        } finally {
-            if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = 'Upload'; }
         }
     }
 
@@ -1942,13 +2061,9 @@ class CloudTermApp {
         if (target) target.textContent = instanceName + ' (' + instanceID + ')';
 
         const remotePathEl = document.getElementById('downloadRemotePath');
-        const progressEl = document.getElementById('downloadProgress');
-        const progressBar = document.getElementById('downloadProgressBar');
         const downloadBtn = document.getElementById('downloadBtn');
 
         if (remotePathEl) remotePathEl.value = '';
-        if (progressEl) progressEl.style.display = 'none';
-        if (progressBar) progressBar.style.width = '0%';
         if (downloadBtn) downloadBtn.textContent = 'Download';
 
         this._downloadInstanceID = instanceID;
@@ -1980,12 +2095,11 @@ class CloudTermApp {
         if (!remotePath) { showToast('Remote path is required'); return; }
 
         const inst = this.sidebar.getInstance(instanceID);
-        const progressEl = document.getElementById('downloadProgress');
-        const progressBar = document.getElementById('downloadProgressBar');
-        const downloadBtn = document.getElementById('downloadBtn');
 
-        if (progressEl) progressEl.style.display = '';
-        if (downloadBtn) { downloadBtn.disabled = true; downloadBtn.textContent = 'Downloading...'; }
+        // Close modal immediately and add to transfer panel.
+        document.getElementById('downloadModal')?.classList.remove('show');
+        const filename = remotePath.split('/').pop().split('\\').pop() || 'download';
+        const tid = this.transfers.add('download', filename);
 
         try {
             const resp = await fetch('/download-file', {
@@ -2000,35 +2114,31 @@ class CloudTermApp {
                 })
             });
 
-            const pctEl = document.getElementById('downloadProgressPct');
-            const msgEl = document.getElementById('downloadProgressMsg');
             await this._readNDJSON(resp, (msg) => {
-                if (progressBar) progressBar.style.width = msg.progress + '%';
-                if (pctEl) pctEl.textContent = msg.progress + '%';
-                if (msgEl) msgEl.textContent = msg.message || '';
                 if (msg.status === 'error') {
+                    this.transfers.update(tid, msg.progress || 100, msg.message, 'error');
                     showToast('Download failed: ' + msg.message, 5000);
                 } else if (msg.status === 'complete' && msg.data) {
-                    // Decode base64 and trigger browser download.
                     const raw = atob(msg.data);
                     const bytes = new Uint8Array(raw.length);
                     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
                     const blob = new Blob([bytes]);
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
-                    a.download = msg.filename || 'download';
+                    a.download = msg.filename || filename;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
                     URL.revokeObjectURL(a.href);
+                    this.transfers.update(tid, 100, 'Complete', 'complete');
                     showToast('Downloaded: ' + (msg.filename || remotePath));
-                    setTimeout(() => document.getElementById('downloadModal')?.classList.remove('show'), 1000);
+                } else {
+                    this.transfers.update(tid, msg.progress || 0, msg.message || '', 'active');
                 }
             });
         } catch (e) {
+            this.transfers.update(tid, 0, e.message, 'error');
             showToast('Download failed: ' + e.message, 5000);
-        } finally {
-            if (downloadBtn) { downloadBtn.disabled = false; downloadBtn.textContent = 'Download'; }
         }
     }
 
