@@ -33,14 +33,25 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - **Upload** files to instances (drag-and-drop or file picker, no size limit)
 - **Download** files from instances (no size limit)
 - Supports both Linux (bash) and Windows (PowerShell)
-- Real-time progress bar via NDJSON streaming
+- Real-time progress via NDJSON streaming in a non-blocking Transfer Manager panel
 - Transfers use SSM SendCommand — no S3 buckets or agents needed
+- **Transfer Manager**: Google Drive-style progress panel in the bottom-right corner — modals close immediately and transfers run in the background with stacked progress rows
+
+### Express Transfer (S3)
+- **Express Upload**: Local → S3 → EC2 instance via presigned GET URL
+- **Express Download**: EC2 instance → S3 → Local via presigned PUT URL
+- Significantly faster than SSM-based chunking for large files
+- EC2 instances download/upload using `curl` (Linux) or `Invoke-WebRequest` (Windows) — no AWS CLI needed
+- S3 bucket name configurable in Settings (persisted in browser localStorage)
+- Express Download button also available in the File Browser alongside the regular download
+- S3 objects are deleted immediately after transfer completes
 
 ### Remote File Browser
 - Visual directory navigator for remote instances
 - Breadcrumb path navigation with click-to-navigate
 - Lists files with size, permissions, and modification time
 - Click a folder to browse into it, click a file to download
+- Regular and Express Download buttons per file (express shown when S3 is configured)
 - Upload to the currently browsed directory
 - Works on both Linux and Windows instances
 
@@ -88,6 +99,11 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - Detailed view: name, ID, IPs, state, platform, instance type, AMI ID, IAM instance profile, launch time, and all tags
 
 ![Context Menu and Instance Details](docs/screenshots/context-menu-details.png)
+
+### Settings
+- **App Font Size**: Scale the entire UI (70%–150%), persisted across sessions
+- **S3 Bucket**: Configure the S3 bucket name for Express Transfers
+- Accessible via the gear icon in the topbar
 
 ### UI Themes
 - **App themes**: Dark (default), Nord, Dracula, Cyberpunk, Warp Hero, Light
@@ -191,6 +207,7 @@ cloudterm/
 │   ├── aws/
 │   │   ├── discovery.go              # EC2 discovery, scanning, caching
 │   │   ├── filetransfer.go           # File upload/download via SSM
+│   │   ├── s3transfer.go             # Express file transfer via S3 presigned URLs
 │   │   ├── filebrowser.go            # Remote directory browsing via SSM
 │   │   ├── broadcast.go              # Multi-instance command execution
 │   │   └── metrics.go                # Instance CPU/memory/disk metrics
@@ -219,6 +236,7 @@ cloudterm/
 |---------|---------|
 | **EC2** | `DescribeInstances` for discovery |
 | **SSM** | `StartSession` for terminals, `SendCommand` for file transfer, broadcast, and metrics |
+| **S3** | `PutObject`, `GetObject`, `DeleteObject` for Express Transfers (optional, only when S3 bucket is configured) |
 | **STS** | `GetCallerIdentity` for account ID resolution |
 | **IAM** | `ListAccountAliases` for account alias lookup |
 
@@ -240,12 +258,17 @@ The AWS profiles used by CloudTerm need the following permissions:
         "ssm:SendCommand",
         "ssm:GetCommandInvocation",
         "sts:GetCallerIdentity",
-        "iam:ListAccountAliases"
+        "iam:ListAccountAliases",
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
       ],
       "Resource": "*"
     }
   ]
 }
+
+> **Note:** S3 permissions are only required if you use Express Transfers. You can scope the S3 actions to a specific bucket ARN (e.g., `arn:aws:s3:::my-transfer-bucket/*`).
 ```
 
 EC2 instances must have an IAM instance profile with the `AmazonSSMManagedInstanceCore` managed policy (or equivalent).

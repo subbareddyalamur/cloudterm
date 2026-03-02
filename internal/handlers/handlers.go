@@ -90,6 +90,8 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /download-file", h.handleDownloadFile)
 	mux.HandleFunc("POST /browse-directory", h.handleBrowseDirectory)
 	mux.HandleFunc("POST /broadcast-command", h.handleBroadcastCommand)
+	mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
+	mux.HandleFunc("POST /express-download", h.handleExpressDownload)
 
 	// API — audit & metrics
 	mux.HandleFunc("GET /audit-log", h.handleAuditLog)
@@ -481,6 +483,78 @@ func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	sendProgress(aws.TransferProgress{Progress: 100, Message: "Upload complete", Status: "complete"})
 }
 
+func (h *Handler) handleExpressUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(500 << 20); err != nil {
+		jsonError(w, "failed to parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	instanceID := r.FormValue("instance_id")
+	remotePath := r.FormValue("remote_path")
+	bucket := r.FormValue("s3_bucket")
+	if instanceID == "" || remotePath == "" || bucket == "" {
+		jsonError(w, "instance_id, remote_path, and s3_bucket are required", http.StatusBadRequest)
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		jsonError(w, "file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		jsonError(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	profile := r.FormValue("aws_profile")
+	region := r.FormValue("aws_region")
+	platform := r.FormValue("platform")
+	if profile == "" || region == "" {
+		if p, rg, err := h.discovery.GetInstanceConfig(instanceID); err == nil {
+			profile = p
+			region = rg
+		}
+	}
+	if platform == "" {
+		platform = "linux"
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+
+	sendProgress := func(p aws.TransferProgress) {
+		line, _ := json.Marshal(p)
+		w.Write(line)
+		w.Write([]byte("\n"))
+		flusher.Flush()
+	}
+
+	if err := h.discovery.ExpressUpload(profile, region, bucket, instanceID, remotePath, platform, data, sendProgress); err != nil {
+		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
+		return
+	}
+
+	h.audit.Log(audit.AuditEvent{
+		Action:     "express_upload",
+		InstanceID: instanceID,
+		Profile:    profile,
+		Region:     region,
+		Details:    fmt.Sprintf("path=%s bucket=%s", remotePath, bucket),
+	})
+
+	sendProgress(aws.TransferProgress{Progress: 100, Message: "Express upload complete", Status: "complete"})
+}
+
 func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		InstanceID string `json:"instance_id"`
@@ -552,6 +626,87 @@ func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	}{
 		Progress: 100,
 		Message:  "Download complete",
+		Status:   "complete",
+		Data:     base64.StdEncoding.EncodeToString(fileData),
+		Filename: filename,
+	}
+	line, _ := json.Marshal(finalMsg)
+	w.Write(line)
+	w.Write([]byte("\n"))
+	flusher.Flush()
+}
+
+func (h *Handler) handleExpressDownload(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InstanceID string `json:"instance_id"`
+		RemotePath string `json:"remote_path"`
+		AWSProfile string `json:"aws_profile"`
+		AWSRegion  string `json:"aws_region"`
+		Platform   string `json:"platform"`
+		S3Bucket   string `json:"s3_bucket"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.InstanceID == "" || req.RemotePath == "" || req.S3Bucket == "" {
+		jsonError(w, "instance_id, remote_path, and s3_bucket are required", http.StatusBadRequest)
+		return
+	}
+
+	profile := req.AWSProfile
+	region := req.AWSRegion
+	platform := req.Platform
+	if profile == "" || region == "" {
+		if p, rg, err := h.discovery.GetInstanceConfig(req.InstanceID); err == nil {
+			profile = p
+			region = rg
+		}
+	}
+	if platform == "" {
+		platform = "linux"
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+
+	sendProgress := func(p aws.TransferProgress) {
+		line, _ := json.Marshal(p)
+		w.Write(line)
+		w.Write([]byte("\n"))
+		flusher.Flush()
+	}
+
+	fileData, filename, err := h.discovery.ExpressDownload(profile, region, req.S3Bucket, req.InstanceID, req.RemotePath, platform, sendProgress)
+	if err != nil {
+		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
+		return
+	}
+
+	h.audit.Log(audit.AuditEvent{
+		Action:     "express_download",
+		InstanceID: req.InstanceID,
+		Profile:    profile,
+		Region:     region,
+		Details:    fmt.Sprintf("path=%s bucket=%s", req.RemotePath, req.S3Bucket),
+	})
+
+	finalMsg := struct {
+		Progress int    `json:"progress"`
+		Message  string `json:"message"`
+		Status   string `json:"status"`
+		Data     string `json:"data"`
+		Filename string `json:"filename"`
+	}{
+		Progress: 100,
+		Message:  "Express download complete",
 		Status:   "complete",
 		Data:     base64.StdEncoding.EncodeToString(fileData),
 		Filename: filename,

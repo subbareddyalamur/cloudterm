@@ -820,6 +820,12 @@ class SidebarTree {
             rdpItem.style.display = connType === 'rdp' ? '' : 'none';
         }
 
+        // Show Express items only when S3 bucket is configured.
+        const hasS3 = !!(JSON.parse(localStorage.getItem('cloudterm_settings') || '{}').s3_bucket);
+        menu.querySelectorAll('[data-action="express-upload"],[data-action="express-download"]').forEach(el => {
+            el.style.display = hasS3 ? '' : 'none';
+        });
+
         menu.style.left = e.clientX + 'px';
         menu.style.top = e.clientY + 'px';
         menu.classList.add('show');
@@ -1089,6 +1095,33 @@ function showRDPCredentialModal(instanceID, instanceName) {
 }
 
 // ---------------------------------------------------------------------------
+// Settings Manager – persistent app settings via localStorage
+// ---------------------------------------------------------------------------
+
+class SettingsManager {
+    constructor() {
+        this._key = 'cloudterm_settings';
+    }
+
+    get(name) {
+        const data = this._load();
+        return data[name] || '';
+    }
+
+    set(name, value) {
+        const data = this._load();
+        data[name] = value;
+        localStorage.setItem(this._key, JSON.stringify(data));
+    }
+
+    _load() {
+        try {
+            return JSON.parse(localStorage.getItem(this._key) || '{}');
+        } catch { return {}; }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Transfer Manager – bottom-right progress panel (Google Drive style)
 // ---------------------------------------------------------------------------
 
@@ -1236,6 +1269,7 @@ class CloudTermApp {
         this.favorites = new FavoritesManager((id, name, type) => this.openSession(id, name, type));
         this.snippets = new SnippetsManager();
         this.transfers = new TransferManager();
+        this.settings = new SettingsManager();
         this.sidebar._favorites = this.favorites;
         this.sidebar._onFavoritesChanged = () => this._renderFavorites();
         this.sidebar.onRefresh = () => {
@@ -1246,6 +1280,7 @@ class CloudTermApp {
         this.currentPageTheme = localStorage.getItem('cloudterm_page_theme') || 'dark';
         this.currentTermTheme = localStorage.getItem('cloudterm_term_theme') || 'github-dark';
         this.zoomLevel = 100;
+        this.appZoom = parseInt(this.settings.get('app_zoom'), 10) || 100;
         this.rdpMode = config.rdpMode || 'native';
         this.guacWSURL = config.guacWSURL || '';
     }
@@ -1262,6 +1297,7 @@ class CloudTermApp {
         // Apply saved themes from localStorage.
         if (this.currentPageTheme !== 'dark') this._setPageTheme(this.currentPageTheme);
         if (this.currentTermTheme !== 'github-dark') this._setTermTheme(this.currentTermTheme);
+        if (this.appZoom !== 100) document.body.style.zoom = (this.appZoom / 100).toString();
         this._setupFilterInput();
         this._setupScanButton();
         this._setupContextMenu();
@@ -1663,6 +1699,14 @@ class CloudTermApp {
         this.termManager.applyFontSize(size);
     }
 
+    _appZoom(delta) {
+        const next = this.appZoom + delta;
+        if (next < 70 || next > 150) return;
+        this.appZoom = next;
+        document.body.style.zoom = (this.appZoom / 100).toString();
+        this.settings.set('app_zoom', String(this.appZoom));
+    }
+
     // -- Theme selector ------------------------------------------------------
 
     _setupThemeSelector() {
@@ -1841,6 +1885,18 @@ class CloudTermApp {
                     this._showUploadModal(id, name);
                 } else if (text.includes('download file')) {
                     this._showDownloadModal(id, name);
+                } else if (text.includes('express upload')) {
+                    if (!this.settings.get('s3_bucket')) {
+                        showToast('Configure S3 bucket in Settings first', 3000);
+                        return;
+                    }
+                    this._showExpressUploadModal(id, name);
+                } else if (text.includes('express download')) {
+                    if (!this.settings.get('s3_bucket')) {
+                        showToast('Configure S3 bucket in Settings first', 3000);
+                        return;
+                    }
+                    this._showExpressDownloadModal(id, name);
                 } else if (text.includes('toggle favorite')) {
                     this.favorites.toggle(id);
                     this._renderFavorites();
@@ -2142,6 +2198,225 @@ class CloudTermApp {
         }
     }
 
+    // -- Express File Transfer (S3) -------------------------------------------
+
+    _showExpressUploadModal(instanceID, instanceName) {
+        const modal = document.getElementById('expressUploadModal');
+        if (!modal) return;
+
+        const target = document.getElementById('expressUploadTarget');
+        if (target) target.textContent = instanceName + ' (' + instanceID + ')';
+
+        const fileInput = document.getElementById('expressUploadFileInput');
+        const fileNameEl = document.getElementById('expressUploadFileName');
+        const remotePathEl = document.getElementById('expressUploadRemotePath');
+        const uploadBtn = document.getElementById('expressUploadBtn');
+        const dropZone = document.getElementById('expressUploadDropZone');
+
+        if (fileInput) fileInput.value = '';
+        if (fileNameEl) { fileNameEl.style.display = 'none'; fileNameEl.textContent = ''; }
+        if (remotePathEl) remotePathEl.value = '';
+        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '\u26A1 Express Upload'; }
+
+        this._expressUploadFile = null;
+        this._expressUploadInstanceID = instanceID;
+        const inst = this.sidebar.getInstance(instanceID);
+        this._expressUploadPlatform = inst ? (inst.platform || 'linux') : 'linux';
+
+        if (remotePathEl) {
+            remotePathEl.placeholder = this._expressUploadPlatform === 'windows'
+                ? 'Remote path (e.g. C:\\Windows\\Temp\\myfile.txt)'
+                : 'Remote path (e.g. /tmp/myfile.txt)';
+        }
+
+        if (dropZone) {
+            const newDrop = dropZone.cloneNode(true);
+            dropZone.parentNode.replaceChild(newDrop, dropZone);
+            const newFileInput = newDrop.querySelector('#expressUploadFileInput');
+
+            newDrop.addEventListener('click', () => newFileInput && newFileInput.click());
+            newDrop.addEventListener('dragover', (e) => { e.preventDefault(); newDrop.style.borderColor = 'var(--orange)'; });
+            newDrop.addEventListener('dragleave', () => { newDrop.style.borderColor = 'var(--b2)'; });
+            newDrop.addEventListener('drop', (e) => {
+                e.preventDefault();
+                newDrop.style.borderColor = 'var(--b2)';
+                if (e.dataTransfer.files.length > 0) this._setExpressUploadFile(e.dataTransfer.files[0]);
+            });
+            if (newFileInput) {
+                newFileInput.addEventListener('change', () => {
+                    if (newFileInput.files.length > 0) this._setExpressUploadFile(newFileInput.files[0]);
+                });
+            }
+        }
+
+        if (uploadBtn) {
+            const newBtn = uploadBtn.cloneNode(true);
+            uploadBtn.parentNode.replaceChild(newBtn, uploadBtn);
+            newBtn.addEventListener('click', () => this._doExpressUpload());
+        }
+
+        modal.classList.add('show');
+    }
+
+    _setExpressUploadFile(file) {
+        this._expressUploadFile = file;
+        const fileNameEl = document.getElementById('expressUploadFileName');
+        const remotePathEl = document.getElementById('expressUploadRemotePath');
+        const uploadBtn = document.getElementById('expressUploadBtn');
+
+        if (fileNameEl) {
+            fileNameEl.textContent = file.name + ' (' + this._formatSize(file.size) + ')';
+            fileNameEl.style.display = '';
+        }
+        if (remotePathEl) {
+            const cur = remotePathEl.value;
+            if (!cur) {
+                remotePathEl.value = this._expressUploadPlatform === 'windows'
+                    ? 'C:\\Windows\\Temp\\' + file.name
+                    : '/tmp/' + file.name;
+            } else if (cur.endsWith('/') || cur.endsWith('\\')) {
+                remotePathEl.value = cur + file.name;
+            }
+        }
+        if (uploadBtn) uploadBtn.disabled = false;
+    }
+
+    async _doExpressUpload() {
+        const file = this._expressUploadFile;
+        const instanceID = this._expressUploadInstanceID;
+        if (!file || !instanceID) return;
+
+        const remotePath = (document.getElementById('expressUploadRemotePath') || {}).value;
+        if (!remotePath) { showToast('Remote path is required'); return; }
+
+        const bucket = this.settings.get('s3_bucket');
+        if (!bucket) { showToast('Configure S3 bucket in Settings first'); return; }
+
+        const inst = this.sidebar.getInstance(instanceID);
+
+        document.getElementById('expressUploadModal')?.classList.remove('show');
+        const tid = this.transfers.add('upload', '\u26A1 ' + file.name);
+
+        const form = new FormData();
+        form.append('file', file);
+        form.append('instance_id', instanceID);
+        form.append('remote_path', remotePath);
+        form.append('s3_bucket', bucket);
+        form.append('platform', inst ? (inst.platform || 'linux') : 'linux');
+        if (inst) {
+            form.append('aws_profile', inst.aws_profile || '');
+            form.append('aws_region', inst.aws_region || '');
+        }
+
+        try {
+            const resp = await fetch('/express-upload', { method: 'POST', body: form });
+            await this._readNDJSON(resp, (msg) => {
+                if (msg.status === 'error') {
+                    this.transfers.update(tid, msg.progress || 100, msg.message, 'error');
+                    showToast('Express upload failed: ' + msg.message, 5000);
+                } else if (msg.status === 'complete') {
+                    this.transfers.update(tid, 100, 'Complete', 'complete');
+                    showToast('Express upload complete: ' + remotePath);
+                } else {
+                    this.transfers.update(tid, msg.progress || 0, msg.message || '', 'active');
+                }
+            });
+        } catch (e) {
+            this.transfers.update(tid, 0, e.message, 'error');
+            showToast('Express upload failed: ' + e.message, 5000);
+        }
+    }
+
+    _showExpressDownloadModal(instanceID, instanceName) {
+        const modal = document.getElementById('expressDownloadModal');
+        if (!modal) return;
+
+        const target = document.getElementById('expressDownloadTarget');
+        if (target) target.textContent = instanceName + ' (' + instanceID + ')';
+
+        const remotePathEl = document.getElementById('expressDownloadRemotePath');
+        const downloadBtn = document.getElementById('expressDownloadBtn');
+
+        if (remotePathEl) remotePathEl.value = '';
+        if (downloadBtn) downloadBtn.textContent = '\u26A1 Express Download';
+
+        this._expressDownloadInstanceID = instanceID;
+        const inst = this.sidebar.getInstance(instanceID);
+        this._expressDownloadPlatform = inst ? (inst.platform || 'linux') : 'linux';
+
+        if (remotePathEl) {
+            remotePathEl.placeholder = this._expressDownloadPlatform === 'windows'
+                ? 'Remote file path (e.g. C:\\Users\\Administrator\\file.txt)'
+                : 'Remote file path (e.g. /var/log/syslog)';
+        }
+
+        if (downloadBtn) {
+            const newBtn = downloadBtn.cloneNode(true);
+            downloadBtn.parentNode.replaceChild(newBtn, downloadBtn);
+            newBtn.addEventListener('click', () => this._doExpressDownload());
+        }
+
+        modal.classList.add('show');
+    }
+
+    async _doExpressDownload() {
+        const instanceID = this._expressDownloadInstanceID;
+        if (!instanceID) return;
+
+        const remotePath = (document.getElementById('expressDownloadRemotePath') || {}).value;
+        if (!remotePath) { showToast('Remote path is required'); return; }
+
+        const bucket = this.settings.get('s3_bucket');
+        if (!bucket) { showToast('Configure S3 bucket in Settings first'); return; }
+
+        const inst = this.sidebar.getInstance(instanceID);
+
+        document.getElementById('expressDownloadModal')?.classList.remove('show');
+        const filename = remotePath.split('/').pop().split('\\').pop() || 'download';
+        const tid = this.transfers.add('download', '\u26A1 ' + filename);
+
+        try {
+            const resp = await fetch('/express-download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    instance_id: instanceID,
+                    remote_path: remotePath,
+                    s3_bucket: bucket,
+                    aws_profile: inst ? (inst.aws_profile || '') : '',
+                    aws_region: inst ? (inst.aws_region || '') : '',
+                    platform: inst ? (inst.platform || 'linux') : 'linux'
+                })
+            });
+
+            await this._readNDJSON(resp, (msg) => {
+                if (msg.status === 'error') {
+                    this.transfers.update(tid, msg.progress || 100, msg.message, 'error');
+                    showToast('Express download failed: ' + msg.message, 5000);
+                } else if (msg.status === 'complete' && msg.data) {
+                    const raw = atob(msg.data);
+                    const bytes = new Uint8Array(raw.length);
+                    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                    const blob = new Blob([bytes]);
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = msg.filename || filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(a.href);
+                    this.transfers.update(tid, 100, 'Complete', 'complete');
+                    showToast('Express downloaded: ' + (msg.filename || remotePath));
+                } else {
+                    this.transfers.update(tid, msg.progress || 0, msg.message || '', 'active');
+                }
+            });
+        } catch (e) {
+            this.transfers.update(tid, 0, e.message, 'error');
+            showToast('Express download failed: ' + e.message, 5000);
+        }
+    }
+
     // Read NDJSON stream from a fetch Response, calling onMessage for each parsed line.
     async _readNDJSON(resp, onMessage) {
         const reader = resp.body.getReader();
@@ -2188,6 +2463,32 @@ class CloudTermApp {
     _setupSnippetsButton() {
         const btn = document.getElementById('snippetsBtn');
         if (btn) btn.addEventListener('click', () => this._showSnippetsModal());
+
+        // Settings modal
+        document.getElementById('settingsBtn')?.addEventListener('click', () => {
+            const modal = document.getElementById('settingsModal');
+            const input = document.getElementById('settingsS3Bucket');
+            if (input) input.value = this.settings.get('s3_bucket');
+            const fontLabel = document.getElementById('settingsFontValue');
+            if (fontLabel) fontLabel.textContent = this.appZoom + '%';
+            modal?.classList.add('show');
+        });
+        document.getElementById('settingsFontDec')?.addEventListener('click', () => {
+            this._appZoom(-10);
+            const fontLabel = document.getElementById('settingsFontValue');
+            if (fontLabel) fontLabel.textContent = this.appZoom + '%';
+        });
+        document.getElementById('settingsFontInc')?.addEventListener('click', () => {
+            this._appZoom(10);
+            const fontLabel = document.getElementById('settingsFontValue');
+            if (fontLabel) fontLabel.textContent = this.appZoom + '%';
+        });
+        document.getElementById('settingsSaveBtn')?.addEventListener('click', () => {
+            const input = document.getElementById('settingsS3Bucket');
+            if (input) this.settings.set('s3_bucket', input.value.trim());
+            document.getElementById('settingsModal')?.classList.remove('show');
+            showToast('Settings saved');
+        });
     }
 
     _showSnippetsModal() {
@@ -2460,14 +2761,16 @@ class CloudTermApp {
                 const fullPath = path.replace(/[\/\\]$/, '') + '/' + entry.name;
                 const sizeStr = entry.is_dir ? '' : this._formatSize(entry.size);
                 const icon = entry.is_dir ? '\u{1F4C1}' : '\u{1F4C4}';
-                const dlBtn = entry.is_dir ? '' : '<button class="fb-dl-btn" data-dl-path="' + esc(fullPath) + '" title="Download">\u2B07</button>';
+                const hasS3 = !!(JSON.parse(localStorage.getItem('cloudterm_settings') || '{}').s3_bucket);
+                const exBtn = (!entry.is_dir && hasS3) ? '<button class="fb-dl-btn fb-edl-btn" data-dl-path="' + esc(fullPath) + '" title="Express Download" style="color:var(--orange);">\u26A1</button>' : '';
+                const dlBtn = entry.is_dir ? '' : '<button class="fb-dl-btn" data-dl-path="' + esc(fullPath) + '" title="Download">\u2B07</button>' + exBtn;
                 html += '<tr class="fb-row ' + (entry.is_dir ? 'fb-dir' : 'fb-file') + '" data-path="' + esc(fullPath) + '" data-is-dir="' + entry.is_dir + '">' +
                     '<td class="fb-icon">' + icon + '</td>' +
                     '<td class="fb-name">' + esc(entry.name) + '</td>' +
                     '<td class="fb-size">' + sizeStr + '</td>' +
                     '<td class="fb-modified">' + esc(entry.modified) + '</td>' +
                     '<td class="fb-perms">' + esc(entry.permissions) + '</td>' +
-                    '<td>' + dlBtn + '</td></tr>';
+                    '<td style="display:flex;gap:4px;">' + dlBtn + '</td></tr>';
             }
             html += '</tbody></table>';
             body.innerHTML = html;
@@ -2483,13 +2786,25 @@ class CloudTermApp {
             });
 
             // Download button per file — bump z-index so download modal renders above file browser
-            body.querySelectorAll('.fb-dl-btn').forEach(btn => {
+            body.querySelectorAll('.fb-dl-btn:not(.fb-edl-btn)').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const dlModal = document.getElementById('downloadModal');
                     if (dlModal) dlModal.style.zIndex = '510';
                     this._showDownloadModal(this._fbInstanceID, this._fbInstanceName);
                     const remotePathEl = document.getElementById('downloadRemotePath');
+                    if (remotePathEl) remotePathEl.value = btn.dataset.dlPath;
+                });
+            });
+
+            // Express download button per file
+            body.querySelectorAll('.fb-edl-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const edlModal = document.getElementById('expressDownloadModal');
+                    if (edlModal) edlModal.style.zIndex = '510';
+                    this._showExpressDownloadModal(this._fbInstanceID, this._fbInstanceName);
+                    const remotePathEl = document.getElementById('expressDownloadRemotePath');
                     if (remotePathEl) remotePathEl.value = btn.dataset.dlPath;
                 });
             });
