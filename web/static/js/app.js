@@ -1873,10 +1873,15 @@ class CloudTermApp {
             fileNameEl.textContent = file.name + ' (' + this._formatSize(file.size) + ')';
             fileNameEl.style.display = '';
         }
-        if (remotePathEl && !remotePathEl.value) {
-            remotePathEl.value = this._uploadPlatform === 'windows'
-                ? 'C:\\Windows\\Temp\\' + file.name
-                : '/tmp/' + file.name;
+        if (remotePathEl) {
+            const cur = remotePathEl.value;
+            if (!cur) {
+                remotePathEl.value = this._uploadPlatform === 'windows'
+                    ? 'C:\\Windows\\Temp\\' + file.name
+                    : '/tmp/' + file.name;
+            } else if (cur.endsWith('/') || cur.endsWith('\\')) {
+                remotePathEl.value = cur + file.name;
+            }
         }
         if (uploadBtn) uploadBtn.disabled = false;
     }

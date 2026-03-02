@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	uploadChunkSize   = 150000 // base64 chars per SSM command (~112KB raw)
+	uploadChunkSize   = 80000 // base64 chars per SSM command (~60KB raw); SSM limit is 97KB for doc+params
 	downloadChunkSize = 17000  // raw bytes per download chunk (~22KB base64)
 	ssmPollInterval   = 1500 * time.Millisecond
 )
