@@ -19,6 +19,35 @@ const (
 	s3TransferPrefix = "cloudterm-transfers"
 )
 
+// deleteAllVersions removes an S3 object and all its versions/delete markers,
+// ensuring no trace is left even when bucket versioning is enabled.
+func deleteAllVersions(ctx context.Context, client *s3.Client, bucket, key string) {
+	paginator := s3.NewListObjectVersionsPaginator(client, &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(key),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			break
+		}
+		for _, v := range page.Versions {
+			client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucket),
+				Key:       aws.String(key),
+				VersionId: v.VersionId,
+			})
+		}
+		for _, dm := range page.DeleteMarkers {
+			client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucket),
+				Key:       aws.String(key),
+				VersionId: dm.VersionId,
+			})
+		}
+	}
+}
+
 // newS3Client creates an S3 client using the given profile and region.
 func (d *Discovery) newS3Client(ctx context.Context, profile, region string) (*s3.Client, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
@@ -58,14 +87,11 @@ func (d *Discovery) ExpressUpload(profile, region, bucket, instanceID, remotePat
 		return fmt.Errorf("S3 upload failed: %w", err)
 	}
 
-	// Always clean up S3 object.
+	// Always clean up S3 object (all versions if versioning is enabled).
 	defer func() {
 		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanCancel()
-		s3Client.DeleteObject(cleanCtx, &s3.DeleteObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
+		deleteAllVersions(cleanCtx, s3Client, bucket, key)
 	}()
 
 	// 2. Generate presigned GET URL.
@@ -118,14 +144,11 @@ func (d *Discovery) ExpressDownload(profile, region, bucket, instanceID, remoteP
 	filename := remotePath[strings.LastIndexAny(remotePath, "/\\")+1:]
 	key := fmt.Sprintf("%s/%s/%s", s3TransferPrefix, uuid.New().String(), filename)
 
-	// Always clean up S3 object.
+	// Always clean up S3 object (all versions if versioning is enabled).
 	defer func() {
 		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanCancel()
-		s3Client.DeleteObject(cleanCtx, &s3.DeleteObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
+		deleteAllVersions(cleanCtx, s3Client, bucket, key)
 	}()
 
 	// 1. Generate presigned PUT URL.

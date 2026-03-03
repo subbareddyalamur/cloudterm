@@ -2076,8 +2076,9 @@ class CloudTermApp {
 
         const inst = this.sidebar.getInstance(instanceID);
 
-        // Close modal immediately and add to transfer panel.
+        // Close modals immediately and add to transfer panel.
         document.getElementById('uploadModal')?.classList.remove('show');
+        document.getElementById('fileBrowserModal')?.classList.remove('show');
         const tid = this.transfers.add('upload', file.name);
 
         const form = new FormData();
@@ -2152,8 +2153,9 @@ class CloudTermApp {
 
         const inst = this.sidebar.getInstance(instanceID);
 
-        // Close modal immediately and add to transfer panel.
+        // Close modals immediately and add to transfer panel.
         document.getElementById('downloadModal')?.classList.remove('show');
+        document.getElementById('fileBrowserModal')?.classList.remove('show');
         const filename = remotePath.split('/').pop().split('\\').pop() || 'download';
         const tid = this.transfers.add('download', filename);
 
@@ -2295,6 +2297,7 @@ class CloudTermApp {
         const inst = this.sidebar.getInstance(instanceID);
 
         document.getElementById('expressUploadModal')?.classList.remove('show');
+        document.getElementById('fileBrowserModal')?.classList.remove('show');
         const tid = this.transfers.add('upload', '\u26A1 ' + file.name);
 
         const form = new FormData();
@@ -2372,6 +2375,7 @@ class CloudTermApp {
         const inst = this.sidebar.getInstance(instanceID);
 
         document.getElementById('expressDownloadModal')?.classList.remove('show');
+        document.getElementById('fileBrowserModal')?.classList.remove('show');
         const filename = remotePath.split('/').pop().split('\\').pop() || 'download';
         const tid = this.transfers.add('download', '\u26A1 ' + filename);
 
