@@ -176,6 +176,7 @@ class WSManager {
             console.log('WebSocket connected');
             this.reconnectDelay = 1000;
             this._dispatch('_ws_open', {});
+            this._startKeepalive();
         };
 
         this.ws.onmessage = (event) => {
@@ -191,6 +192,7 @@ class WSManager {
 
         this.ws.onclose = () => {
             console.log('WebSocket closed');
+            this._stopKeepalive();
             this._dispatch('_ws_close', {});
             if (!this._intentionalClose) {
                 this._scheduleReconnect();
@@ -245,6 +247,20 @@ class WSManager {
             this.connect();
         }, this.reconnectDelay);
     }
+
+    _startKeepalive() {
+        this._stopKeepalive();
+        this._keepaliveTimer = setInterval(() => {
+            this.send('keepalive', {});
+        }, 30000);
+    }
+
+    _stopKeepalive() {
+        if (this._keepaliveTimer) {
+            clearInterval(this._keepaliveTimer);
+            this._keepaliveTimer = null;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,8 +269,9 @@ class WSManager {
 
 class TerminalManager {
     constructor(wsManager) {
-        this.terminals = new Map(); // sessionID -> {term, fitAddon, instanceID, instanceName}
+        this.terminals = new Map(); // sessionID -> {term, fitAddon, searchAddon, instanceID, instanceName}
         this.wsManager = wsManager;
+        this.inputSyncEnabled = false;
     }
 
     createTerminal(sessionID, instanceID, instanceName, containerEl, termThemeName) {
@@ -280,11 +297,21 @@ class TerminalManager {
             term.loadAddon(new WebLinksAddon.WebLinksAddon());
         }
 
+        let searchAddon = null;
+        if (typeof SearchAddon !== 'undefined') {
+            searchAddon = new SearchAddon.SearchAddon();
+            term.loadAddon(searchAddon);
+        }
+
         term.onData((data) => {
-            this.wsManager.send('terminal_input', {
-                session_id: sessionID,
-                input: data
-            });
+            if (this.inputSyncEnabled) {
+                // Broadcast to all SSH terminals.
+                for (const [sid] of this.terminals) {
+                    this.wsManager.send('terminal_input', { session_id: sid, input: data });
+                }
+            } else {
+                this.wsManager.send('terminal_input', { session_id: sessionID, input: data });
+            }
         });
 
         term.onResize(({ cols, rows }) => {
@@ -295,6 +322,12 @@ class TerminalManager {
             });
         });
 
+        // Let Ctrl+F / Cmd+F pass through to our search handler instead of the terminal.
+        term.attachCustomKeyEventHandler((e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') return false;
+            return true;
+        });
+
         term.open(containerEl);
 
         // Slight delay so the container has layout dimensions before fitting.
@@ -302,7 +335,7 @@ class TerminalManager {
             try { fitAddon.fit(); } catch (e) { /* container not yet visible */ }
         });
 
-        this.terminals.set(sessionID, { term, fitAddon, instanceID, instanceName });
+        this.terminals.set(sessionID, { term, fitAddon, searchAddon, instanceID, instanceName, recording: false });
 
         // Tell the backend to start the SSM session. The instance lookup provides
         // aws_profile and aws_region, but we may not have those on the client at
@@ -310,7 +343,8 @@ class TerminalManager {
         // when only instance_id is supplied.
         this.wsManager.send('start_session', {
             instance_id: instanceID,
-            session_id: sessionID
+            session_id: sessionID,
+            instance_name: instanceName
         });
     }
 
@@ -403,19 +437,40 @@ class TabManager {
         tab.dataset.id = id;
         tab.dataset.name = name;
         tab.dataset.type = type;
+        const exportBtn = type === 'ssh' ? ' <span class="tab-export" title="Export session">\u2913</span>' : '';
+        const recDot = ''; // Recording dot is added dynamically when recording starts
+        const recToggle = type === 'ssh' ? ' <span class="tab-rec-btn" title="Toggle recording">\u25CF</span>' : '';
+        // Note: name is already escaped via _escapeHTML; other parts are static string constants.
         tab.innerHTML =
             '<span class="tab-type ' + type + '">' + type.toUpperCase() + '</span> ' +
-            this._escapeHTML(name) +
+            '<span class="tab-name">' + this._escapeHTML(name) + '</span>' +
+            recDot +
+            exportBtn +
+            recToggle +
             ' <span class="tab-close">\u2715</span>';
 
         tab.addEventListener('click', (e) => {
-            if (e.target.classList.contains('tab-close')) return;
+            if (e.target.classList.contains('tab-close') || e.target.classList.contains('tab-export')) return;
             this.switchTab(id);
         });
         tab.querySelector('.tab-close').addEventListener('click', (e) => {
             e.stopPropagation();
             this.closeTab(id);
         });
+        const exportEl = tab.querySelector('.tab-export');
+        if (exportEl) {
+            exportEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onExport) this.onExport(id);
+            });
+        }
+        const recBtn = tab.querySelector('.tab-rec-btn');
+        if (recBtn) {
+            recBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onToggleRecording) this.onToggleRecording(id);
+            });
+        }
 
         // Insert before the "+" button.
         const addBtn = this.tabBar.querySelector('.tab-add');
@@ -826,9 +881,7 @@ class SidebarTree {
             el.style.display = hasS3 ? '' : 'none';
         });
 
-        menu.style.left = e.clientX + 'px';
-        menu.style.top = e.clientY + 'px';
-        menu.classList.add('show');
+        positionContextMenu(menu, e.clientX, e.clientY);
     }
 
     _stateClass(state) {
@@ -1025,6 +1078,25 @@ class SnippetsManager {
 // Toast Notification
 // ---------------------------------------------------------------------------
 
+/** Position a context menu near the cursor, flipping up/left if it would overflow the viewport. */
+function positionContextMenu(menu, clientX, clientY) {
+    // Temporarily show off-screen to measure
+    menu.style.left = '-9999px';
+    menu.style.top = '-9999px';
+    menu.classList.add('show');
+    const rect = menu.getBoundingClientRect();
+    menu.classList.remove('show');
+
+    let x = clientX;
+    let y = clientY;
+    if (x + rect.width > window.innerWidth) x = Math.max(0, window.innerWidth - rect.width - 4);
+    if (y + rect.height > window.innerHeight) y = Math.max(0, clientY - rect.height);
+
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.classList.add('show');
+}
+
 function showToast(msg, duration) {
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toastMsg');
@@ -1060,6 +1132,10 @@ function showRDPCredentialModal(instanceID, instanceName) {
                 '<input id="rdpPass" type="password" placeholder="Password" ' +
                 'style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;">' +
                 '</div>' +
+                '<label style="display:flex;align-items:center;gap:6px;margin-bottom:14px;cursor:pointer;font-size:11px;color:var(--muted);">' +
+                '<input id="rdpRecordChk" type="checkbox" style="accent-color:var(--red);cursor:pointer;">' +
+                '<span>\u25CF Record this session</span>' +
+                '</label>' +
                 '<div style="display:flex;gap:8px;">' +
                 '<button id="rdpCredConnect" style="flex:1;padding:8px;background:linear-gradient(135deg,rgba(96,165,250,.2),rgba(108,92,231,.15));border:1px solid rgba(96,165,250,.4);border-radius:7px;color:var(--rdp);font-family:\'JetBrains Mono\',monospace;font-size:11px;cursor:pointer;">Connect</button>' +
                 '<button id="rdpCredCancel" class="modal-cancel" style="flex:1;">Cancel</button>' +
@@ -1076,11 +1152,13 @@ function showRDPCredentialModal(instanceID, instanceName) {
 
         const cleanup = () => { modal.classList.remove('show'); };
 
+        document.getElementById('rdpRecordChk').checked = false;
         document.getElementById('rdpCredConnect').onclick = () => {
             const user = document.getElementById('rdpUser').value.trim();
             const pass = document.getElementById('rdpPass').value;
+            const record = document.getElementById('rdpRecordChk').checked;
             cleanup();
-            resolve({ username: user, password: pass });
+            resolve({ username: user, password: pass, record: record });
         };
 
         document.getElementById('rdpCredCancel').onclick = () => {
@@ -1249,6 +1327,164 @@ class TransferManager {
 }
 
 // ---------------------------------------------------------------------------
+// Split Manager — panes live INSIDE a tab's panel (tmux-style, no new tabs)
+// ---------------------------------------------------------------------------
+
+class SplitManager {
+    constructor() {
+        // tabID -> { container, panes: [{sessionID, pane, termContainer}] }
+        this._splits = new Map();
+    }
+
+    /**
+     * Split a tab's panel into two panes.
+     * Returns the DOM element for the new pane's content (picker or terminal).
+     */
+    split(tabID, direction, newSessionID, panel, hostInstanceName) {
+        if (this._splits.has(tabID)) return null; // already split — only 2 panes for now
+        const existingTC = panel.querySelector('.terminal-container');
+        if (!existingTC) return null;
+
+        const container = document.createElement('div');
+        container.className = 'split-container ' + (direction === 'horizontal' ? 'split-horizontal' : 'split-vertical');
+
+        const pane1 = document.createElement('div');
+        pane1.className = 'split-pane';
+        pane1.style.flex = '1';
+
+        const handle = document.createElement('div');
+        handle.className = 'split-handle';
+
+        const pane2 = document.createElement('div');
+        pane2.className = 'split-pane';
+        pane2.style.flex = '1';
+
+        // Add header to pane1 (original terminal)
+        pane1.appendChild(this._createPaneHeader(hostInstanceName || 'Terminal'));
+
+        // Move existing terminal into pane1 (DOM move, preserves xterm.js)
+        pane1.appendChild(existingTC);
+
+        container.append(pane1, handle, pane2);
+
+        // Replace panel contents with split layout
+        panel.innerHTML = '';
+        panel.appendChild(container);
+
+        this._splits.set(tabID, {
+            container, panel,
+            panes: [
+                { sessionID: tabID, pane: pane1, termContainer: existingTC },
+                { sessionID: newSessionID, pane: pane2, termContainer: null }
+            ]
+        });
+
+        this._attachDragHandler(handle, pane1, pane2, direction);
+        return pane2;
+    }
+
+    _createPaneHeader(title, onClose) {
+        const header = document.createElement('div');
+        header.className = 'split-pane-header';
+        header.innerHTML = '<span class="split-pane-title">' + title + '</span>';
+        if (onClose) {
+            const btn = document.createElement('button');
+            btn.className = 'split-pane-close';
+            btn.innerHTML = '&#x2715;';
+            btn.addEventListener('click', onClose);
+            header.appendChild(btn);
+        }
+        return header;
+    }
+
+    /** Set the terminal container for a pane (called after picker selects instance). */
+    setPaneTermContainer(tabID, sessionID, termContainer) {
+        const info = this._splits.get(tabID);
+        if (!info) return;
+        const pane = info.panes.find(p => p.sessionID === sessionID);
+        if (pane) pane.termContainer = termContainer;
+    }
+
+    /** Get extra (non-primary) session IDs for a tab. */
+    getExtraSessionIDs(tabID) {
+        const info = this._splits.get(tabID);
+        if (!info) return [];
+        return info.panes.filter(p => p.sessionID !== tabID && p.termContainer).map(p => p.sessionID);
+    }
+
+    /** Get ALL session IDs for a tab (primary + split panes). */
+    getAllSessionIDs(tabID) {
+        const info = this._splits.get(tabID);
+        if (!info) return [tabID];
+        return info.panes.filter(p => p.termContainer).map(p => p.sessionID);
+    }
+
+    /** Check if this tab has a split. */
+    hasSplit(tabID) {
+        return this._splits.has(tabID);
+    }
+
+    /** Remove all split state for a tab (called on tab close). */
+    removeSplit(tabID) {
+        this._splits.delete(tabID);
+    }
+
+    /** Collapse split: close the secondary pane, restore primary to fill panel. */
+    closeSplitPane(tabID, sessionID) {
+        const info = this._splits.get(tabID);
+        if (!info || !info.panel) return null;
+        const primary = info.panes.find(p => p.sessionID === tabID);
+        if (primary && primary.termContainer) {
+            info.panel.innerHTML = '';
+            primary.termContainer.style.flex = '1';
+            primary.termContainer.style.overflow = 'hidden';
+            info.panel.appendChild(primary.termContainer);
+        }
+        this._splits.delete(tabID);
+        return sessionID;
+    }
+
+    _attachDragHandler(handle, pane1, pane2, direction) {
+        let startPos = 0;
+        let startFlex1 = 0;
+        let startFlex2 = 0;
+
+        const onMouseDown = (e) => {
+            e.preventDefault();
+            handle.classList.add('dragging');
+            startPos = direction === 'horizontal' ? e.clientX : e.clientY;
+            startFlex1 = parseFloat(pane1.style.flex) || 1;
+            startFlex2 = parseFloat(pane2.style.flex) || 1;
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        };
+
+        const onMouseMove = (e) => {
+            const totalSize = direction === 'horizontal' ? handle.parentElement.offsetWidth : handle.parentElement.offsetHeight;
+            if (totalSize === 0) return;
+            const delta = ((direction === 'horizontal' ? e.clientX : e.clientY) - startPos) / totalSize;
+            const total = startFlex1 + startFlex2;
+            let f1 = startFlex1 + delta;
+            let f2 = startFlex2 - delta;
+            const min = total * 0.1;
+            if (f1 < min) { f1 = min; f2 = total - min; }
+            if (f2 < min) { f2 = min; f1 = total - min; }
+            pane1.style.flex = f1.toFixed(4);
+            pane2.style.flex = f2.toFixed(4);
+            window.dispatchEvent(new Event('resize'));
+        };
+
+        const onMouseUp = () => {
+            handle.classList.remove('dragging');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        handle.addEventListener('mousedown', onMouseDown);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CloudTerm Application
 // ---------------------------------------------------------------------------
 
@@ -1262,6 +1498,8 @@ class CloudTermApp {
         this.ws = new WSManager(wsEndpoint);
         this.termManager = new TerminalManager(this.ws);
         this.tabManager = new TabManager();
+        this.tabManager.onExport = (sessionID) => this._exportSession(sessionID);
+        this.tabManager.onToggleRecording = (sessionID) => this._toggleRecording(sessionID);
         this.sidebar = new SidebarTree(
             document.getElementById('treeContainer') || document.getElementById('tree'),
             (id, name, type) => this.openSession(id, name, type)
@@ -1270,6 +1508,8 @@ class CloudTermApp {
         this.snippets = new SnippetsManager();
         this.transfers = new TransferManager();
         this.settings = new SettingsManager();
+        this.splitManager = new SplitManager();
+        this._sessionCounter = 0;
         this.sidebar._favorites = this.favorites;
         this.sidebar._onFavoritesChanged = () => this._renderFavorites();
         this.sidebar.onRefresh = () => {
@@ -1281,6 +1521,8 @@ class CloudTermApp {
         this.currentTermTheme = localStorage.getItem('cloudterm_term_theme') || 'github-dark';
         this.zoomLevel = 100;
         this.appZoom = parseInt(this.settings.get('app_zoom'), 10) || 100;
+        this.envColorsEnabled = this.settings.get('env_colors_enabled') === 'true';
+        try { this.envColorMap = JSON.parse(this.settings.get('env_color_map') || '{}'); } catch (_) { this.envColorMap = {}; }
         this.rdpMode = config.rdpMode || 'native';
         this.guacWSURL = config.guacWSURL || '';
     }
@@ -1306,6 +1548,10 @@ class CloudTermApp {
         this._setupSnippetsButton();
         this._setupHistoryButton();
         this._setupBroadcastButton();
+        this._setupInputSyncButton();
+        this._setupTunnelPanel();
+        this._setupRecordingsButton();
+        this._setupTabContextMenu();
 
         // Wire up server preference sync callbacks
         this.favorites.onSave = () => this._pushPreferencesToServer();
@@ -1324,6 +1570,25 @@ class CloudTermApp {
 
         this.ws.on('session_started', (payload) => {
             showToast('Session started: ' + (payload.instance_id || ''));
+            // Sync recording state from backend (auto-record).
+            if (payload.recording && payload.session_id) {
+                const s = this.termManager.terminals.get(payload.session_id);
+                if (s) {
+                    s.recording = true;
+                    const tab = document.querySelector('.tab[data-id="' + payload.session_id + '"]');
+                    if (tab) {
+                        const btn = tab.querySelector('.tab-rec-btn');
+                        if (btn) btn.classList.add('recording');
+                        if (!tab.querySelector('.tab-rec')) {
+                            const span = document.createElement('span');
+                            span.className = 'tab-rec';
+                            span.textContent = '\u25CF';
+                            span.title = 'Recording';
+                            tab.querySelector('.tab-name')?.after(span);
+                        }
+                    }
+                }
+            }
         });
 
         this.ws.on('session_error', (payload) => {
@@ -1461,15 +1726,18 @@ class CloudTermApp {
     // -- Session management --------------------------------------------------
 
     openSession(instanceID, instanceName, type) {
-        const tabID = instanceID + '-' + type;
-
-        // Reuse existing tab of same type.
-        if (this.tabManager.tabs.has(tabID)) {
-            this.tabManager.switchTab(tabID);
-            if (type === 'ssh') {
-                this.termManager.focusTerminal(tabID);
+        // For RDP, reuse existing tab (only one RDP session per instance).
+        // For SSH, always open a new tab (allow multiple terminals per instance).
+        let tabID;
+        if (type === 'rdp') {
+            tabID = instanceID + '-rdp';
+            if (this.tabManager.tabs.has(tabID)) {
+                this.tabManager.switchTab(tabID);
+                return;
             }
-            return;
+        } else {
+            this._sessionCounter = (this._sessionCounter || 0) + 1;
+            tabID = instanceID + '-ssh-' + this._sessionCounter;
         }
 
         // Create tab.
@@ -1483,6 +1751,9 @@ class CloudTermApp {
             const containerEl = panel ? panel.querySelector('.terminal-container') : null;
             if (containerEl) {
                 this.termManager.createTerminal(tabID, instanceID, instanceName, containerEl, this.currentTermTheme);
+                // Apply environment color border.
+                const envColor = this._getEnvColor(instanceID);
+                if (envColor && panel) panel.style.borderLeft = '3px solid ' + envColor;
                 // Fit after the panel is visible.
                 requestAnimationFrame(() => {
                     this.termManager.fitTerminal(tabID);
@@ -1514,7 +1785,8 @@ class CloudTermApp {
                         aws_profile: inst ? inst.aws_profile : '',
                         aws_region: inst ? inst.aws_region : '',
                         username: creds.username,
-                        password: creds.password
+                        password: creds.password,
+                        record: creds.record
                     })
                 });
 
@@ -1524,6 +1796,18 @@ class CloudTermApp {
                 }
 
                 const data = await resp.json();
+
+                // Show recording indicator on the RDP tab if recording.
+                if (data.recording) {
+                    const tab = document.querySelector('.tab[data-id="' + tabID + '"]');
+                    if (tab && !tab.querySelector('.tab-rec')) {
+                        const span = document.createElement('span');
+                        span.className = 'tab-rec';
+                        span.textContent = '\u25CF';
+                        span.title = 'Recording';
+                        tab.querySelector('.tab-name').after(span);
+                    }
+                }
 
                 // Place an iframe in the RDP panel.
                 const panel = document.getElementById('panel-' + tabID);
@@ -1674,8 +1958,15 @@ class CloudTermApp {
     }
 
     _updateConnectionIndicator(connected) {
+        if (this._wsDisconnectTimer) {
+            clearTimeout(this._wsDisconnectTimer);
+            this._wsDisconnectTimer = null;
+        }
         if (!connected) {
-            showToast('WebSocket disconnected — reconnecting...');
+            // Only show toast if disconnect persists > 3 seconds (skip brief hiccups)
+            this._wsDisconnectTimer = setTimeout(() => {
+                showToast('WebSocket disconnected — reconnecting...');
+            }, 3000);
         }
     }
 
@@ -1809,6 +2100,14 @@ class CloudTermApp {
             if (prefs.term_theme && prefs.term_theme !== this.currentTermTheme) {
                 this._setTermTheme(prefs.term_theme);
             }
+            if (prefs.env_colors_enabled !== undefined) {
+                this.envColorsEnabled = prefs.env_colors_enabled === true || prefs.env_colors_enabled === 'true';
+                this.settings.set('env_colors_enabled', this.envColorsEnabled ? 'true' : 'false');
+            }
+            if (prefs.env_color_map && typeof prefs.env_color_map === 'object') {
+                this.envColorMap = prefs.env_color_map;
+                this.settings.set('env_color_map', JSON.stringify(prefs.env_color_map));
+            }
 
             // Re-render favorites section if data changed
             this._renderFavorites();
@@ -1824,7 +2123,9 @@ class CloudTermApp {
                 favorites: [...this.favorites.favorites],
                 snippets: this.snippets.getAll(),
                 page_theme: this.currentPageTheme,
-                term_theme: this.currentTermTheme
+                term_theme: this.currentTermTheme,
+                env_colors_enabled: this.envColorsEnabled,
+                env_color_map: this.envColorMap
             };
             fetch('/preferences', {
                 method: 'PUT',
@@ -1907,6 +2208,8 @@ class CloudTermApp {
                     this._showFileBrowserModal(id, name);
                 } else if (text.includes('broadcast command')) {
                     this._showBroadcastModal(id);
+                } else if (text.includes('port forward')) {
+                    this._showPortForwardModal(id, name);
                 } else if (text.includes('close all')) {
                     this._closeSession(id);
                 }
@@ -2475,8 +2778,26 @@ class CloudTermApp {
             if (input) input.value = this.settings.get('s3_bucket');
             const fontLabel = document.getElementById('settingsFontValue');
             if (fontLabel) fontLabel.textContent = this.appZoom + '%';
+            const autoRec = document.getElementById('settingsAutoRecord');
+            if (autoRec) autoRec.checked = this.settings.get('auto_record') === 'true';
+            this._loadAWSAccounts();
+            const envCheck = document.getElementById('settingsEnvColors');
+            if (envCheck) envCheck.checked = this.envColorsEnabled;
+            this._renderEnvColorList();
             modal?.classList.add('show');
         });
+
+        // Tab switching
+        document.querySelectorAll('.settings-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.settings-pane').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                const pane = document.getElementById('settingsPane-' + tab.dataset.tab);
+                if (pane) pane.classList.add('active');
+            });
+        });
+
         document.getElementById('settingsFontDec')?.addEventListener('click', () => {
             this._appZoom(-10);
             const fontLabel = document.getElementById('settingsFontValue');
@@ -2487,12 +2808,176 @@ class CloudTermApp {
             const fontLabel = document.getElementById('settingsFontValue');
             if (fontLabel) fontLabel.textContent = this.appZoom + '%';
         });
+        // Env color add
+        document.getElementById('envColorAddBtn')?.addEventListener('click', () => {
+            const nameInput = document.getElementById('envColorName');
+            const colorInput = document.getElementById('envColorPicker');
+            const name = (nameInput?.value || '').trim().toLowerCase();
+            if (!name) { showToast('Enter an environment name'); return; }
+            this.envColorMap[name] = colorInput?.value || '#ef4444';
+            nameInput.value = '';
+            this._renderEnvColorList();
+        });
+
         document.getElementById('settingsSaveBtn')?.addEventListener('click', () => {
             const input = document.getElementById('settingsS3Bucket');
             if (input) this.settings.set('s3_bucket', input.value.trim());
+            const autoRec = document.getElementById('settingsAutoRecord');
+            if (autoRec) this.settings.set('auto_record', autoRec.checked ? 'true' : 'false');
+            const envCheck = document.getElementById('settingsEnvColors');
+            this.envColorsEnabled = envCheck ? envCheck.checked : false;
+            this.settings.set('env_colors_enabled', this.envColorsEnabled ? 'true' : 'false');
+            this.settings.set('env_color_map', JSON.stringify(this.envColorMap));
+            this._applyEnvColorsToAll();
             document.getElementById('settingsModal')?.classList.remove('show');
             showToast('Settings saved');
         });
+
+        // AWS account add button
+        document.getElementById('awsAcctAddBtn')?.addEventListener('click', () => this._addAWSAccount());
+    }
+
+    _renderEnvColorList() {
+        const list = document.getElementById('envColorList');
+        if (!list) return;
+        let html = '';
+        for (const [name, color] of Object.entries(this.envColorMap)) {
+            html += '<div style="display:flex;align-items:center;gap:8px;">' +
+                '<span style="width:14px;height:14px;border-radius:3px;background:' + color + ';flex-shrink:0;"></span>' +
+                '<span style="flex:1;font-size:12px;color:var(--text);">' + name + '</span>' +
+                '<button class="env-color-del" data-env="' + name + '" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;">&times;</button>' +
+                '</div>';
+        }
+        list.innerHTML = html;
+        list.querySelectorAll('.env-color-del').forEach(btn => {
+            btn.addEventListener('click', () => {
+                delete this.envColorMap[btn.dataset.env];
+                this._renderEnvColorList();
+            });
+        });
+    }
+
+    _getEnvColor(instanceID) {
+        if (!this.envColorsEnabled || !instanceID) return null;
+        const inst = this.sidebar?._instanceData?.[instanceID];
+        if (!inst) return null;
+        const env = (inst.tag2_value || '').toLowerCase();
+        return this.envColorMap[env] || null;
+    }
+
+    _applyEnvColorsToAll() {
+        for (const [sessionID, entry] of this.termManager.terminals) {
+            const color = this._getEnvColor(entry.instanceID);
+            const panel = document.querySelector('.panel[data-id="' + sessionID + '"]');
+            if (panel) {
+                panel.style.borderLeft = color ? '3px solid ' + color : '';
+            }
+        }
+    }
+
+    // -- AWS Accounts Management -----------------------------------------------
+
+    _esc(str) {
+        if (!str) return '';
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async _loadAWSAccounts() {
+        const list = document.getElementById('awsAccountsList');
+        if (!list) return;
+        try {
+            const res = await fetch('/aws-accounts');
+            const accounts = await res.json();
+            if (!accounts || accounts.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:var(--dim);padding:12px;font-size:11px;">No accounts added yet</div>';
+                return;
+            }
+            list.innerHTML = accounts.map(a => `
+                <div class="aws-acct-row" data-id="${a.id}">
+                    <div class="aws-acct-info">
+                        <div class="aws-acct-name">${this._esc(a.name)}</div>
+                        <div class="aws-acct-key">${this._esc(a.access_key_id)} &middot; ${this._esc(a.secret_access_key)}</div>
+                    </div>
+                    <button class="aws-acct-btn scan" onclick="cloudterm._scanAWSAccount('${a.id}', this)">Scan</button>
+                    <button class="aws-acct-btn del" onclick="cloudterm._deleteAWSAccount('${a.id}')">Remove</button>
+                </div>
+            `).join('');
+        } catch (e) {
+            list.innerHTML = '<div style="color:var(--red);padding:8px;font-size:11px;">Failed to load accounts</div>';
+        }
+    }
+
+    async _addAWSAccount() {
+        const name = document.getElementById('awsAcctName')?.value.trim() || '';
+        const accessKey = document.getElementById('awsAcctAccessKey')?.value.trim();
+        const secretKey = document.getElementById('awsAcctSecretKey')?.value.trim();
+        const sessionToken = document.getElementById('awsAcctSessionToken')?.value.trim() || '';
+
+        if (!accessKey || !secretKey) {
+            showToast('Access Key ID and Secret Access Key are required');
+            return;
+        }
+
+        try {
+            const res = await fetch('/aws-accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, access_key_id: accessKey, secret_access_key: secretKey, session_token: sessionToken })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                showToast(err.error || 'Failed to add account');
+                return;
+            }
+            showToast('Account added');
+            document.getElementById('awsAcctName').value = '';
+            document.getElementById('awsAcctAccessKey').value = '';
+            document.getElementById('awsAcctSecretKey').value = '';
+            document.getElementById('awsAcctSessionToken').value = '';
+            this._loadAWSAccounts();
+        } catch (e) {
+            showToast('Failed to add account');
+        }
+    }
+
+    async _deleteAWSAccount(id) {
+        try {
+            const res = await fetch('/aws-accounts/' + id, { method: 'DELETE' });
+            if (!res.ok) {
+                showToast('Failed to remove account');
+                return;
+            }
+            showToast('Account removed');
+            this._loadAWSAccounts();
+            this._loadInstances();
+        } catch (e) {
+            showToast('Failed to remove account');
+        }
+    }
+
+    async _scanAWSAccount(id, btn) {
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Scanning...';
+        }
+        try {
+            const res = await fetch('/aws-accounts/scan/' + id, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) {
+                showToast(data.error || 'Scan failed');
+                return;
+            }
+            showToast(`Found ${data.instances_found} instances for ${data.account_name}`);
+            // Refresh instance tree
+            this._loadInstances();
+        } catch (e) {
+            showToast('Scan failed');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Scan';
+            }
+        }
     }
 
     _showSnippetsModal() {
@@ -2656,6 +3141,146 @@ class CloudTermApp {
         }
     }
 
+    // -- Split Terminal Panes ----------------------------------------------------
+
+    _setupTabContextMenu() {
+        const menu = document.getElementById('tabCtxMenu');
+        if (!menu) return;
+
+        let targetTabID = null;
+
+        // Right-click on tab bar tabs
+        const tabBar = document.getElementById('tabBar');
+        if (tabBar) {
+            tabBar.addEventListener('contextmenu', (e) => {
+                const tab = e.target.closest('.tab');
+                if (!tab) return;
+                e.preventDefault();
+                targetTabID = tab.dataset.id;
+                const info = this.tabManager.tabs.get(targetTabID);
+                // Only show split options for SSH tabs
+                const splitItems = menu.querySelectorAll('[data-action="split-right"],[data-action="split-down"]');
+                splitItems.forEach(item => {
+                    item.style.display = (info && info.type === 'ssh') ? '' : 'none';
+                });
+                positionContextMenu(menu, e.clientX, e.clientY);
+            });
+        }
+
+        menu.addEventListener('click', (e) => {
+            const item = e.target.closest('.ctx-item');
+            if (!item || !targetTabID) return;
+            const action = item.dataset.action;
+            menu.classList.remove('show');
+
+            if (action === 'split-right') {
+                this._splitTab(targetTabID, 'horizontal');
+            } else if (action === 'split-down') {
+                this._splitTab(targetTabID, 'vertical');
+            } else if (action === 'close-tab') {
+                this.tabManager.closeTab(targetTabID);
+            }
+            targetTabID = null;
+        });
+
+        // Close menu on outside click
+        document.addEventListener('click', () => menu.classList.remove('show'));
+    }
+
+    _splitTab(tabID, direction) {
+        const tabInfo = this.tabManager.tabs.get(tabID);
+        if (!tabInfo || tabInfo.type !== 'ssh') {
+            showToast('Split is only available for SSH terminals');
+            return;
+        }
+
+        const panel = tabInfo.panel;
+        if (!panel) return;
+
+        // Generate unique session ID for the new pane
+        this._sessionCounter++;
+        const newSessionID = tabID + '-p' + this._sessionCounter;
+
+        const instanceName = tabInfo.name;
+
+        // Split the panel DOM — returns the new pane element
+        const pane2 = this.splitManager.split(tabID, direction, newSessionID, panel, instanceName);
+        if (!pane2) return;
+
+        // Fit the original terminal after layout change
+        requestAnimationFrame(() => this.termManager.fitTerminal(tabID));
+
+        // Show instance picker in the new pane
+        this._showSplitPicker(tabID, newSessionID, pane2);
+    }
+
+    /** Show a picker in the split pane listing active SSH instances. */
+    _showSplitPicker(tabID, newSessionID, paneEl) {
+        // Gather unique instances from open SSH tabs
+        const instances = new Map();
+        for (const [, info] of this.tabManager.tabs) {
+            if (info.type === 'ssh' && info.instanceID) {
+                if (!instances.has(info.instanceID)) {
+                    instances.set(info.instanceID, info.name || info.instanceID);
+                }
+            }
+        }
+
+        const picker = document.createElement('div');
+        picker.className = 'split-picker';
+        picker.innerHTML =
+            '<div class="split-picker-title">Connect to instance</div>' +
+            '<div class="split-picker-list"></div>';
+
+        const list = picker.querySelector('.split-picker-list');
+        for (const [instID, instName] of instances) {
+            const item = document.createElement('div');
+            item.className = 'split-picker-item';
+            item.dataset.instanceId = instID;
+            item.innerHTML =
+                '<span class="split-picker-name">' + instName + '</span>' +
+                '<span class="split-picker-id">' + instID + '</span>';
+            item.addEventListener('click', () => {
+                this._connectSplitPane(tabID, newSessionID, instID, instName, paneEl);
+            });
+            list.appendChild(item);
+        }
+
+        paneEl.appendChild(picker);
+    }
+
+    /** Replace picker with a terminal connected to the chosen instance. */
+    _connectSplitPane(tabID, sessionID, instanceID, instanceName, paneEl) {
+        paneEl.innerHTML = '';
+
+        // Add header with instance name and close button
+        const header = this.splitManager._createPaneHeader(instanceName, () => {
+            this._closeSplitPane(tabID, sessionID);
+        });
+        paneEl.appendChild(header);
+
+        const tc = document.createElement('div');
+        tc.className = 'terminal-container';
+        tc.style.cssText = 'flex:1;overflow:hidden;';
+        paneEl.appendChild(tc);
+
+        this.splitManager.setPaneTermContainer(tabID, sessionID, tc);
+        this.termManager.createTerminal(sessionID, instanceID, instanceName, tc, this.currentTermTheme);
+
+        requestAnimationFrame(() => {
+            const allIDs = this.splitManager.getAllSessionIDs(tabID);
+            for (const sid of allIDs) this.termManager.fitTerminal(sid);
+            this.termManager.focusTerminal(sessionID);
+        });
+    }
+
+    /** Close a secondary split pane — collapse back to single terminal. */
+    _closeSplitPane(tabID, sessionID) {
+        this.termManager.closeTerminal(sessionID);
+        this.splitManager.closeSplitPane(tabID, sessionID);
+        requestAnimationFrame(() => this.termManager.fitTerminal(tabID));
+    }
+
     // -- Instance Metrics --------------------------------------------------------
 
     _loadInstanceMetrics(instanceID) {
@@ -2814,6 +3439,749 @@ class CloudTermApp {
             });
         } catch (e) {
             body.innerHTML = '<div style="color:var(--red);padding:20px">Browse failed: ' + e.message + '</div>';
+        }
+    }
+
+    // -- Input Sync --------------------------------------------------------------
+
+    _setupInputSyncButton() {
+        const btn = document.getElementById('inputSyncBtn');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            this.termManager.inputSyncEnabled = !this.termManager.inputSyncEnabled;
+            btn.classList.toggle('sync-active', this.termManager.inputSyncEnabled);
+            btn.title = this.termManager.inputSyncEnabled
+                ? 'Input Sync ON (click to disable)'
+                : 'Sync Input (type once, send to all tabs)';
+        });
+    }
+
+    // -- Port Forwarding ---------------------------------------------------------
+
+    _showPortForwardModal(instanceID, instanceName) {
+        const modal = document.getElementById('portForwardModal');
+        if (!modal) return;
+        const subtitle = document.getElementById('pfModalSubtitle');
+        if (subtitle) subtitle.textContent = instanceName || instanceID;
+        const portInput = document.getElementById('pfRemotePort');
+        if (portInput) portInput.value = '';
+        modal.classList.add('show');
+        setTimeout(() => portInput && portInput.focus(), 100);
+
+        const startBtn = document.getElementById('pfStartBtn');
+        const handler = () => {
+            startBtn.removeEventListener('click', handler);
+            const port = parseInt(portInput.value, 10);
+            if (!port || port < 1 || port > 65535) {
+                showToast('Enter a valid port (1-65535)');
+                return;
+            }
+            modal.classList.remove('show');
+            this._startPortForward(instanceID, instanceName, port);
+        };
+        // Remove old listeners by cloning
+        const newBtn = startBtn.cloneNode(true);
+        startBtn.parentNode.replaceChild(newBtn, startBtn);
+        newBtn.addEventListener('click', handler);
+    }
+
+    async _startPortForward(instanceID, instanceName, remotePort) {
+        showToast('Starting tunnel to ' + instanceName + ':' + remotePort + '...');
+        try {
+            const resp = await fetch('/start-port-forward', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    instance_id: instanceID,
+                    instance_name: instanceName,
+                    port_number: remotePort
+                })
+            });
+            const data = await resp.json();
+            if (data.error) {
+                showToast('Tunnel error: ' + data.error, 4000);
+                return;
+            }
+            const localPort = data.port;
+            showToast('Tunnel active: localhost:' + localPort + ' -> ' + remotePort, 5000);
+            this._loadActiveTunnels();
+        } catch (e) {
+            showToast('Failed to start tunnel: ' + e.message, 4000);
+        }
+    }
+
+    _setupTunnelPanel() {
+        const header = document.getElementById('tunnelHeader');
+        const collapseBtn = document.getElementById('tunnelCollapseBtn');
+        const closeBtn = document.getElementById('tunnelCloseBtn');
+        const panel = document.getElementById('tunnelPanel');
+        if (!panel) return;
+
+        if (header) {
+            header.addEventListener('click', (e) => {
+                if (e.target === collapseBtn || e.target === closeBtn) return;
+                panel.classList.toggle('collapsed');
+            });
+        }
+        if (collapseBtn) {
+            collapseBtn.addEventListener('click', () => panel.classList.toggle('collapsed'));
+        }
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => panel.classList.remove('visible'));
+        }
+
+        // Poll for active tunnels every 10s
+        this._loadActiveTunnels();
+        setInterval(() => this._loadActiveTunnels(), 10000);
+    }
+
+    async _loadActiveTunnels() {
+        const panel = document.getElementById('tunnelPanel');
+        const body = document.getElementById('tunnelBody');
+        const count = document.getElementById('tunnelCount');
+        if (!panel || !body) return;
+
+        try {
+            const resp = await fetch('/active-tunnels');
+            if (!resp.ok) return;
+            const allTunnels = await resp.json();
+            // Only show manually created port forwards, not internal RDP tunnels (port 3389).
+            const tunnels = Array.isArray(allTunnels) ? allTunnels.filter(t => t.remote_port !== 3389) : [];
+            if (tunnels.length === 0) {
+                panel.classList.remove('visible');
+                if (count) count.textContent = '0';
+                return;
+            }
+
+            if (count) count.textContent = tunnels.length;
+            panel.classList.add('visible');
+
+            const webPorts = new Set([80,443,3000,4200,5000,5173,5174,8000,8080,8443,8888,9000,9090]);
+            let html = '';
+            for (const t of tunnels) {
+                const name = t.instance_name || t.instance_id;
+                const rp = t.remote_port || 3389;
+                const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                const showOpen = webPorts.has(rp);
+                html += '<div class="tunnel-row">' +
+                    '<span class="tunnel-name" title="' + esc(t.instance_id) + '">' + esc(name) + '</span>' +
+                    '<span class="tunnel-ports">:' + t.local_port + ' &#x2192; :' + rp + '</span>' +
+                    (showOpen ? '<button class="tunnel-open" data-lport="' + t.local_port + '" title="Open in browser"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>' : '') +
+                    '<button class="tunnel-stop" data-instance="' + esc(t.instance_id) + '" data-port="' + rp + '" title="Stop tunnel">&times;</button>' +
+                    '</div>';
+            }
+            body.innerHTML = html;
+
+            body.querySelectorAll('.tunnel-open').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    window.open('http://localhost:' + btn.dataset.lport, '_blank');
+                });
+            });
+            body.querySelectorAll('.tunnel-stop').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    this._stopTunnel(btn.dataset.instance, parseInt(btn.dataset.port, 10));
+                });
+            });
+        } catch (e) {
+            // Silently ignore — forwarder may be unavailable
+        }
+    }
+
+    async _stopTunnel(instanceID, portNumber) {
+        try {
+            await fetch('/stop-port-forward', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ instance_id: instanceID, port_number: portNumber })
+            });
+            showToast('Tunnel stopped');
+            this._loadActiveTunnels();
+        } catch (e) {
+            showToast('Failed to stop tunnel: ' + e.message, 3000);
+        }
+    }
+
+    // -- Recordings --------------------------------------------------------------
+
+    _setupRecordingsButton() {
+        const btn = document.getElementById('recordingsBtn');
+        if (btn) btn.addEventListener('click', () => this._showRecordingsModal());
+    }
+
+    async _showRecordingsModal() {
+        const modal = document.getElementById('recordingsModal');
+        const list = document.getElementById('recList');
+        if (!modal || !list) return;
+
+        list.innerHTML = '<div style="text-align:center;color:var(--dim);padding:20px">Loading...</div>';
+        modal.classList.add('show');
+
+        try {
+            const resp = await fetch('/recordings');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const recs = await resp.json();
+
+            if (!recs || recs.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:var(--dim);padding:20px">No recordings yet</div>';
+                return;
+            }
+
+            const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const fmtSize = (b) => {
+                if (b < 1024) return b + ' B';
+                if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+                return (b / 1048576).toFixed(1) + ' MB';
+            };
+
+            let html = '';
+            for (const r of recs) {
+                html += '<div class="rec-row">' +
+                    '<span class="rec-type ' + r.type + '">' + r.type + '</span>' +
+                    '<span class="rec-name" title="' + esc(r.name) + '">' + esc(r.name) + '</span>' +
+                    '<span class="rec-meta">' + fmtSize(r.size) + '</span>' +
+                    '<span class="rec-meta">' + (r.mod_time ? new Date(r.mod_time).toLocaleDateString() : '') + '</span>' +
+                    '<span class="rec-actions">' +
+                    '<button class="play" data-name="' + esc(r.name) + '" data-type="' + r.type + '" title="Play">&#x25B6;</button>' +
+                    '<button class="convert-mp4" data-name="' + esc(r.name) + '"' + (r.has_mp4 ? ' disabled title="MP4 already exists"' : ' title="Convert to MP4"') + '>' + (r.has_mp4 ? 'Converted' : 'Convert MP4') + '</button>' +
+                    '<button class="download-mp4" data-name="' + esc(r.name) + '"' + (r.has_mp4 ? ' title="Download MP4"' : ' disabled title="Convert first"') + '><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1v7M3 6l3 3 3-3M1 11h10"/></svg></button>' +
+                    '<button class="delete" data-name="' + esc(r.name) + '" title="Delete">&times;</button>' +
+                    '</span>' +
+                    '</div>';
+            }
+            list.innerHTML = html;
+
+            list.querySelectorAll('.play').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    modal.classList.remove('show');
+                    const replayModalId = btn.dataset.type === 'ssh' ? 'sshReplayModal' : 'rdpReplayModal';
+                    const replayModal = document.getElementById(replayModalId);
+                    if (replayModal) replayModal.dataset.parent = 'recordingsModal';
+                    if (btn.dataset.type === 'ssh') {
+                        this._playSSHRecording(btn.dataset.name);
+                    } else {
+                        this._playRDPRecording(btn.dataset.name);
+                    }
+                });
+            });
+
+            list.querySelectorAll('.convert-mp4').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const row = btn.closest('.audit-row');
+                    const dlBtn = row ? row.querySelector('.download-mp4') : null;
+                    this._convertToMP4(btn.dataset.name, btn, dlBtn);
+                });
+            });
+
+            list.querySelectorAll('.download-mp4').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (btn.disabled) return;
+                    const name = btn.dataset.name;
+                    const ext = name.lastIndexOf('.');
+                    const mp4Name = (ext > 0 ? name.substring(0, ext) : name) + '.mp4';
+                    this._triggerDownload(mp4Name);
+                });
+            });
+
+            list.querySelectorAll('.delete').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    if (!confirm('Delete recording ' + btn.dataset.name + '?')) return;
+                    try {
+                        await fetch('/recordings/' + encodeURIComponent(btn.dataset.name), { method: 'DELETE' });
+                        this._showRecordingsModal(); // refresh
+                    } catch (e) {
+                        showToast('Delete failed: ' + e.message);
+                    }
+                });
+            });
+        } catch (e) {
+            list.innerHTML = '<div style="text-align:center;color:var(--red);padding:20px">Failed to load recordings</div>';
+        }
+    }
+
+    async _playSSHRecording(filename) {
+        const modal = document.getElementById('sshReplayModal');
+        const container = document.getElementById('sshReplayTerminal');
+        const title = document.getElementById('sshReplayTitle');
+        const playBtn = document.getElementById('replayPlayBtn');
+        const playIcon = document.getElementById('castPlayIcon');
+        const pauseIcon = document.getElementById('castPauseIcon');
+        const speedSel = document.getElementById('replaySpeed');
+        const progressBar = document.getElementById('replayProgressBar');
+        const scrubThumb = document.getElementById('replayScrubThumb');
+        const timeElapsed = document.getElementById('replayTimeElapsed');
+        const timeTotal = document.getElementById('replayTimeTotal');
+        const scrubber = document.getElementById('replayProgress');
+        if (!modal || !container) return;
+
+        if (title) title.textContent = filename;
+        container.innerHTML = '';
+        if (progressBar) progressBar.style.width = '0%';
+        if (scrubThumb) scrubThumb.style.left = '0%';
+        if (timeElapsed) timeElapsed.textContent = '0:00';
+        if (timeTotal) timeTotal.textContent = '0:00';
+        modal.classList.add('show');
+
+        // Fetch recording
+        let events;
+        try {
+            const resp = await fetch('/recordings/' + encodeURIComponent(filename));
+            if (!resp.ok) throw new Error('Recording not found (HTTP ' + resp.status + ')');
+            const text = await resp.text();
+            const lines = text.trim().split('\n');
+            const header = JSON.parse(lines[0]);
+
+            events = [];
+            const IDLE_CAP = 2.0; // Cap pauses at 2 seconds (asciinema-style)
+            let adjustedTime = 0;
+            let lastRawTime = 0;
+            for (let i = 1; i < lines.length; i++) {
+                try {
+                    const ev = JSON.parse(lines[i]);
+                    if (Array.isArray(ev) && ev[1] === 'o') {
+                        const rawTime = ev[0];
+                        const delta = rawTime - lastRawTime;
+                        adjustedTime += Math.min(delta, IDLE_CAP);
+                        lastRawTime = rawTime;
+                        events.push({ time: adjustedTime, data: ev[2] });
+                    }
+                } catch (_) { /* skip malformed lines */ }
+            }
+
+            // Create replay terminal
+            const term = new Terminal({
+                cols: header.width || 80,
+                rows: header.height || 24,
+                disableStdin: true,
+                theme: TERMINAL_THEMES['github-dark'] || {},
+                fontFamily: "'Fira Code', 'Cascadia Code', monospace",
+                fontSize: 13
+            });
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(container);
+            fitAddon.fit();
+
+            // Playback state
+            let playing = false;
+            let eventIdx = 0;
+            let timer = null;
+            const totalDuration = events.length > 0 ? events[events.length - 1].time : 0;
+
+            const fmtTime = (s) => {
+                const m = Math.floor(s / 60);
+                const sec = Math.floor(s % 60);
+                return m + ':' + (sec < 10 ? '0' : '') + sec;
+            };
+
+            if (timeTotal) timeTotal.textContent = fmtTime(totalDuration);
+
+            const setIcons = (isPlaying) => {
+                if (playIcon) playIcon.style.display = isPlaying ? 'none' : '';
+                if (pauseIcon) pauseIcon.style.display = isPlaying ? '' : 'none';
+            };
+
+            const updateProgress = (t) => {
+                const pct = totalDuration > 0 ? (t / totalDuration) * 100 : 0;
+                if (progressBar) progressBar.style.width = pct + '%';
+                if (scrubThumb) scrubThumb.style.left = pct + '%';
+                if (timeElapsed) timeElapsed.textContent = fmtTime(t);
+            };
+
+            const playNext = () => {
+                if (eventIdx >= events.length) {
+                    playing = false;
+                    setIcons(false);
+                    return;
+                }
+                const ev = events[eventIdx];
+                term.write(ev.data);
+                updateProgress(ev.time);
+                eventIdx++;
+
+                if (eventIdx < events.length) {
+                    const delay = (events[eventIdx].time - ev.time) * 1000 / parseFloat(speedSel.value);
+                    timer = setTimeout(playNext, Math.max(delay, 1));
+                } else {
+                    playing = false;
+                    setIcons(false);
+                }
+            };
+
+            const seekTo = (targetTime) => {
+                clearTimeout(timer);
+                term.reset();
+                eventIdx = 0;
+                for (let i = 0; i < events.length; i++) {
+                    if (events[i].time <= targetTime) {
+                        term.write(events[i].data);
+                        eventIdx = i + 1;
+                    } else break;
+                }
+                updateProgress(targetTime);
+                if (playing) playNext();
+            };
+
+            const togglePlay = () => {
+                if (playing) {
+                    playing = false;
+                    clearTimeout(timer);
+                    setIcons(false);
+                } else {
+                    if (eventIdx >= events.length) {
+                        eventIdx = 0;
+                        term.reset();
+                    }
+                    playing = true;
+                    setIcons(true);
+                    playNext();
+                }
+            };
+
+            // Clone button to remove old listeners
+            const newPlayBtn = playBtn.cloneNode(true);
+            playBtn.parentNode.replaceChild(newPlayBtn, playBtn);
+            newPlayBtn.addEventListener('click', togglePlay);
+
+            // Scrubber: click to seek + hover tooltip
+            if (scrubber) {
+                const newScrubber = scrubber.cloneNode(true);
+                scrubber.parentNode.replaceChild(newScrubber, scrubber);
+                // Re-query children after clone
+                const bar = newScrubber.querySelector('.cast-scrubber-fill');
+                const thumb = newScrubber.querySelector('.cast-scrubber-thumb');
+                const tooltip = newScrubber.querySelector('.cast-scrubber-tooltip');
+                // Reassign IDs so updateProgress still works
+                if (bar) bar.id = 'replayProgressBar';
+                if (thumb) thumb.id = 'replayScrubThumb';
+                if (tooltip) tooltip.id = 'replayScrubTooltip';
+
+                newScrubber.addEventListener('click', (e) => {
+                    const rect = newScrubber.getBoundingClientRect();
+                    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                    seekTo(pct * totalDuration);
+                });
+
+                newScrubber.addEventListener('mousemove', (e) => {
+                    const rect = newScrubber.getBoundingClientRect();
+                    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                    if (tooltip) {
+                        tooltip.textContent = fmtTime(pct * totalDuration);
+                        tooltip.style.left = (pct * 100) + '%';
+                    }
+                    if (thumb) thumb.style.left = (pct * 100) + '%';
+                });
+
+                newScrubber.addEventListener('mouseleave', () => {
+                    // Restore thumb to current position
+                    const curPct = totalDuration > 0 && eventIdx > 0
+                        ? (events[Math.min(eventIdx - 1, events.length - 1)].time / totalDuration) * 100 : 0;
+                    if (thumb) thumb.style.left = curPct + '%';
+                });
+            }
+
+            // Keyboard controls
+            const keyHandler = (e) => {
+                if (!modal.classList.contains('show')) return;
+                if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+                else if (e.code === 'ArrowRight') {
+                    e.preventDefault();
+                    const cur = eventIdx > 0 ? events[Math.min(eventIdx - 1, events.length - 1)].time : 0;
+                    seekTo(Math.min(cur + 5, totalDuration));
+                }
+                else if (e.code === 'ArrowLeft') {
+                    e.preventDefault();
+                    const cur = eventIdx > 0 ? events[Math.min(eventIdx - 1, events.length - 1)].time : 0;
+                    seekTo(Math.max(cur - 5, 0));
+                }
+            };
+            document.addEventListener('keydown', keyHandler);
+
+            // Auto-play
+            playing = true;
+            setIcons(true);
+            playNext();
+
+            // Cleanup on close
+            const closeHandler = () => {
+                clearTimeout(timer);
+                playing = false;
+                document.removeEventListener('keydown', keyHandler);
+                term.dispose();
+            };
+            modal.querySelector('.modal-cancel').addEventListener('click', closeHandler);
+
+        } catch (e) {
+            container.innerHTML = '<div style="color:var(--red);padding:20px">Failed to load recording: ' + e.message + '</div>';
+        }
+    }
+
+    async _playRDPRecording(filename) {
+        const modal = document.getElementById('rdpReplayModal');
+        const displayEl = document.getElementById('rdpReplayDisplay');
+        const title = document.getElementById('rdpReplayTitle');
+        const playBtn = document.getElementById('rdpReplayPlayBtn');
+        const seekBar = document.getElementById('rdpReplaySeek');
+        const timeEl = document.getElementById('rdpReplayTime');
+        const closeBtn = document.getElementById('rdpReplayClose');
+        if (!modal || !displayEl) return;
+
+        // Default close handler (overridden by cleanup when recording loads).
+        closeBtn.onclick = () => { if (typeof closeModal === 'function') closeModal(modal); else modal.classList.remove('show'); };
+        modal.onclick = (e) => { if (e.target === modal) { if (typeof closeModal === 'function') closeModal(modal); else modal.classList.remove('show'); } };
+
+        // Clean up previous replay.
+        displayEl.innerHTML = '';
+        if (this._rdpRecording) {
+            try { this._rdpRecording.pause(); } catch (_) {}
+            this._rdpRecording = null;
+        }
+        if (this._rdpReplayTimer) {
+            clearInterval(this._rdpReplayTimer);
+            this._rdpReplayTimer = null;
+        }
+
+        if (title) title.textContent = 'RDP Replay: ' + filename;
+        playBtn.innerHTML = '&#x25B6;';
+        seekBar.value = 0;
+        timeEl.textContent = '0:00 / 0:00';
+        modal.classList.add('show');
+
+        // .guac files: use Guacamole.SessionRecording player.
+        if (filename.endsWith('.guac') && typeof Guacamole !== 'undefined') {
+            try {
+                displayEl.innerHTML = '<div style="color:var(--dim);font-size:12px;padding:20px;">Loading recording...</div>';
+                const resp = await fetch('/recordings/' + encodeURIComponent(filename));
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const blob = await resp.blob();
+                console.log('[RDP Replay] blob size:', blob.size, 'type:', blob.type);
+                if (!blob.size) throw new Error('Recording file is empty');
+
+                displayEl.innerHTML = '';
+                const recording = new Guacamole.SessionRecording(blob);
+                this._rdpRecording = recording;
+
+                recording.onerror = (msg) => {
+                    console.error('[RDP Replay] recording error:', msg);
+                    displayEl.innerHTML = '<div style="color:var(--red);padding:20px;">Playback error: ' + msg + '</div>';
+                };
+
+                const display = recording.getDisplay();
+                const displayCanvas = display.getElement();
+                displayCanvas.style.margin = '0 auto';
+                displayCanvas.style.transformOrigin = 'top left';
+                displayEl.appendChild(displayCanvas);
+
+                // Auto-scale display to fit container.
+                const fitDisplay = () => {
+                    const dw = display.getWidth();
+                    const dh = display.getHeight();
+                    if (!dw || !dh) return;
+                    const cw = displayEl.clientWidth;
+                    const ch = displayEl.clientHeight;
+                    const scale = Math.min(cw / dw, ch / dh, 1);
+                    display.scale(scale);
+                    displayCanvas.style.margin = '0 auto';
+                };
+                display.onresize = fitDisplay;
+                // Also fit after first frame renders.
+                setTimeout(fitDisplay, 200);
+
+                const fmtTime = (ms) => {
+                    const s = Math.floor(ms / 1000);
+                    const m = Math.floor(s / 60);
+                    return m + ':' + String(s % 60).padStart(2, '0');
+                };
+
+                let seeking = false;
+                let loaded = false;
+
+                recording.onload = () => {
+                    loaded = true;
+                    console.log('[RDP Replay] loaded, duration:', recording.getDuration());
+                    playBtn.disabled = false;
+                    playBtn.innerHTML = '&#x25B6;';
+                };
+
+                recording.onprogress = (duration) => {
+                    if (!seeking) {
+                        timeEl.textContent = fmtTime(recording.getPosition()) + ' / ' + fmtTime(duration);
+                    }
+                };
+
+                recording.onplay = () => {
+                    playBtn.innerHTML = '&#x23F8;';
+                    this._rdpReplayTimer = setInterval(() => {
+                        const dur = recording.getDuration();
+                        const pos = recording.getPosition();
+                        if (dur > 0 && !seeking) {
+                            seekBar.value = Math.round((pos / dur) * 1000);
+                            timeEl.textContent = fmtTime(pos) + ' / ' + fmtTime(dur);
+                        }
+                    }, 250);
+                };
+
+                recording.onpause = () => {
+                    playBtn.innerHTML = '&#x25B6;';
+                    if (this._rdpReplayTimer) {
+                        clearInterval(this._rdpReplayTimer);
+                        this._rdpReplayTimer = null;
+                    }
+                };
+
+                // Disable play until loaded.
+                playBtn.disabled = true;
+                playBtn.innerHTML = '&#x23F3;';
+                playBtn.onclick = () => {
+                    if (!loaded) return;
+                    if (recording.isPlaying()) recording.pause();
+                    else recording.play();
+                };
+
+                seekBar.oninput = () => { seeking = true; };
+                seekBar.onchange = () => {
+                    if (!loaded) return;
+                    const dur = recording.getDuration();
+                    const target = (parseInt(seekBar.value, 10) / 1000) * dur;
+                    recording.seek(target, () => { seeking = false; });
+                };
+
+                const cleanup = () => {
+                    recording.pause();
+                    if (this._rdpReplayTimer) {
+                        clearInterval(this._rdpReplayTimer);
+                        this._rdpReplayTimer = null;
+                    }
+                    this._rdpRecording = null;
+                    displayEl.innerHTML = '';
+                    if (typeof closeModal === 'function') closeModal(modal); else modal.classList.remove('show');
+                };
+
+                closeBtn.onclick = cleanup;
+                modal.onclick = (e) => { if (e.target === modal) cleanup(); };
+
+            } catch (e) {
+                displayEl.innerHTML = '<div style="color:var(--red);padding:20px;">Failed to load recording: ' + e.message + '</div>';
+            }
+            return;
+        }
+
+        // Fallback: .mp4/.m4v — use a video element.
+        displayEl.innerHTML = '<video controls style="width:100%;max-height:60vh;" src="/recordings/' +
+            encodeURIComponent(filename) + '"></video>';
+        closeBtn.onclick = () => { if (typeof closeModal === 'function') closeModal(modal); else modal.classList.remove('show'); };
+        modal.onclick = (e) => { if (e.target === modal) { if (typeof closeModal === 'function') closeModal(modal); else modal.classList.remove('show'); } };
+    }
+
+    // -- Canvas → MP4 download helper -----------------------------------------
+
+    /**
+     * Server-side recording → MP4 conversion.
+     * Sends a conversion request to the backend, polls for status,
+     * and triggers download when ready.
+     */
+    async _convertToMP4(filename, convertBtn, downloadBtn) {
+        if (!filename.endsWith('.guac') && !filename.endsWith('.cast')) {
+            showToast('MP4 conversion is supported for .guac and .cast recordings');
+            return;
+        }
+
+        convertBtn.disabled = true;
+        convertBtn.textContent = 'Converting\u2026';
+
+        try {
+            const resp = await fetch('/convert-recording', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.error) throw new Error(data.error || 'Failed to start conversion');
+
+            // If already done (cached).
+            if (data.status === 'done') {
+                convertBtn.textContent = 'Converted';
+                if (downloadBtn) { downloadBtn.disabled = false; downloadBtn.title = 'Download MP4'; }
+                showToast('MP4 ready');
+                return;
+            }
+
+            // Poll for completion.
+            const jobId = data.job_id;
+            const poll = async () => {
+                try {
+                    const sr = await fetch('/convert-status/' + jobId);
+                    const sd = await sr.json();
+
+                    if (sd.status === 'done') {
+                        convertBtn.textContent = 'Converted';
+                        if (downloadBtn) { downloadBtn.disabled = false; downloadBtn.title = 'Download MP4'; }
+                        showToast('MP4 ready');
+                        return;
+                    }
+
+                    if (sd.status === 'error') {
+                        convertBtn.disabled = false;
+                        convertBtn.textContent = 'Convert MP4';
+                        showToast('Conversion failed: ' + (sd.error || 'unknown error'));
+                        return;
+                    }
+
+                    setTimeout(poll, 3000);
+                } catch (_) {
+                    setTimeout(poll, 5000);
+                }
+            };
+            setTimeout(poll, 2000);
+
+        } catch (e) {
+            convertBtn.disabled = false;
+            convertBtn.textContent = 'Convert MP4';
+            showToast('Conversion error: ' + e.message);
+        }
+    }
+
+    _triggerDownload(filename) {
+        const a = document.createElement('a');
+        a.href = '/recordings/' + encodeURIComponent(filename);
+        a.download = filename;
+        a.click();
+    }
+
+    async _toggleRecording(sessionID) {
+        const s = this.termManager.terminals.get(sessionID);
+        if (!s) return;
+
+        const action = s.recording ? 'stop' : 'start';
+        try {
+            const resp = await fetch('/toggle-recording', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionID, action: action })
+            });
+            const data = await resp.json();
+            s.recording = data.recording;
+            // Update rec indicator in tab
+            const tab = document.querySelector('.tab[data-id="' + sessionID + '"]');
+            if (tab) {
+                const dot = tab.querySelector('.tab-rec');
+                const btn = tab.querySelector('.tab-rec-btn');
+                if (data.recording) {
+                    if (!dot) {
+                        const span = document.createElement('span');
+                        span.className = 'tab-rec';
+                        span.textContent = '\u25CF';
+                        span.title = 'Recording';
+                        tab.querySelector('.tab-name').after(span);
+                    }
+                    if (btn) btn.classList.add('recording');
+                } else {
+                    if (dot) dot.remove();
+                    if (btn) btn.classList.remove('recording');
+                }
+            }
+            showToast(data.recording ? 'Recording started' : 'Recording stopped');
+        } catch (e) {
+            showToast('Toggle recording failed: ' + e.message);
         }
     }
 
@@ -3043,23 +4411,30 @@ class CloudTermApp {
         const origClose = this.tabManager.closeTab.bind(this.tabManager);
         this.tabManager.closeTab = (id) => {
             const info = this.tabManager.tabs.get(id);
+
             if (info && info.type === 'ssh') {
+                // Close all split pane terminals first
+                const extraIDs = this.splitManager.getExtraSessionIDs(id);
+                for (const sid of extraIDs) this.termManager.closeTerminal(sid);
+                this.splitManager.removeSplit(id);
                 this.termManager.closeTerminal(id);
             } else if (info && info.type === 'rdp') {
                 this._stopRDPSession(info.instanceID || id);
             }
+
             origClose(id);
             this._syncSidebarActiveStates();
         };
 
-        // When switching tabs, fit the terminal.
+        // When switching tabs, fit the terminal (including split panes).
         const origSwitch = this.tabManager.switchTab.bind(this.tabManager);
         this.tabManager.switchTab = (id) => {
             origSwitch(id);
             const info = this.tabManager.tabs.get(id);
             if (info && info.type === 'ssh') {
                 requestAnimationFrame(() => {
-                    this.termManager.fitTerminal(id);
+                    const allIDs = this.splitManager.getAllSessionIDs(id);
+                    for (const sid of allIDs) this.termManager.fitTerminal(sid);
                     this.termManager.focusTerminal(id);
                 });
             } else if (info && info.type === 'rdp') {
@@ -3082,7 +4457,116 @@ class CloudTermApp {
                     this.tabManager.closeTab(this.tabManager.activeTab);
                 }
             }
+            // Ctrl+F / Cmd+F: terminal search.
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                if (this.tabManager.activeTab) {
+                    const entry = this.termManager.terminals.get(this.tabManager.activeTab);
+                    if (entry && entry.searchAddon) {
+                        e.preventDefault();
+                        this._showTermSearch(this.tabManager.activeTab);
+                    }
+                }
+            }
         });
+
+        // Terminal search bar wiring.
+        this._initTermSearch();
+    }
+
+    // ── Session Export ──────────────────────────────────────────────────
+
+    async _exportSession(sessionID) {
+        try {
+            const resp = await fetch('/export-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionID })
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || 'Export failed');
+
+            // Trigger browser download.
+            const a = document.createElement('a');
+            a.href = data.url;
+            a.download = data.filename;
+            a.click();
+        } catch (err) {
+            showToast('Export failed: ' + err.message);
+        }
+    }
+
+    // ── Terminal Search (Ctrl+F) ──────────────────────────────────────────
+
+    _initTermSearch() {
+        const bar = document.getElementById('termSearchBar');
+        const input = document.getElementById('termSearchInput');
+        const prevBtn = document.getElementById('termSearchPrev');
+        const nextBtn = document.getElementById('termSearchNext');
+        const closeBtn = document.getElementById('termSearchClose');
+        if (!bar || !input) return;
+
+        this._searchSessionID = null;
+
+        input.addEventListener('input', () => {
+            const entry = this._searchSessionID && this.termManager.terminals.get(this._searchSessionID);
+            if (entry && entry.searchAddon) {
+                entry.searchAddon.findNext(input.value, { regex: false, caseSensitive: false, wholeWord: false });
+            }
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const entry = this._searchSessionID && this.termManager.terminals.get(this._searchSessionID);
+                if (entry && entry.searchAddon) {
+                    if (e.shiftKey) {
+                        entry.searchAddon.findPrevious(input.value);
+                    } else {
+                        entry.searchAddon.findNext(input.value);
+                    }
+                }
+            }
+            if (e.key === 'Escape') {
+                this._hideTermSearch();
+            }
+        });
+
+        nextBtn?.addEventListener('click', () => {
+            const entry = this._searchSessionID && this.termManager.terminals.get(this._searchSessionID);
+            if (entry && entry.searchAddon) entry.searchAddon.findNext(input.value);
+        });
+
+        prevBtn?.addEventListener('click', () => {
+            const entry = this._searchSessionID && this.termManager.terminals.get(this._searchSessionID);
+            if (entry && entry.searchAddon) entry.searchAddon.findPrevious(input.value);
+        });
+
+        closeBtn?.addEventListener('click', () => this._hideTermSearch());
+    }
+
+    _showTermSearch(sessionID) {
+        const bar = document.getElementById('termSearchBar');
+        const input = document.getElementById('termSearchInput');
+        if (!bar || !input) return;
+        this._searchSessionID = sessionID;
+        bar.style.display = 'flex';
+        input.value = '';
+        input.focus();
+    }
+
+    _hideTermSearch() {
+        const bar = document.getElementById('termSearchBar');
+        if (bar) bar.style.display = 'none';
+        // Clear search highlights.
+        if (this._searchSessionID) {
+            const entry = this.termManager.terminals.get(this._searchSessionID);
+            if (entry && entry.searchAddon) entry.searchAddon.clearDecorations();
+        }
+        this._searchSessionID = null;
+        // Refocus the terminal.
+        if (this.tabManager.activeTab) {
+            this.termManager.focusTerminal(this.tabManager.activeTab);
+        }
     }
 }
 

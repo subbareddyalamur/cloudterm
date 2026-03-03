@@ -22,6 +22,7 @@ type ForwarderSession struct {
 	InstanceID   string    `json:"instance_id"`
 	InstanceName string    `json:"instance_name"`
 	LocalPort    int       `json:"local_port"`
+	RemotePort   int       `json:"remote_port"`
 	AWSProfile   string    `json:"aws_profile"`
 	AWSRegion    string    `json:"aws_region"`
 	StartedAt    time.Time `json:"started_at"`
@@ -125,10 +126,14 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		InstanceID   string `json:"instance_id"`
-		InstanceName string `json:"instance_name"`
-		AWSProfile   string `json:"aws_profile"`
-		AWSRegion    string `json:"aws_region"`
+		InstanceID         string `json:"instance_id"`
+		InstanceName       string `json:"instance_name"`
+		AWSProfile         string `json:"aws_profile"`
+		AWSRegion          string `json:"aws_region"`
+		PortNumber         int    `json:"port_number"`
+		AWSAccessKeyID     string `json:"aws_access_key_id"`
+		AWSSecretAccessKey string `json:"aws_secret_access_key"`
+		AWSSessionToken    string `json:"aws_session_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -138,16 +143,23 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "instance_id is required"})
 		return
 	}
+	if req.PortNumber <= 0 {
+		req.PortNumber = 3389 // default to RDP
+	}
+
+	// Session key is instanceID:port to allow multiple port forwards per instance.
+	sessionKey := fmt.Sprintf("%s:%d", req.InstanceID, req.PortNumber)
 
 	// Return existing session if already running.
 	mu.RLock()
-	if existing, ok := activeSessions[req.InstanceID]; ok {
+	if existing, ok := activeSessions[sessionKey]; ok {
 		mu.RUnlock()
-		logger.Printf("Session already exists for %s on port %d", req.InstanceID, existing.LocalPort)
+		logger.Printf("Session already exists for %s on port %d", sessionKey, existing.LocalPort)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":        "already_running",
 			"instance_id":   existing.InstanceID,
 			"port":          existing.LocalPort,
+			"remote_port":   existing.RemotePort,
 			"instance_name": existing.InstanceName,
 		})
 		return
@@ -165,13 +177,32 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 	internalPort := allocatedPort + 10000
 
 	// Start SSM port forwarding.
-	ssmCmd := exec.Command("aws", "ssm", "start-session",
-		"--target", req.InstanceID,
-		"--document-name", "AWS-StartPortForwardingSession",
-		"--parameters", fmt.Sprintf("portNumber=3389,localPortNumber=%d", internalPort),
-		"--profile", req.AWSProfile,
-		"--region", req.AWSRegion,
-	)
+	var ssmCmd *exec.Cmd
+	if req.AWSAccessKeyID != "" {
+		// Manual account: use env vars instead of --profile.
+		ssmCmd = exec.Command("aws", "ssm", "start-session",
+			"--target", req.InstanceID,
+			"--document-name", "AWS-StartPortForwardingSession",
+			"--parameters", fmt.Sprintf("portNumber=%d,localPortNumber=%d", req.PortNumber, internalPort),
+			"--region", req.AWSRegion,
+		)
+		ssmCmd.Env = append(os.Environ(),
+			"AWS_ACCESS_KEY_ID="+req.AWSAccessKeyID,
+			"AWS_SECRET_ACCESS_KEY="+req.AWSSecretAccessKey,
+			"AWS_DEFAULT_REGION="+req.AWSRegion,
+		)
+		if req.AWSSessionToken != "" {
+			ssmCmd.Env = append(ssmCmd.Env, "AWS_SESSION_TOKEN="+req.AWSSessionToken)
+		}
+	} else {
+		ssmCmd = exec.Command("aws", "ssm", "start-session",
+			"--target", req.InstanceID,
+			"--document-name", "AWS-StartPortForwardingSession",
+			"--parameters", fmt.Sprintf("portNumber=%d,localPortNumber=%d", req.PortNumber, internalPort),
+			"--profile", req.AWSProfile,
+			"--region", req.AWSRegion,
+		)
+	}
 	ssmCmd.Stdout = os.Stdout
 	ssmCmd.Stderr = os.Stderr
 
@@ -185,8 +216,22 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Printf("SSM process started for %s (pid %d, internal port %d)", req.InstanceID, ssmCmd.Process.Pid, internalPort)
 
-	// Give SSM time to establish the tunnel.
-	time.Sleep(2 * time.Second)
+	// Wait for SSM tunnel to actually be ready (probe the internal port).
+	ready := false
+	for i := 0; i < 15; i++ {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", internalPort), 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			ready = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !ready {
+		logger.Printf("Warning: SSM tunnel for %s not confirmed ready after ~7.5s, proceeding anyway", req.InstanceID)
+	} else {
+		logger.Printf("SSM tunnel ready for %s on internal port %d", req.InstanceID, internalPort)
+	}
 
 	// Start socat relay.
 	socatCmd := exec.Command("socat",
@@ -207,10 +252,21 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Printf("Socat relay started for %s (pid %d, port %d -> %d)", req.InstanceID, socatCmd.Process.Pid, allocatedPort, internalPort)
 
+	// Wait for socat to be listening before returning.
+	for i := 0; i < 10; i++ {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", allocatedPort), 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
 	sess := &ForwarderSession{
 		InstanceID:   req.InstanceID,
 		InstanceName: req.InstanceName,
 		LocalPort:    allocatedPort,
+		RemotePort:   req.PortNumber,
 		AWSProfile:   req.AWSProfile,
 		AWSRegion:    req.AWSRegion,
 		StartedAt:    time.Now(),
@@ -219,15 +275,16 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mu.Lock()
-	activeSessions[req.InstanceID] = sess
+	activeSessions[sessionKey] = sess
 	mu.Unlock()
 
-	go monitorSession(req.InstanceID)
+	go monitorSession(sessionKey)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":        "started",
 		"instance_id":   req.InstanceID,
 		"port":          allocatedPort,
+		"remote_port":   req.PortNumber,
 		"instance_name": req.InstanceName,
 	})
 }
@@ -240,6 +297,7 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		InstanceID string `json:"instance_id"`
+		PortNumber int    `json:"port_number"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -249,22 +307,27 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "instance_id is required"})
 		return
 	}
+	if req.PortNumber <= 0 {
+		req.PortNumber = 3389
+	}
+
+	sessionKey := fmt.Sprintf("%s:%d", req.InstanceID, req.PortNumber)
 
 	mu.Lock()
-	sess, ok := activeSessions[req.InstanceID]
+	sess, ok := activeSessions[sessionKey]
 	if !ok {
 		mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no active session for instance"})
 		return
 	}
-	delete(activeSessions, req.InstanceID)
+	delete(activeSessions, sessionKey)
 	delete(allocatedPorts, sess.LocalPort)
 	mu.Unlock()
 
-	killProcess(sess.socatProcess, "socat", req.InstanceID)
-	killProcess(sess.ssmProcess, "ssm", req.InstanceID)
+	killProcess(sess.socatProcess, "socat", sessionKey)
+	killProcess(sess.ssmProcess, "ssm", sessionKey)
 
-	logger.Printf("Session stopped for %s (port %d freed)", req.InstanceID, sess.LocalPort)
+	logger.Printf("Session stopped for %s (port %d freed)", sessionKey, sess.LocalPort)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      "stopped",
 		"instance_id": req.InstanceID,
@@ -298,9 +361,9 @@ func getAvailablePort() (int, error) {
 }
 
 // monitorSession waits for the SSM process to exit, then cleans up.
-func monitorSession(instanceID string) {
+func monitorSession(sessionKey string) {
 	mu.RLock()
-	sess, ok := activeSessions[instanceID]
+	sess, ok := activeSessions[sessionKey]
 	if !ok {
 		mu.RUnlock()
 		return
@@ -309,20 +372,20 @@ func monitorSession(instanceID string) {
 	mu.RUnlock()
 
 	err := ssmCmd.Wait()
-	logger.Printf("SSM process exited for %s: %v", instanceID, err)
+	logger.Printf("SSM process exited for %s: %v", sessionKey, err)
 
 	mu.Lock()
-	sess, ok = activeSessions[instanceID]
+	sess, ok = activeSessions[sessionKey]
 	if !ok {
 		mu.Unlock()
 		return
 	}
-	delete(activeSessions, instanceID)
+	delete(activeSessions, sessionKey)
 	delete(allocatedPorts, sess.LocalPort)
 	mu.Unlock()
 
-	killProcess(sess.socatProcess, "socat", instanceID)
-	logger.Printf("Cleaned up session for %s (port %d freed)", instanceID, sess.LocalPort)
+	killProcess(sess.socatProcess, "socat", sessionKey)
+	logger.Printf("Cleaned up session for %s (port %d freed)", sessionKey, sess.LocalPort)
 }
 
 // cleanupAll terminates every active session. Called during graceful shutdown.

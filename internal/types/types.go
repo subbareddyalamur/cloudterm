@@ -128,6 +128,7 @@ type SessionEventMsg struct {
 	InstanceID string `json:"instance_id"`
 	SessionID  string `json:"session_id"`
 	Error      string `json:"error,omitempty"`
+	Recording  bool   `json:"recording,omitempty"`
 }
 
 // RDP session types
@@ -147,6 +148,7 @@ type GuacamoleTokenRequest struct {
 	AWSRegion    string `json:"aws_region"`
 	Username     string `json:"username"`
 	Password     string `json:"password"`
+	Record       bool   `json:"record"`
 }
 
 type GuacamoleTokenResponse struct {
@@ -155,6 +157,7 @@ type GuacamoleTokenResponse struct {
 	InstanceID   string `json:"instance_id"`
 	InstanceName string `json:"instance_name"`
 	WSURL        string `json:"ws_url"`
+	Recording    bool   `json:"recording"`
 }
 
 // SSM Forwarder types
@@ -163,12 +166,18 @@ type ForwarderStartRequest struct {
 	InstanceName string `json:"instance_name"`
 	AWSProfile   string `json:"aws_profile"`
 	AWSRegion    string `json:"aws_region"`
+	PortNumber   int    `json:"port_number"`
+	// Explicit credentials for manual accounts (when profile is "manual:*").
+	AWSAccessKeyID     string `json:"aws_access_key_id,omitempty"`
+	AWSSecretAccessKey string `json:"aws_secret_access_key,omitempty"`
+	AWSSessionToken    string `json:"aws_session_token,omitempty"`
 }
 
 type ForwarderStartResponse struct {
 	Status       string `json:"status"`
 	InstanceID   string `json:"instance_id"`
 	Port         int    `json:"port"`
+	RemotePort   int    `json:"remote_port"`
 	InstanceName string `json:"instance_name"`
 }
 
@@ -176,6 +185,7 @@ type ForwarderSession struct {
 	InstanceID   string `json:"instance_id"`
 	InstanceName string `json:"instance_name"`
 	LocalPort    int    `json:"local_port"`
+	RemotePort   int    `json:"remote_port"`
 	AWSProfile   string `json:"aws_profile"`
 	AWSRegion    string `json:"aws_region"`
 	StartedAt    string `json:"started_at"`

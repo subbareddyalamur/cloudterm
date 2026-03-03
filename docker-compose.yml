@@ -6,7 +6,9 @@ services:
       - "5000:5000"
     volumes:
       - ~/.aws:/home/cloudterm/.aws:ro
-      - instance-cache:/app/cache
+      - ./.cache:/app/cache
+      - ./.sessionrecordings:/app/recordings
+      - ./.terminalexport:/app/exports
     environment:
       - PORT=5000
       - TAG1=${TAG1:-Customer}
@@ -16,9 +18,15 @@ services:
       - GUAC_CRYPT_SECRET=${GUAC_CRYPT_SECRET:-cloudterm-guac-secret-key-32byte}
       - SSM_FORWARDER_HOST=ssm-forwarder
       - SSM_FORWARDER_PORT=5001
+      - CONVERTER_HOST=converter
+      - CONVERTER_PORT=5002
       - INSTANCES_FILE=/app/cache/instances_list.yaml
       - AUDIT_LOG_FILE=/app/cache/audit.log
       - PREFERENCES_FILE=/app/cache/preferences.json
+      - SESSION_RECORDING_DIR=/app/recordings
+      - TERMINAL_EXPORT_DIR=/app/exports
+      - AUTO_RECORD=false
+      - AWS_ACCOUNTS_FILE=/app/cache/aws_accounts.json
     depends_on:
       guacd:
         condition: service_started
@@ -38,6 +46,8 @@ services:
   guacd:
     image: guacamole/guacd:latest
     container_name: guacd
+    volumes:
+      - ./.sessionrecordings:/app/recordings
     deploy:
       resources:
         limits:
@@ -73,6 +83,28 @@ services:
       - cloudterm-network
     restart: unless-stopped
 
+  converter:
+    build: ./docker/converter
+    container_name: converter
+    volumes:
+      - ./.sessionrecordings:/app/recordings
+    environment:
+      - RECORDINGS_DIR=/app/recordings
+      - PORT=5002
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    networks:
+      - cloudterm-network
+    restart: unless-stopped
+
   ssm-forwarder:
     build:
       context: .
@@ -80,6 +112,8 @@ services:
     container_name: ssm-forwarder
     expose:
       - "5001"
+    ports:
+      - "33890-33999:33890-33999"
     volumes:
       - ~/.aws:/home/cloudterm/.aws:ro
     environment:
@@ -99,9 +133,6 @@ services:
     networks:
       - cloudterm-network
     restart: unless-stopped
-
-volumes:
-  instance-cache:
 
 networks:
   cloudterm-network:

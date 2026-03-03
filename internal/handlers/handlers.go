@@ -15,7 +15,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"cloudterm-go/internal/audit"
 	"cloudterm-go/internal/aws"
@@ -34,6 +37,7 @@ type Handler struct {
 	sessions  *session.Manager
 	logger    *log.Logger
 	audit     *audit.Logger
+	accounts  *aws.AccountStore
 	upgrader  websocket.Upgrader
 	clients   map[*websocket.Conn][]string // conn -> session IDs
 	clientsMu sync.Mutex
@@ -41,7 +45,7 @@ type Handler struct {
 }
 
 // New creates a Handler wired to the given dependencies.
-func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger, auditLogger *audit.Logger) *Handler {
+func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger, auditLogger *audit.Logger, accounts *aws.AccountStore) *Handler {
 	tmpl := template.Must(template.ParseGlob(filepath.Join("web", "templates", "*.html")))
 
 	return &Handler{
@@ -50,6 +54,7 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 		sessions:  sessions,
 		logger:    logger,
 		audit:     auditLogger,
+		accounts:  accounts,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -92,6 +97,27 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /broadcast-command", h.handleBroadcastCommand)
 	mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
 	mux.HandleFunc("POST /express-download", h.handleExpressDownload)
+	mux.HandleFunc("POST /export-session", h.handleExportSession)
+	mux.Handle("GET /exports/", http.StripPrefix("/exports/", http.FileServer(http.Dir(h.cfg.TerminalExportDir))))
+
+	// Port forwarding proxy
+	mux.HandleFunc("POST /start-port-forward", h.handleStartPortForward)
+	mux.HandleFunc("POST /stop-port-forward", h.handleStopPortForward)
+	mux.HandleFunc("GET /active-tunnels", h.handleActiveTunnels)
+
+	// Recordings
+	mux.HandleFunc("GET /recordings", h.handleListRecordings)
+	mux.HandleFunc("GET /recordings/", h.handleServeRecording)
+	mux.HandleFunc("DELETE /recordings/", h.handleDeleteRecording)
+	mux.HandleFunc("POST /toggle-recording", h.handleToggleRecording)
+	mux.HandleFunc("POST /convert-recording", h.handleConvertRecording)
+	mux.HandleFunc("GET /convert-status/", h.handleConvertStatus)
+
+	// AWS accounts management
+	mux.HandleFunc("GET /aws-accounts", h.handleListAWSAccounts)
+	mux.HandleFunc("POST /aws-accounts", h.handleAddAWSAccount)
+	mux.HandleFunc("DELETE /aws-accounts/", h.handleDeleteAWSAccount)
+	mux.HandleFunc("POST /aws-accounts/scan/", h.handleScanAWSAccount)
 
 	// API — audit & metrics
 	mux.HandleFunc("GET /audit-log", h.handleAuditLog)
@@ -203,6 +229,16 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		InstanceName: req.InstanceName,
 		AWSProfile:   req.AWSProfile,
 		AWSRegion:    req.AWSRegion,
+		PortNumber:   3389,
+	}
+	// Resolve credentials for manual accounts.
+	if strings.HasPrefix(req.AWSProfile, "manual:") {
+		acctID := strings.TrimPrefix(req.AWSProfile, "manual:")
+		if acct, ok := h.accounts.Get(acctID); ok {
+			fwdReq.AWSAccessKeyID = acct.AccessKeyID
+			fwdReq.AWSSecretAccessKey = acct.SecretAccessKey
+			fwdReq.AWSSessionToken = acct.SessionToken
+		}
 	}
 	body, err := json.Marshal(fwdReq)
 	if err != nil {
@@ -225,7 +261,7 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 	}
 
 	// Generate encrypted Guacamole token
-	token, err := guacamole.GenerateToken(h.cfg.GuacCryptSecret, guacamole.ConnectionParams{
+	connParams := guacamole.ConnectionParams{
 		Hostname:     h.cfg.SSMForwarderHost,
 		Port:         fmt.Sprintf("%d", fwdResp.Port),
 		Username:     req.Username,
@@ -233,7 +269,14 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		Security:     "nla",
 		IgnoreCert:   "true",
 		ResizeMethod: "display-update",
-	})
+	}
+	recording := false
+	if (h.cfg.AutoRecord || req.Record) && h.cfg.SessionRecordingDir != "" {
+		connParams.RecordingPath = h.cfg.SessionRecordingDir
+		connParams.RecordingName = session.RecordingFilename(req.InstanceID, req.InstanceName, "guac")
+		recording = true
+	}
+	token, err := guacamole.GenerateToken(h.cfg.GuacCryptSecret, connParams)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to generate guacamole token: %v", err), http.StatusInternalServerError)
 		return
@@ -252,6 +295,7 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		InstanceID:   req.InstanceID,
 		InstanceName: req.InstanceName,
 		WSURL:        h.cfg.GuacWSURL,
+		Recording:    recording,
 	})
 }
 
@@ -718,6 +762,387 @@ func (h *Handler) handleExpressDownload(w http.ResponseWriter, r *http.Request) 
 }
 
 // ---------------------------------------------------------------------------
+// Session Export
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleExportSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" {
+		jsonError(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	filename, err := h.sessions.ExportSession(req.SessionID, h.cfg.TerminalExportDir)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]string{
+		"filename": filename,
+		"url":      "/exports/" + filename,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Recordings handlers
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleListRecordings(w http.ResponseWriter, r *http.Request) {
+	dir := h.cfg.SessionRecordingDir
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		jsonResponse(w, []interface{}{})
+		return
+	}
+
+	type recording struct {
+		Name    string `json:"name"`
+		Size    int64  `json:"size"`
+		ModTime string `json:"mod_time"`
+		Type    string `json:"type"`    // "ssh" or "rdp"
+		HasMP4  bool   `json:"has_mp4"` // true if converted .mp4 exists
+	}
+
+	var recs []recording
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		ext := filepath.Ext(name)
+		var recType string
+		switch ext {
+		case ".cast":
+			recType = "ssh"
+		case ".guac":
+			recType = "rdp"
+		default:
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		// Check if a converted .mp4 file exists.
+		base := strings.TrimSuffix(name, ext)
+		mp4Path := filepath.Join(dir, base+".mp4")
+		_, mp4Err := os.Stat(mp4Path)
+		recs = append(recs, recording{
+			Name:    name,
+			Size:    info.Size(),
+			ModTime: info.ModTime().Format("2006-01-02T15:04:05Z"),
+			Type:    recType,
+			HasMP4:  mp4Err == nil,
+		})
+	}
+
+	// Sort newest first.
+	sort.Slice(recs, func(i, j int) bool {
+		return recs[i].ModTime > recs[j].ModTime
+	})
+
+	if recs == nil {
+		recs = []recording{}
+	}
+	jsonResponse(w, recs)
+}
+
+func (h *Handler) handleServeRecording(w http.ResponseWriter, r *http.Request) {
+	filename := filepath.Base(r.URL.Path[len("/recordings/"):])
+	if filename == "" || filename == "." {
+		jsonError(w, "filename required", http.StatusBadRequest)
+		return
+	}
+	path := filepath.Join(h.cfg.SessionRecordingDir, filename)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		jsonError(w, "recording not found", http.StatusNotFound)
+		return
+	}
+	http.ServeFile(w, r, path)
+}
+
+func (h *Handler) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
+	filename := filepath.Base(r.URL.Path[len("/recordings/"):])
+	if filename == "" || filename == "." {
+		jsonError(w, "filename required", http.StatusBadRequest)
+		return
+	}
+	path := filepath.Join(h.cfg.SessionRecordingDir, filename)
+	if err := os.Remove(path); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
+func (h *Handler) handleToggleRecording(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		Action    string `json:"action"` // "start" or "stop"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var err error
+	if req.Action == "start" {
+		err = h.sessions.StartRecording(req.SessionID)
+	} else {
+		err = h.sessions.StopRecording(req.SessionID)
+	}
+
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s, ok := h.sessions.GetSession(req.SessionID)
+	recording := false
+	if ok {
+		recording = s.IsRecording()
+	}
+	jsonResponse(w, map[string]interface{}{"recording": recording})
+}
+
+// ---------------------------------------------------------------------------
+// Recording conversion (proxy to converter sidecar)
+// ---------------------------------------------------------------------------
+
+func (h *Handler) converterURL(path string) string {
+	return fmt.Sprintf("http://%s:%d%s", h.cfg.ConverterHost, h.cfg.ConverterPort, path)
+}
+
+func (h *Handler) handleConvertRecording(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Filename == "" {
+		jsonError(w, "filename required", http.StatusBadRequest)
+		return
+	}
+
+	body, _ := json.Marshal(map[string]string{"filename": req.Filename})
+	resp, err := http.Post(h.converterURL("/convert"), "application/json", bytes.NewReader(body))
+	if err != nil {
+		jsonError(w, "converter unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (h *Handler) handleConvertStatus(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimPrefix(r.URL.Path, "/convert-status/")
+	if jobID == "" {
+		jsonError(w, "job_id required", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := http.Get(h.converterURL("/status/" + jobID))
+	if err != nil {
+		jsonError(w, "converter unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// ---------------------------------------------------------------------------
+// AWS Accounts management handlers
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleListAWSAccounts(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, h.accounts.List())
+}
+
+func (h *Handler) handleAddAWSAccount(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name           string `json:"name"`
+		AccessKeyID    string `json:"access_key_id"`
+		SecretAccessKey string `json:"secret_access_key"`
+		SessionToken   string `json:"session_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.AccessKeyID == "" || req.SecretAccessKey == "" {
+		jsonError(w, "access_key_id and secret_access_key are required", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		req.Name = "Account " + req.AccessKeyID[:4] + "..."
+	}
+
+	acct, err := h.accounts.Add(req.Name, req.AccessKeyID, req.SecretAccessKey, req.SessionToken)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return masked version
+	masked := acct
+	if len(masked.SecretAccessKey) > 4 {
+		masked.SecretAccessKey = "****" + masked.SecretAccessKey[len(masked.SecretAccessKey)-4:]
+	}
+	if masked.SessionToken != "" {
+		masked.SessionToken = "****"
+	}
+	jsonResponse(w, masked)
+}
+
+func (h *Handler) handleDeleteAWSAccount(w http.ResponseWriter, r *http.Request) {
+	id := filepath.Base(r.URL.Path)
+	if id == "" {
+		jsonError(w, "account id required", http.StatusBadRequest)
+		return
+	}
+	if err := h.accounts.Remove(id); err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	// Also remove this account's instances from the discovery cache.
+	h.discovery.RemoveAccountInstances(id)
+	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
+func (h *Handler) handleScanAWSAccount(w http.ResponseWriter, r *http.Request) {
+	id := filepath.Base(r.URL.Path)
+	if id == "" {
+		jsonError(w, "account id required", http.StatusBadRequest)
+		return
+	}
+
+	acct, ok := h.accounts.Get(id)
+	if !ok {
+		jsonError(w, "account not found", http.StatusNotFound)
+		return
+	}
+
+	count, err := h.discovery.ScanAccount(acct)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"instances_found": count,
+		"account_name":    acct.Name,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Port Forwarding proxy handlers
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleStartPortForward(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InstanceID   string `json:"instance_id"`
+		InstanceName string `json:"instance_name"`
+		AWSProfile   string `json:"aws_profile"`
+		AWSRegion    string `json:"aws_region"`
+		PortNumber   int    `json:"port_number"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.InstanceID == "" || req.PortNumber <= 0 {
+		jsonError(w, "instance_id and port_number are required", http.StatusBadRequest)
+		return
+	}
+
+	// Look up profile/region if not provided.
+	if req.AWSProfile == "" || req.AWSRegion == "" {
+		if p, rg, err := h.discovery.GetInstanceConfig(req.InstanceID); err == nil {
+			req.AWSProfile = p
+			req.AWSRegion = rg
+		}
+	}
+
+	fwdReq := types.ForwarderStartRequest{
+		InstanceID:   req.InstanceID,
+		InstanceName: req.InstanceName,
+		AWSProfile:   req.AWSProfile,
+		AWSRegion:    req.AWSRegion,
+		PortNumber:   req.PortNumber,
+	}
+	// Resolve credentials for manual accounts.
+	if strings.HasPrefix(req.AWSProfile, "manual:") {
+		acctID := strings.TrimPrefix(req.AWSProfile, "manual:")
+		if acct, ok := h.accounts.Get(acctID); ok {
+			fwdReq.AWSAccessKeyID = acct.AccessKeyID
+			fwdReq.AWSSecretAccessKey = acct.SecretAccessKey
+			fwdReq.AWSSessionToken = acct.SessionToken
+		}
+	}
+	body, _ := json.Marshal(fwdReq)
+
+	fwdURL := fmt.Sprintf("%s/start", h.forwarderURL())
+	resp, err := http.Post(fwdURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to contact SSM forwarder: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (h *Handler) handleStopPortForward(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InstanceID string `json:"instance_id"`
+		PortNumber int    `json:"port_number"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	body, _ := json.Marshal(req)
+	fwdURL := fmt.Sprintf("%s/stop", h.forwarderURL())
+	resp, err := http.Post(fwdURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to contact SSM forwarder: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (h *Handler) handleActiveTunnels(w http.ResponseWriter, r *http.Request) {
+	fwdURL := fmt.Sprintf("%s/sessions", h.forwarderURL())
+	resp, err := http.Get(fwdURL)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to contact SSM forwarder: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket handler
 // ---------------------------------------------------------------------------
 
@@ -732,7 +1157,13 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	h.clients[conn] = []string{}
 	h.clientsMu.Unlock()
 
+	// writeMu serialises writes to this single connection.
+	var writeMu sync.Mutex
+	done := make(chan struct{})
+
 	defer func() {
+		close(done)
+
 		h.clientsMu.Lock()
 		sessionIDs := h.clients[conn]
 		delete(h.clients, conn)
@@ -742,8 +1173,30 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
-	// writeMu serialises writes to this single connection.
-	var writeMu sync.Mutex
+	// Keepalive: send WebSocket pings every 30s; expect pong within 60s.
+	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		return nil
+	})
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				writeMu.Lock()
+				err := conn.WriteMessage(websocket.PingMessage, nil)
+				writeMu.Unlock()
+				if err != nil {
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -753,6 +1206,9 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
+
+		// Any message from client resets the read deadline.
+		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 
 		var msg types.WSMessage
 		if err := json.Unmarshal(message, &msg); err != nil {
@@ -776,6 +1232,9 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "close_session":
 			h.wsCloseSession(conn, msg.Payload)
 
+		case "keepalive":
+			// Client heartbeat — no action needed, read deadline already reset.
+
 		default:
 			h.logger.Printf("unknown ws message type: %s", msg.Type)
 		}
@@ -790,10 +1249,11 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		return
 	}
 	var msg struct {
-		InstanceID string `json:"instance_id"`
-		SessionID  string `json:"session_id"`
-		AWSProfile string `json:"aws_profile"`
-		AWSRegion  string `json:"aws_region"`
+		InstanceID   string `json:"instance_id"`
+		InstanceName string `json:"instance_name"`
+		SessionID    string `json:"session_id"`
+		AWSProfile   string `json:"aws_profile"`
+		AWSRegion    string `json:"aws_region"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		h.logger.Printf("wsStartSession unmarshal: %v", err)
@@ -801,6 +1261,7 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 	}
 
 	instanceID := msg.InstanceID
+	instanceName := msg.InstanceName
 	sessionID := msg.SessionID
 	awsProfile := msg.AWSProfile
 	awsRegion := msg.AWSRegion
@@ -812,6 +1273,22 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 			awsRegion = r
 		} else {
 			h.logger.Printf("wsStartSession: instance config lookup failed for %s: %v", instanceID, err)
+		}
+	}
+
+	// Resolve credentials for manual accounts (profile = "manual:<id>").
+	var creds *session.AWSCreds
+	if strings.HasPrefix(awsProfile, "manual:") {
+		acctID := strings.TrimPrefix(awsProfile, "manual:")
+		if acct, ok := h.accounts.Get(acctID); ok {
+			creds = &session.AWSCreds{
+				AccessKeyID:    acct.AccessKeyID,
+				SecretAccessKey: acct.SecretAccessKey,
+				SessionToken:    acct.SessionToken,
+			}
+			h.logger.Printf("Using manual credentials for account %s (%s)", acctID, acct.Name)
+		} else {
+			h.logger.Printf("wsStartSession: manual account %s not found", acctID)
 		}
 	}
 
@@ -831,7 +1308,7 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		}
 	}
 
-	if err := h.sessions.StartSession(instanceID, sessionID, awsProfile, awsRegion, onOutput); err != nil {
+	if err := h.sessions.StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion, creds, onOutput); err != nil {
 		h.logger.Printf("start session %s: %v", sessionID, err)
 		writeMu.Lock()
 		conn.WriteJSON(types.WSMessage{
@@ -860,12 +1337,19 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 	h.clients[conn] = append(h.clients[conn], sessionID)
 	h.clientsMu.Unlock()
 
+	// Check if recording was auto-started.
+	isRecording := false
+	if sess, ok := h.sessions.GetSession(sessionID); ok {
+		isRecording = sess.IsRecording()
+	}
+
 	writeMu.Lock()
 	conn.WriteJSON(types.WSMessage{
 		Type: "session_started",
 		Payload: types.SessionEventMsg{
 			InstanceID: instanceID,
 			SessionID:  sessionID,
+			Recording:  isRecording,
 		},
 	})
 	writeMu.Unlock()

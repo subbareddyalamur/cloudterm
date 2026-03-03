@@ -19,3 +19,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Local data directories
+.cache/
+.sessionrecordings/
+.terminalexport/

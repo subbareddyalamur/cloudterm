@@ -11,29 +11,33 @@ import (
 
 // ConnectionParams holds RDP connection parameters for Guacamole.
 type ConnectionParams struct {
-	Hostname     string
-	Port         string
-	Username     string
-	Password     string
-	Security     string
-	IgnoreCert   string
-	ResizeMethod string
-	Width        string
-	Height       string
-	DPI          string
+	Hostname      string
+	Port          string
+	Username      string
+	Password      string
+	Security      string
+	IgnoreCert    string
+	ResizeMethod  string
+	Width         string
+	Height        string
+	DPI           string
+	RecordingPath string
+	RecordingName string
 }
 
 type connectionSettings struct {
-	Hostname     string `json:"hostname"`
-	Port         string `json:"port"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	Security     string `json:"security"`
-	IgnoreCert   string `json:"ignore-cert"`
-	ResizeMethod string `json:"resize-method"`
-	Width        string `json:"width,omitempty"`
-	Height       string `json:"height,omitempty"`
-	DPI          string `json:"dpi,omitempty"`
+	Hostname      string `json:"hostname"`
+	Port          string `json:"port"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Security      string `json:"security"`
+	IgnoreCert    string `json:"ignore-cert"`
+	ResizeMethod  string `json:"resize-method"`
+	Width         string `json:"width,omitempty"`
+	Height        string `json:"height,omitempty"`
+	DPI           string `json:"dpi,omitempty"`
+	RecordingPath string `json:"recording-path,omitempty"`
+	RecordingName string `json:"recording-name,omitempty"`
 }
 
 type connectionInfo struct {
@@ -63,16 +67,18 @@ func GenerateToken(secret string, params ConnectionParams) (string, error) {
 		Connection: connectionInfo{
 			Type: "rdp",
 			Settings: connectionSettings{
-				Hostname:     params.Hostname,
-				Port:         params.Port,
-				Username:     params.Username,
-				Password:     params.Password,
-				Security:     params.Security,
-				IgnoreCert:   params.IgnoreCert,
-				ResizeMethod: params.ResizeMethod,
-				Width:        params.Width,
-				Height:       params.Height,
-				DPI:          params.DPI,
+				Hostname:      params.Hostname,
+				Port:          params.Port,
+				Username:      params.Username,
+				Password:      params.Password,
+				Security:      params.Security,
+				IgnoreCert:    params.IgnoreCert,
+				ResizeMethod:  params.ResizeMethod,
+				Width:         params.Width,
+				Height:        params.Height,
+				DPI:           params.DPI,
+				RecordingPath: params.RecordingPath,
+				RecordingName: params.RecordingName,
 			},
 		},
 	}

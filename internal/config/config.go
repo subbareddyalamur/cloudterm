@@ -18,9 +18,15 @@ type Config struct {
 	PortRangeEnd     int
 	Debug            bool
 	CacheTTLSeconds  int
-	InstancesFile   string
-	AuditLogFile    string
-	PreferencesFile string
+	InstancesFile       string
+	AuditLogFile        string
+	PreferencesFile     string
+	SessionRecordingDir string
+	TerminalExportDir   string
+	AutoRecord          bool
+	AWSAccountsFile     string
+	ConverterHost       string
+	ConverterPort       int
 }
 
 func Load() *Config {
@@ -37,9 +43,15 @@ func Load() *Config {
 		PortRangeEnd:     envInt("PORT_RANGE_END", 33999),
 		Debug:            envStr("DEBUG", "false") == "true",
 		CacheTTLSeconds:  1800, // 30 minutes
-		InstancesFile:   envStr("INSTANCES_FILE", "instances_list.yaml"),
-		AuditLogFile:    envStr("AUDIT_LOG_FILE", "audit.log"),
-		PreferencesFile: envStr("PREFERENCES_FILE", "preferences.json"),
+		InstancesFile:       envStr("INSTANCES_FILE", "instances_list.yaml"),
+		AuditLogFile:        envStr("AUDIT_LOG_FILE", "audit.log"),
+		PreferencesFile:     envStr("PREFERENCES_FILE", "preferences.json"),
+		SessionRecordingDir: envStr("SESSION_RECORDING_DIR", "/app/recordings"),
+		TerminalExportDir:   envStr("TERMINAL_EXPORT_DIR", "/app/exports"),
+		AutoRecord:          envStr("AUTO_RECORD", "false") == "true",
+		AWSAccountsFile:     envStr("AWS_ACCOUNTS_FILE", "aws_accounts.json"),
+		ConverterHost:       envStr("CONVERTER_HOST", "converter"),
+		ConverterPort:       envInt("CONVERTER_PORT", 5002),
 	}
 }
 

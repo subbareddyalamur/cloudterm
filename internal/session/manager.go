@@ -1,50 +1,102 @@
 package session
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 )
 
+// ansiRegex matches ANSI escape sequences: CSI, OSC, and charset sequences.
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]`)
+
+// stripANSI removes ANSI escape sequences from raw terminal output.
+func stripANSI(data []byte) []byte {
+	cleaned := ansiRegex.ReplaceAll(data, nil)
+	// Normalize line endings: \r\n → \n, then strip remaining \r.
+	cleaned = bytes.ReplaceAll(cleaned, []byte("\r\n"), []byte("\n"))
+	cleaned = bytes.ReplaceAll(cleaned, []byte("\r"), []byte(""))
+	return cleaned
+}
+
+const maxOutputBuf = 5 * 1024 * 1024 // 5 MB output buffer per session
+
 // SSMSession represents a single SSM terminal session backed by a PTY.
 type SSMSession struct {
-	InstanceID string
-	SessionID  string
+	InstanceID   string
+	InstanceName string
+	SessionID    string
 	cmd        *exec.Cmd
 	ptmx       *os.File
 	done       chan struct{}
 	onOutput   func([]byte)
+	outputBuf  bytes.Buffer
+	recorder   *Recorder
 	mu         sync.Mutex
 }
 
 // Manager tracks all active SSM sessions.
 type Manager struct {
-	sessions map[string]*SSMSession
-	mu       sync.RWMutex
-	logger   *log.Logger
+	sessions     map[string]*SSMSession
+	mu           sync.RWMutex
+	logger       *log.Logger
+	recordingDir string
+	autoRecord   bool
 }
 
 // NewManager creates a Manager with the given logger.
-func NewManager(logger *log.Logger) *Manager {
+func NewManager(logger *log.Logger, recordingDir string, autoRecord bool) *Manager {
 	return &Manager{
-		sessions: make(map[string]*SSMSession),
-		logger:   logger,
+		sessions:     make(map[string]*SSMSession),
+		logger:       logger,
+		recordingDir: recordingDir,
+		autoRecord:   autoRecord,
 	}
+}
+
+// AWSCreds holds explicit AWS credentials for manual accounts.
+// When nil, the session uses --profile instead.
+type AWSCreds struct {
+	AccessKeyID     string
+	SecretAccessKey  string
+	SessionToken     string
 }
 
 // StartSession launches an aws ssm start-session process inside a PTY and
 // begins streaming its output through onOutput.
-func (m *Manager) StartSession(instanceID, sessionID, awsProfile, awsRegion string, onOutput func([]byte)) error {
-	cmd := exec.Command("aws", "ssm", "start-session",
-		"--target", instanceID,
-		"--profile", awsProfile,
-		"--region", awsRegion,
-	)
+// If creds is non-nil, the credentials are passed via environment variables
+// instead of --profile (used for manually-added AWS accounts).
+func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion string, creds *AWSCreds, onOutput func([]byte)) error {
+	var cmd *exec.Cmd
+	if creds != nil {
+		// Manual account: use env vars instead of --profile.
+		cmd = exec.Command("aws", "ssm", "start-session",
+			"--target", instanceID,
+			"--region", awsRegion,
+		)
+		cmd.Env = append(os.Environ(),
+			"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
+			"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
+			"AWS_DEFAULT_REGION="+awsRegion,
+		)
+		if creds.SessionToken != "" {
+			cmd.Env = append(cmd.Env, "AWS_SESSION_TOKEN="+creds.SessionToken)
+		}
+	} else {
+		cmd = exec.Command("aws", "ssm", "start-session",
+			"--target", instanceID,
+			"--profile", awsProfile,
+			"--region", awsRegion,
+		)
+	}
 	// Create a new session so we can signal the whole group later.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
@@ -54,12 +106,24 @@ func (m *Manager) StartSession(instanceID, sessionID, awsProfile, awsRegion stri
 	}
 
 	s := &SSMSession{
-		InstanceID: instanceID,
-		SessionID:  sessionID,
-		cmd:        cmd,
-		ptmx:       ptmx,
-		done:       make(chan struct{}),
-		onOutput:   onOutput,
+		InstanceID:   instanceID,
+		InstanceName: instanceName,
+		SessionID:    sessionID,
+		cmd:          cmd,
+		ptmx:         ptmx,
+		done:         make(chan struct{}),
+		onOutput:     onOutput,
+	}
+
+	// Auto-start recording if enabled.
+	if m.autoRecord && m.recordingDir != "" {
+		rec, err := NewRecorder(m.recordingDir, instanceID, instanceName, 80, 24)
+		if err != nil {
+			m.logger.Printf("failed to start recording for %s: %v", sessionID, err)
+		} else {
+			s.recorder = rec
+			m.logger.Printf("recording started for session %s", sessionID)
+		}
 	}
 
 	m.mu.Lock()
@@ -122,7 +186,13 @@ func (m *Manager) ResizeTerminal(sessionID string, rows, cols uint16) error {
 		return fmt.Errorf("session %s pty closed", sessionID)
 	}
 
-	return pty.Setsize(s.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+	if err := pty.Setsize(s.ptmx, &pty.Winsize{Rows: rows, Cols: cols}); err != nil {
+		return err
+	}
+	if s.recorder != nil {
+		s.recorder.WriteResize(int(cols), int(rows))
+	}
+	return nil
 }
 
 // CloseSession tears down a single session by ID.
@@ -165,6 +235,68 @@ func (m *Manager) GetSession(sessionID string) (*SSMSession, bool) {
 	return s, ok
 }
 
+// ExportSession writes the output buffer of a session to a file and returns the filename.
+func (m *Manager) ExportSession(sessionID, exportDir string) (string, error) {
+	s, ok := m.GetSession(sessionID)
+	if !ok {
+		return "", fmt.Errorf("session %s not found", sessionID)
+	}
+
+	s.mu.Lock()
+	raw := make([]byte, s.outputBuf.Len())
+	copy(raw, s.outputBuf.Bytes())
+	s.mu.Unlock()
+
+	// Strip ANSI escape sequences so the export reads like plain terminal text.
+	data := stripANSI(raw)
+
+	filename := fmt.Sprintf("%s_%d.log", sessionID, time.Now().Unix())
+	path := filepath.Join(exportDir, filename)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write export: %w", err)
+	}
+
+	m.logger.Printf("session %s exported to %s (%d bytes)", sessionID, filename, len(data))
+	return filename, nil
+}
+
+// StartRecording begins recording a session (if not already recording).
+func (m *Manager) StartRecording(sessionID string) error {
+	s, ok := m.GetSession(sessionID)
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recorder != nil {
+		return nil // already recording
+	}
+	rec, err := NewRecorder(m.recordingDir, s.InstanceID, s.InstanceName, 80, 24)
+	if err != nil {
+		return err
+	}
+	s.recorder = rec
+	m.logger.Printf("recording started for session %s", sessionID)
+	return nil
+}
+
+// StopRecording stops recording a session.
+func (m *Manager) StopRecording(sessionID string) error {
+	s, ok := m.GetSession(sessionID)
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recorder == nil {
+		return nil // not recording
+	}
+	s.recorder.Close()
+	s.recorder = nil
+	m.logger.Printf("recording stopped for session %s", sessionID)
+	return nil
+}
+
 // CloseSessionsForClient closes every session whose ID is in the provided slice.
 func (m *Manager) CloseSessionsForClient(sessionIDs []string) {
 	for _, id := range sessionIDs {
@@ -186,6 +318,21 @@ func (s *SSMSession) readLoop(logger *log.Logger) {
 			out := make([]byte, n)
 			copy(out, buf[:n])
 			s.onOutput(out)
+
+			// Record output if recording is active.
+			if s.recorder != nil {
+				s.recorder.Write(out)
+			}
+
+			// Buffer output for export (capped at maxOutputBuf).
+			s.mu.Lock()
+			if s.outputBuf.Len()+n > maxOutputBuf {
+				// Trim oldest bytes to make room.
+				excess := s.outputBuf.Len() + n - maxOutputBuf
+				s.outputBuf.Next(excess)
+			}
+			s.outputBuf.Write(out)
+			s.mu.Unlock()
 		}
 		if err != nil {
 			// EOF or read-after-close — both are normal shutdown paths.
@@ -200,6 +347,11 @@ func (s *SSMSession) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.recorder != nil {
+		s.recorder.Close()
+		s.recorder = nil
+	}
+
 	if s.ptmx != nil {
 		s.ptmx.Close()
 		s.ptmx = nil
@@ -211,4 +363,11 @@ func (s *SSMSession) Close() {
 		_ = s.cmd.Wait()
 		s.cmd = nil
 	}
+}
+
+// IsRecording returns true if the session is being recorded.
+func (s *SSMSession) IsRecording() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recorder != nil
 }

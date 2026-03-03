@@ -22,17 +22,27 @@ func main() {
 
 	logger := log.New(os.Stdout, "[cloudterm] ", log.LstdFlags|log.Lshortfile)
 
+	// Ensure data directories exist.
+	for _, dir := range []string{cfg.SessionRecordingDir, cfg.TerminalExportDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			logger.Printf("warning: failed to create directory %s: %v", dir, err)
+		}
+	}
+
 	// Initialize AWS discovery service
 	discovery := aws.NewDiscovery(cfg, logger)
 
 	// Initialize session manager
-	sessionMgr := session.NewManager(logger)
+	sessionMgr := session.NewManager(logger, cfg.SessionRecordingDir, cfg.AutoRecord)
 
 	// Initialize audit logger
 	auditLogger := audit.NewLogger(cfg.AuditLogFile)
 
+	// Initialize AWS account store
+	accountStore := aws.NewAccountStore(cfg.AWSAccountsFile)
+
 	// Initialize HTTP/WS handler
-	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger)
+	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger, accountStore)
 
 	// Start background scanner
 	ctx, cancel := context.WithCancel(context.Background())

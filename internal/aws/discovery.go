@@ -18,6 +18,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -272,6 +273,145 @@ func (d *Discovery) ScanRegion(profile, region string) (int, error) {
 
 	d.logger.Printf("Region scan complete: %s/%s → %d instances", profile, region, len(instances))
 	return len(instances), nil
+}
+
+// ScanAccount discovers instances using explicit credentials from a ManualAccount.
+// It scans all regions concurrently and merges results into the cache.
+func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	profileLabel := "manual:" + acct.ID
+
+	regions := getAWSRegions(ctx, d.logger)
+	d.logger.Printf("Scanning manual account %q across %d regions", acct.Name, len(regions))
+
+	var allInstances []types.EC2Instance
+	var accountID, accountAlias string
+	var accountResolved bool
+	var accountMu sync.Mutex
+
+	sem := make(chan struct{}, 10)
+	var wg sync.WaitGroup
+	var instancesMu sync.Mutex
+
+	for _, region := range regions {
+		wg.Add(1)
+		go func(region string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			credProvider := credentials.NewStaticCredentialsProvider(
+				acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken,
+			)
+			awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+				awsconfig.WithRegion(region),
+				awsconfig.WithCredentialsProvider(credProvider),
+			)
+			if err != nil {
+				return
+			}
+
+			// Resolve account info once.
+			accountMu.Lock()
+			needResolve := !accountResolved
+			accountMu.Unlock()
+
+			if needResolve {
+				stsClient := sts.NewFromConfig(awsCfg)
+				identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+				if err == nil && identity.Account != nil {
+					accountMu.Lock()
+					if !accountResolved {
+						accountID = *identity.Account
+						accountResolved = true
+					}
+					accountMu.Unlock()
+
+					iamClient := iam.NewFromConfig(awsCfg)
+					aliases, err := iamClient.ListAccountAliases(ctx, &iam.ListAccountAliasesInput{})
+					if err == nil && len(aliases.AccountAliases) > 0 {
+						accountMu.Lock()
+						accountAlias = aliases.AccountAliases[0]
+						accountMu.Unlock()
+					}
+				}
+			}
+
+			accountMu.Lock()
+			aid := accountID
+			aalias := accountAlias
+			accountMu.Unlock()
+
+			ec2Client := ec2.NewFromConfig(awsCfg)
+			instances, ownerID, err := discoverInstances(ctx, ec2Client, profileLabel, region, aid, aalias, d.cfg)
+			if err != nil {
+				return
+			}
+
+			if aid == "" && ownerID != "" {
+				accountMu.Lock()
+				if !accountResolved {
+					accountID = ownerID
+					accountResolved = true
+				}
+				accountMu.Unlock()
+				for i := range instances {
+					instances[i].AccountID = ownerID
+				}
+			}
+
+			instancesMu.Lock()
+			allInstances = append(allInstances, instances...)
+			instancesMu.Unlock()
+		}(region)
+	}
+
+	wg.Wait()
+
+	// Merge into cache: remove old instances for this manual account, add new ones.
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.cache == nil {
+		d.cache = &types.ScanResult{Timestamp: time.Now()}
+	}
+
+	var kept []types.EC2Instance
+	for _, inst := range d.cache.Instances {
+		if inst.AWSProfile != profileLabel {
+			kept = append(kept, inst)
+		}
+	}
+	kept = append(kept, allInstances...)
+	d.cache.Instances = kept
+	d.cache.Data = buildInstanceTree(kept)
+	d.cache.Timestamp = time.Now()
+
+	d.logger.Printf("Manual account scan complete: %s → %d instances", acct.Name, len(allInstances))
+	return len(allInstances), nil
+}
+
+// RemoveAccountInstances removes all cached instances belonging to a manual account.
+func (d *Discovery) RemoveAccountInstances(accountID string) {
+	profileLabel := "manual:" + accountID
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.cache == nil {
+		return
+	}
+
+	var kept []types.EC2Instance
+	for _, inst := range d.cache.Instances {
+		if inst.AWSProfile != profileLabel {
+			kept = append(kept, inst)
+		}
+	}
+	d.cache.Instances = kept
+	d.cache.Data = buildInstanceTree(kept)
+	d.logger.Printf("Removed instances for manual account %s from cache", accountID)
 }
 
 // GetInstanceConfig looks up the profile and region for a given instance ID.
