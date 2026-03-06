@@ -34,13 +34,16 @@ type Discovery struct {
 	scanning   bool
 	scanStatus types.ScanStatus
 	mu         sync.RWMutex
+	cloneOps   map[string]*CloneStatus
+	cloneMu    sync.RWMutex
 }
 
 // NewDiscovery creates a new Discovery service.
 func NewDiscovery(cfg *config.Config, logger *log.Logger) *Discovery {
 	return &Discovery{
-		cfg:    cfg,
-		logger: logger,
+		cfg:      cfg,
+		logger:   logger,
+		cloneOps: make(map[string]*CloneStatus),
 	}
 }
 
@@ -709,6 +712,15 @@ func parseInstance(inst ec2types.Instance, profile, region, accountID, accountAl
 		instanceProfile = aws.ToString(inst.IamInstanceProfile.Arn)
 	}
 
+	vpcID := aws.ToString(inst.VpcId)
+	subnetID := aws.ToString(inst.SubnetId)
+	var sgIDs []string
+	for _, sg := range inst.SecurityGroups {
+		if sg.GroupId != nil {
+			sgIDs = append(sgIDs, *sg.GroupId)
+		}
+	}
+
 	return types.EC2Instance{
 		InstanceID:      aws.ToString(inst.InstanceId),
 		Name:            name,
@@ -728,6 +740,9 @@ func parseInstance(inst ec2types.Instance, profile, region, accountID, accountAl
 		AMIID:           amiID,
 		InstanceProfile: instanceProfile,
 		Tags:            allTags,
+		VpcID:           vpcID,
+		SubnetID:        subnetID,
+		SecurityGroups:  sgIDs,
 	}
 }
 
@@ -870,15 +885,18 @@ type yamlEnvironmentEntry struct {
 }
 
 type yamlInstanceEntry struct {
-	Name         string `yaml:"name"`
-	InstanceID   string `yaml:"instance_id"`
-	Region       string `yaml:"region"`
-	AWSProfile   string `yaml:"aws_profile"`
-	State        string `yaml:"state"`
-	Platform     string `yaml:"platform"`
-	InstanceType string `yaml:"instance_type,omitempty"`
-	PrivateIP    string `yaml:"private_ip,omitempty"`
-	PublicIP     string `yaml:"public_ip,omitempty"`
+	Name           string   `yaml:"name"`
+	InstanceID     string   `yaml:"instance_id"`
+	Region         string   `yaml:"region"`
+	AWSProfile     string   `yaml:"aws_profile"`
+	State          string   `yaml:"state"`
+	Platform       string   `yaml:"platform"`
+	InstanceType   string   `yaml:"instance_type,omitempty"`
+	PrivateIP      string   `yaml:"private_ip,omitempty"`
+	PublicIP       string   `yaml:"public_ip,omitempty"`
+	VpcID          string   `yaml:"vpc_id,omitempty"`
+	SubnetID       string   `yaml:"subnet_id,omitempty"`
+	SecurityGroups []string `yaml:"security_groups,omitempty"`
 }
 
 // saveToYAML writes the instance data to the YAML file in the Python-compatible format.
@@ -923,15 +941,18 @@ func (d *Discovery) saveToYAML(instances []types.EC2Instance) error {
 		env := cust.Environments[t2Key]
 
 		env.Instances = append(env.Instances, yamlInstanceEntry{
-			Name:         inst.Name,
-			InstanceID:   inst.InstanceID,
-			Region:       inst.AWSRegion,
-			AWSProfile:   inst.AWSProfile,
-			State:        inst.State,
-			Platform:     inst.Platform,
-			InstanceType: inst.InstanceType,
-			PrivateIP:    inst.PrivateIP,
-			PublicIP:     inst.PublicIP,
+			Name:           inst.Name,
+			InstanceID:     inst.InstanceID,
+			Region:         inst.AWSRegion,
+			AWSProfile:     inst.AWSProfile,
+			State:          inst.State,
+			Platform:       inst.Platform,
+			InstanceType:   inst.InstanceType,
+			PrivateIP:      inst.PrivateIP,
+			PublicIP:       inst.PublicIP,
+			VpcID:          inst.VpcID,
+			SubnetID:       inst.SubnetID,
+			SecurityGroups: inst.SecurityGroups,
 		})
 
 		cust.Environments[t2Key] = env
@@ -986,19 +1007,22 @@ func (d *Discovery) loadFromYAML() (*types.ScanResult, error) {
 					var groupInstances []types.EC2Instance
 					for _, yi := range env.Instances {
 						inst := types.EC2Instance{
-							InstanceID:   yi.InstanceID,
-							Name:         yi.Name,
-							PrivateIP:    yi.PrivateIP,
-							PublicIP:     yi.PublicIP,
-							State:        yi.State,
-							Platform:     yi.Platform,
-							InstanceType: yi.InstanceType,
-							AWSProfile:   yi.AWSProfile,
-							AWSRegion:    yi.Region,
-							AccountID:    acct.AccountID,
-							AccountAlias: accountKey,
-							Tag1Value:    custName,
-							Tag2Value:    envName,
+							InstanceID:     yi.InstanceID,
+							Name:           yi.Name,
+							PrivateIP:      yi.PrivateIP,
+							PublicIP:        yi.PublicIP,
+							State:          yi.State,
+							Platform:       yi.Platform,
+							InstanceType:   yi.InstanceType,
+							AWSProfile:     yi.AWSProfile,
+							AWSRegion:      yi.Region,
+							AccountID:      acct.AccountID,
+							AccountAlias:   accountKey,
+							Tag1Value:      custName,
+							Tag2Value:      envName,
+							VpcID:          yi.VpcID,
+							SubnetID:       yi.SubnetID,
+							SecurityGroups: yi.SecurityGroups,
 						}
 						groupInstances = append(groupInstances, inst)
 						allInstances = append(allInstances, inst)

@@ -39,6 +39,7 @@
 }
 
 * { margin:0; padding:0; box-sizing:border-box; }
+.hidden { display:none !important; }
 html,body { height:100%; overflow:hidden; background:var(--bg); }
 
 body {
@@ -409,6 +410,8 @@ body {
 }
 .tab-type.ssh { background:var(--ssh-dim); border-color:var(--ssh-b); color:var(--ssh); }
 .tab-type.rdp { background:var(--rdp-dim); border-color:var(--rdp-b); color:var(--rdp); }
+.tab-type.topo { background:rgba(140,79,255,.15); border-color:rgba(140,79,255,.3); color:#8C4FFF; }
+.tab.active-topo { border-bottom-color:#8C4FFF; }
 
 .tab-close {
   width:14px; height:14px; border-radius:50%;
@@ -697,12 +700,12 @@ body {
 .mc-btn.ssh-c .mc-name { color:var(--ssh); }
 .mc-btn.rdp-c .mc-name { color:var(--rdp); }
 .modal-cancel {
-  width:100%; padding:8px; background:none;
+  width:100%; padding:8px; background:linear-gradient(135deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
   border:1px solid var(--b1); border-radius:7px;
   color:var(--muted); font-family:'Lato',sans-serif;
   font-size:12px; cursor:pointer; transition:all .2s;
 }
-.modal-cancel:hover { border-color:var(--b2); color:var(--text); }
+.modal-cancel:hover { border-color:var(--b2); color:var(--text); background:linear-gradient(135deg, rgba(255,255,255,.08), rgba(255,255,255,.04)); }
 .modal-subtitle {
   font-size:13px; color:var(--muted); margin:-10px 0 14px;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
@@ -882,13 +885,13 @@ body {
 }
 
 /* ── Tunnel Panel (positioned left of transfer panel) ── */
-#tunnelPanel { right:370px; }
+#tunnelPanel { left:16px; bottom:200px; }
 #tunnelPanel .tunnel-row {
   display:flex; align-items:center; padding:8px 14px; gap:8px;
   border-bottom:1px solid var(--b1); font-size:11px;
 }
 #tunnelPanel .tunnel-row:last-child { border-bottom:none; }
-#tunnelPanel .tunnel-name { flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#tunnelPanel .tunnel-name { flex:1; color:var(--text); word-break:break-word; }
 #tunnelPanel .tunnel-ports { color:var(--muted); font-family:'Fira Code',monospace; font-size:10px; }
 #tunnelPanel .tunnel-open {
   background:none; border:none; color:var(--rdp); cursor:pointer; padding:0 2px; display:flex; align-items:center;
@@ -901,7 +904,7 @@ body {
 
 /* ── Transfer Manager Panel ── */
 .transfer-panel {
-  position:fixed; bottom:16px; right:16px; z-index:450;
+  position:fixed; bottom:16px; left:16px; z-index:450;
   width:340px; background:var(--s2); border:1px solid var(--b2);
   border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,.6);
   font-family:'Lato',sans-serif; overflow:hidden;
@@ -912,8 +915,10 @@ body {
 .transfer-panel.collapsed .transfer-body { display:none; }
 .transfer-header {
   display:flex; align-items:center; padding:10px 14px;
-  background:var(--s3); cursor:pointer; user-select:none;
+  background:var(--s3); cursor:grab; user-select:none;
 }
+.transfer-header:active { cursor:grabbing; }
+.transfer-panel.dragged { transition:none; }
 .transfer-header-title {
   font-size:12px; font-weight:700; color:var(--text); flex:1;
 }
@@ -937,7 +942,7 @@ body {
 .transfer-row-icon { font-size:12px; flex-shrink:0; }
 .transfer-row-name {
   font-size:11px; color:var(--text); flex:1;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  word-break:break-word;
 }
 .transfer-row-pct {
   font-size:10px; font-family:'JetBrains Mono',monospace;
@@ -988,9 +993,133 @@ body {
 .sb-item.ssh { color:var(--ssh); }
 .sb-item.rdp { color:var(--rdp); }
 
+/* ── AI Panel ── */
+.ai-panel {
+  position:fixed; top:var(--topbar-h); right:0; bottom:0;
+  width:400px; min-width:280px; max-width:60vw;
+  background:var(--bg); border-left:1px solid var(--b1);
+  display:flex; flex-direction:column; z-index:50;
+  transition:transform .2s ease;
+  font-family:'Lato', sans-serif;
+}
+.ai-panel.ai-hidden { transform:translateX(100%); pointer-events:none; }
+.ai-resize-handle {
+  position:absolute; left:-3px; top:0; bottom:0; width:6px;
+  cursor:col-resize; z-index:51;
+}
+.ai-header {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:8px 12px; border-bottom:1px solid var(--b1);
+  font-family:'JetBrains Mono',monospace;
+  font-weight:500; font-size:11px; color:#4d9fff;
+  text-transform:uppercase; letter-spacing:1px; flex-shrink:0;
+}
+.ai-header-btn {
+  width:24px; height:24px;
+  background:var(--s2); border:1px solid var(--b1);
+  border-radius:5px; color:var(--muted);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:all .2s; font-size:11px; line-height:1;
+}
+.ai-header-btn:hover { background:var(--s3); color:var(--text); border-color:var(--b2); }
+.ai-messages {
+  flex:1; overflow-y:auto; padding:12px;
+  display:flex; flex-direction:column; gap:8px;
+  scrollbar-width:none; -ms-overflow-style:none;
+}
+.ai-messages::-webkit-scrollbar { display:none; }
+.ai-msg { padding:8px 12px; border-radius:7px; max-width:90%; word-wrap:break-word; font-size:12px; line-height:1.55; }
+.ai-msg.user {
+  align-self:flex-end;
+  background:linear-gradient(135deg, rgba(167,139,250,.2), rgba(167,139,250,.1));
+  border:1px solid rgba(167,139,250,.3);
+  color:var(--text);
+  font-family:'JetBrains Mono',monospace; font-size:11px;
+}
+.ai-msg.assistant { align-self:flex-start; background:var(--s2); border:1px solid var(--b1); color:var(--text); }
+.ai-msg pre { background:var(--s1); padding:6px 8px; border-radius:4px; overflow-x:auto; font-family:'JetBrains Mono',monospace; font-size:11px; margin:4px 0; white-space:pre-wrap; border:1px solid var(--b1); }
+.ai-msg code { font-family:'JetBrains Mono',monospace; font-size:11px; background:var(--s1); padding:1px 4px; border-radius:3px; }
+.ai-msg p { margin:4px 0; }
+.ai-msg ul, .ai-msg ol { margin:4px 0; padding-left:18px; }
+.ai-msg h2, .ai-msg h3, .ai-msg h4 { color:#4d9fff; }
+.ai-approval {
+  margin:0 12px 8px; padding:10px;
+  border:1px solid rgba(251,146,60,.3);
+  border-radius:7px; background:rgba(251,146,60,0.06); flex-shrink:0;
+}
+.ai-approval.ai-hidden { display:none; }
+.ai-approval.destructive { border-color:rgba(248,113,113,.4); background:rgba(248,113,113,0.06); }
+.ai-approval-label {
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px;
+}
+.ai-approval-cmd { font-family:'JetBrains Mono',monospace; font-size:11px; padding:6px 8px; background:var(--s1); border:1px solid var(--b1); border-radius:4px; color:var(--text); margin-bottom:4px; }
+.ai-approval-target { font-size:11px; color:var(--dim); margin-bottom:8px; font-family:'JetBrains Mono',monospace; }
+.ai-approval-warn { font-size:11px; color:var(--red); font-weight:600; margin-bottom:8px; }
+.ai-approval-actions { display:flex; gap:8px; }
+.ai-approval-actions button {
+  padding:5px 16px; border-radius:7px; cursor:pointer; border:none;
+  font-family:'JetBrains Mono',monospace; font-size:11px;
+  transition:all .2s;
+}
+.ai-approve-btn {
+  background:linear-gradient(135deg, rgba(61,220,132,.15), rgba(61,220,132,.1));
+  border:1px solid rgba(61,220,132,.3); color:var(--ssh); font-weight:500;
+}
+.ai-approve-btn:hover { background:linear-gradient(135deg, rgba(61,220,132,.25), rgba(61,220,132,.2)); border-color:rgba(61,220,132,.5); }
+.ai-approve-btn:disabled { opacity:.4; cursor:not-allowed; }
+.ai-reject-btn {
+  background:var(--s2); border:1px solid var(--b1); color:var(--muted);
+}
+.ai-reject-btn:hover { background:var(--s3); color:var(--text); border-color:var(--b2); }
+.ai-input-area {
+  padding:8px 12px 10px; border-top:1px solid var(--b1); flex-shrink:0;
+  background:var(--s1);
+}
+.ai-input-bar {
+  display:flex; align-items:flex-end; gap:0;
+  background:var(--s2); border:1px solid var(--b1); border-radius:10px;
+  padding:4px 4px 4px 12px;
+  transition:border-color .2s;
+}
+.ai-input-bar:focus-within { border-color:rgba(77,159,255,.4); }
+.ai-input-bar textarea {
+  flex:1; resize:none; background:transparent; color:var(--text);
+  border:none; padding:6px 0; outline:none;
+  font-family:'JetBrains Mono',monospace; font-size:11px; line-height:1.5;
+  max-height:100px; scrollbar-width:none;
+}
+.ai-input-bar textarea::-webkit-scrollbar { display:none; }
+.ai-input-bar textarea::placeholder { color:var(--dim); }
+.ai-send-btn {
+  display:flex; align-items:center; justify-content:center;
+  width:30px; height:30px; border-radius:8px; cursor:pointer; flex-shrink:0;
+  background:linear-gradient(135deg, rgba(77,159,255,.2), rgba(88,166,255,.15));
+  border:1px solid rgba(77,159,255,.3); color:#4d9fff;
+  transition:all .2s;
+}
+.ai-send-btn:hover { background:linear-gradient(135deg, rgba(77,159,255,.35), rgba(88,166,255,.25)); border-color:rgba(77,159,255,.5); color:var(--text); }
+.ai-send-btn:disabled { opacity:.3; cursor:not-allowed; }
+body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
+.ai-typing { color:var(--muted); font-size:11px; font-style:italic; padding:4px 12px; font-family:'JetBrains Mono',monospace; }
+.ai-typing-indicator {
+  align-self:flex-start; display:flex; gap:4px; padding:10px 16px;
+  background:var(--s2); border:1px solid var(--b1); border-radius:7px;
+}
+.ai-typing-indicator span {
+  width:6px; height:6px; border-radius:50%; background:#4d9fff; opacity:.4;
+  animation:ai-dot-pulse 1.4s ease-in-out infinite;
+}
+.ai-typing-indicator span:nth-child(2) { animation-delay:.2s; }
+.ai-typing-indicator span:nth-child(3) { animation-delay:.4s; }
+@keyframes ai-dot-pulse {
+  0%,60%,100% { opacity:.4; transform:scale(1); }
+  30% { opacity:1; transform:scale(1.3); }
+}
+
 /* ── Toast ── */
 .toast {
-  position:fixed; bottom:32px; right:20px; z-index:400;
+  position:fixed; bottom:32px; left:20px; z-index:400;
   background:var(--s2); border:1px solid var(--b2);
   border-radius:10px; padding:10px 16px;
   display:flex; align-items:center; gap:10px;
@@ -1161,6 +1290,324 @@ body {
   transition:all .15s;
 }
 .broadcast-bar-close:hover { color:var(--red); border-color:rgba(248,113,113,.3); }
+
+/* ── Topology Viewer ── */
+.topo-panel { overflow:hidden; background:var(--bg); }
+.panel.visible.topo-panel { display:flex; flex-direction:column; }
+.topo-panel svg { flex:1; width:100%; min-height:0; }
+.topo-toolbar {
+  position:absolute; top:10px; left:10px; right:10px; z-index:10;
+  display:flex; align-items:center; gap:6px; padding:6px 10px;
+  background:rgba(var(--bg-rgb,17,17,17),.85); backdrop-filter:blur(8px);
+  border:1px solid var(--b1); border-radius:8px;
+}
+.topo-toolbar-group { display:flex; align-items:center; gap:4px; }
+.topo-toolbar-sep { width:1px; height:20px; background:var(--b1); margin:0 4px; }
+.topo-btn {
+  padding:5px 12px; border:1px solid rgba(77,159,255,.3); border-radius:7px;
+  background:linear-gradient(135deg, rgba(77,159,255,.12), rgba(88,166,255,.07));
+  color:#4d9fff; cursor:pointer;
+  font-size:11px; font-family:'JetBrains Mono',monospace; white-space:nowrap;
+  transition:all .2s;
+}
+.topo-btn:hover {
+  background:linear-gradient(135deg, rgba(77,159,255,.22), rgba(88,166,255,.15));
+  border-color:rgba(77,159,255,.5); color:var(--text);
+}
+.topo-btn.active { color:#fff; border-color:rgba(77,159,255,.6); background:linear-gradient(135deg, rgba(77,159,255,.35), rgba(88,166,255,.25)); }
+.topo-search {
+  width:160px; padding:4px 8px; border:1px solid var(--b1); border-radius:6px;
+  background:var(--s2); color:var(--text); font-size:11px; font-family:inherit;
+  outline:none;
+}
+.topo-search:focus { border-color:rgba(77,159,255,.4); }
+.topo-detail-panel {
+  position:absolute; top:0; right:0; bottom:0; width:320px;
+  background:var(--s1); border-left:1px solid var(--b1);
+  display:flex; flex-direction:column; z-index:20;
+  transform:translateX(100%); transition:transform .2s;
+}
+.topo-detail-panel.visible { transform:translateX(0); }
+.topo-detail-header {
+  display:flex; align-items:center; padding:10px 14px;
+  border-bottom:1px solid var(--b1); gap:8px;
+}
+.topo-detail-title { flex:1; font-size:12px; font-weight:700; color:var(--text); }
+.topo-detail-close {
+  width:22px; height:22px; border:none; background:none; color:var(--muted);
+  cursor:pointer; border-radius:4px; font-size:14px;
+  display:flex; align-items:center; justify-content:center;
+}
+.topo-detail-close:hover { color:var(--text); background:var(--b1); }
+.topo-detail-body {
+  flex:1; overflow-y:auto; padding:12px 14px; font-size:11px; color:var(--text);
+  scrollbar-width:none;
+}
+.topo-detail-body::-webkit-scrollbar { display:none; }
+.topo-detail-body table { width:100%; border-collapse:collapse; margin:8px 0; }
+.topo-detail-body th {
+  text-align:left; padding:4px 6px; font-size:10px; color:var(--muted);
+  border-bottom:1px solid var(--b1); font-weight:600;
+}
+.topo-detail-body td { padding:4px 6px; font-size:10px; border-bottom:1px solid var(--b1); }
+.topo-detail-body .detail-label { color:var(--muted); font-size:10px; margin-top:10px; }
+.topo-detail-body .detail-value { color:var(--text); font-family:'JetBrains Mono',monospace; font-size:10px; }
+.topo-loading {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:12px; color:var(--muted); font-size:13px;
+}
+.topo-loading .spinner { width:24px; height:24px; border:2px solid var(--b1);
+  border-top-color:#4d9fff; border-radius:50%; animation:spin 1s linear infinite;
+}
+.topo-error { color:var(--red); font-size:13px; text-align:center; padding:40px; }
+.topo-protocol-picker {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:var(--s2); border:1px solid var(--b2); border-radius:10px;
+  padding:16px; z-index:30; min-width:240px; box-shadow:0 8px 32px rgba(0,0,0,.6);
+}
+.topo-protocol-picker h3 { margin:0 0 12px; font-size:13px; color:var(--text); }
+.topo-protocol-picker label { display:block; font-size:11px; color:var(--muted); margin:8px 0 4px; }
+.topo-protocol-picker select, .topo-protocol-picker input {
+  width:100%; padding:6px 8px; border:1px solid var(--b1); border-radius:6px;
+  background:var(--s3); color:var(--text); font-size:11px; font-family:inherit;
+}
+.topo-protocol-picker .topo-picker-actions { display:flex; gap:8px; margin-top:12px; }
+.topo-protocol-picker button {
+  flex:1; padding:6px; border-radius:7px; cursor:pointer; font-size:11px;
+  font-family:'JetBrains Mono',monospace; transition:all .2s;
+}
+.topo-protocol-picker .topo-picker-ok {
+  background:linear-gradient(135deg, #4d9fff, #3b82f6); color:#fff;
+  border:1px solid rgba(77,159,255,.5);
+}
+.topo-protocol-picker .topo-picker-ok:hover { filter:brightness(1.1); }
+.topo-protocol-picker .topo-picker-cancel {
+  background:linear-gradient(135deg, rgba(255,255,255,.06), rgba(255,255,255,.03)); color:var(--muted);
+  border:1px solid var(--b1);
+}
+.topo-protocol-picker .topo-picker-cancel:hover { color:var(--text); border-color:rgba(255,255,255,.2); }
+.topo-hop-badge {
+  display:inline-block; padding:2px 6px; border-radius:4px; font-size:9px; font-weight:700;
+  margin:2px 0;
+}
+.topo-hop-badge.allow { background:rgba(74,222,128,.15); color:#4ade80; }
+.topo-hop-badge.deny { background:rgba(248,113,113,.15); color:#f87171; }
+.topo-hop-badge.no-route { background:rgba(251,191,36,.15); color:#fbbf24; }
+
+/* ─── Analyze Path Panel (draggable floating) ─── */
+.topo-analyze-panel {
+  min-width:340px; max-width:420px;
+  background:var(--s2); border:1px solid var(--b2); border-radius:10px;
+  box-shadow:0 8px 32px rgba(0,0,0,.6); font-size:12px;
+  user-select:none;
+}
+.topo-analyze-panel.hidden { display:none; }
+.topo-analyze-header {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:8px 12px; border-bottom:1px solid var(--b1);
+  font-weight:600; color:var(--purple); font-size:13px;
+  border-radius:10px 10px 0 0;
+}
+.topo-analyze-body { padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+.topo-analyze-msg {
+  padding:6px 8px; border-radius:6px; font-size:11px;
+  background:var(--s3); color:var(--muted);
+}
+.topo-analyze-msg-warn { background:rgba(251,191,36,.1); color:#fbbf24; }
+.topo-analyze-msg-error { background:rgba(248,113,113,.1); color:#f87171; }
+.topo-analyze-msg-success { background:rgba(74,222,128,.1); color:#4ade80; }
+.topo-analyze-row {
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+}
+.topo-analyze-ip-input {
+  flex:1; padding:4px 8px; border:1px solid var(--b1); border-radius:4px;
+  background:var(--s3); color:var(--text); font-size:11px; font-family:JetBrains Mono,monospace;
+  min-width:100px;
+}
+.topo-analyze-run-btn {
+  display:flex; align-items:center; justify-content:center; gap:4px;
+  padding:6px 18px !important; border-radius:8px !important;
+  background:linear-gradient(135deg, rgba(167,139,250,.18), rgba(167,139,250,.08)) !important;
+  border:1px dashed rgba(167,139,250,.4) !important;
+  font-size:11px !important; font-weight:600; color:#a78bfa !important;
+  font-family:'JetBrains Mono',monospace !important;
+  cursor:pointer; transition:all .2s !important;
+}
+.topo-analyze-run-btn:hover {
+  background:linear-gradient(135deg, rgba(167,139,250,.28), rgba(167,139,250,.15)) !important;
+  border-color:rgba(167,139,250,.6) !important; color:var(--text) !important;
+}
+.topo-analyze-run-btn:disabled { opacity:.4; cursor:not-allowed; filter:none; }
+.topo-analyze-results {
+  max-height:500px; overflow-y:auto; display:flex; flex-direction:column; gap:3px;
+  padding-top:4px; scrollbar-width:none; -ms-overflow-style:none;
+}
+.topo-analyze-results::-webkit-scrollbar { display:none; }
+.topo-path-section-header {
+  font-size:10px; font-weight:700; color:var(--purple); padding:6px 0 2px 0;
+  font-family:JetBrains Mono,monospace; border-bottom:1px solid var(--b1); margin-bottom:2px;
+}
+.topo-analyze-issues {
+  display:flex; flex-direction:column; gap:2px; margin-bottom:4px;
+}
+.topo-analyze-issue {
+  font-size:9px; color:var(--red, #f87171); padding:2px 8px;
+  font-family:JetBrains Mono,monospace;
+}
+.topo-analyze-hop {
+  display:flex; align-items:flex-start; gap:6px; padding:5px 8px;
+  border-radius:4px; font-size:10px; font-family:JetBrains Mono,monospace;
+}
+.topo-analyze-hop.hop-allow { background:rgba(74,222,128,.06); border-left:2px solid #4ade80; }
+.topo-analyze-hop.hop-deny { background:rgba(248,113,113,.06); border-left:2px solid #f87171; }
+.hop-num { font-weight:700; color:var(--muted); min-width:18px; flex-shrink:0; padding-top:1px; }
+.hop-icon { font-size:13px; flex-shrink:0; padding-top:1px; }
+.hop-allow .hop-icon { color:#4ade80; }
+.hop-deny .hop-icon { color:#f87171; }
+.hop-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+.hop-component { color:var(--text); font-weight:600; font-size:10px; }
+.hop-resource-id { color:var(--muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hop-detail { color:var(--dim); font-size:9px; }
+.hop-matched-rule { color:var(--purple); font-size:9px; font-style:italic; }
+.topo-clear-path-btn {
+  font-size:10px !important; padding:4px 10px !important;
+  background:linear-gradient(135deg, rgba(255,255,255,.06), rgba(255,255,255,.03)) !important;
+  color:var(--muted) !important;
+  border:1px solid var(--b2, var(--b1)) !important; border-radius:6px !important;
+  font-family:'JetBrains Mono',monospace !important;
+  transition:all .2s !important;
+}
+.topo-clear-path-btn:hover {
+  color:var(--text) !important; border-color:rgba(255,255,255,.2) !important;
+  background:linear-gradient(135deg, rgba(255,255,255,.1), rgba(255,255,255,.05)) !important;
+}
+
+/* ─── Live Hop Animation ─── */
+.hop-entering {
+  opacity:0; transform:translateX(-10px);
+  transition:opacity .3s ease, transform .3s ease;
+}
+.topo-analyze-hop {
+  transition:opacity .3s ease, transform .3s ease;
+}
+
+/* ─── Network Insights Analysis ─── */
+.topo-deep-status {
+  display:flex; align-items:center; gap:8px; padding:8px 10px;
+  border-radius:6px; font-size:11px; font-family:'JetBrains Mono',monospace;
+  background:rgba(77,159,255,.06); border-left:3px solid #4d9fff;
+  color:var(--text); margin-bottom:4px;
+}
+.topo-deep-status.deep-success {
+  background:rgba(74,222,128,.08); border-left-color:#4ade80; color:#4ade80;
+}
+.topo-deep-status.deep-blocked {
+  background:rgba(248,113,113,.08); border-left-color:#f87171; color:#f87171;
+}
+.topo-deep-status.deep-error {
+  background:rgba(248,113,113,.08); border-left-color:#f87171; color:#f87171;
+}
+.deep-spinner {
+  display:inline-block; width:12px; height:12px; border:2px solid rgba(77,159,255,.3);
+  border-top-color:#4d9fff; border-radius:50%; animation:deep-spin .8s linear infinite;
+}
+@keyframes deep-spin { to { transform:rotate(360deg); } }
+.topo-analyze-hop.hop-info { background:rgba(77,159,255,.06); border-left:2px solid #4d9fff; }
+.hop-info .hop-icon { color:#4d9fff; }
+.deep-external-badge {
+  display:inline-block; padding:1px 5px; border-radius:3px; font-size:8px;
+  background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3);
+  font-weight:600; margin-left:4px; vertical-align:middle;
+}
+.topo-deep-explanations {
+  margin-top:6px; display:flex; flex-direction:column; gap:2px;
+}
+.topo-deep-explanation {
+  font-size:9px; color:var(--muted); padding:3px 8px;
+  font-family:'JetBrains Mono',monospace; border-left:2px solid var(--b1);
+  background:rgba(255,255,255,.02); border-radius:0 4px 4px 0;
+}
+.topo-deep-ai-section {
+  margin-top:8px; padding:8px; text-align:center;
+}
+.topo-ai-insights-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:8px 20px !important; border-radius:8px !important;
+  background:linear-gradient(135deg, rgba(251,191,36,.18), rgba(251,146,36,.08)) !important;
+  border:1px dashed rgba(251,191,36,.4) !important;
+  font-size:12px !important; font-weight:700; color:#fbbf24 !important;
+  font-family:'JetBrains Mono',monospace !important;
+  cursor:pointer; transition:all .2s !important;
+}
+.topo-ai-insights-btn:hover {
+  background:linear-gradient(135deg, rgba(251,191,36,.28), rgba(251,146,36,.15)) !important;
+  border-color:rgba(251,191,36,.6) !important; color:var(--text) !important;
+  box-shadow:0 0 12px rgba(251,191,36,.15);
+}
+.topo-ai-insights-btn:disabled { opacity:.5; cursor:not-allowed; }
+.topo-deep-hops { display:flex; flex-direction:column; gap:3px; }
+
+/* ─── SSH/RDP Connect Buttons ─── */
+.topo-connect-buttons {
+  display:flex; gap:8px; margin-top:10px; padding-top:10px;
+  border-top:1px solid var(--b1);
+}
+.topo-connect-btn {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:6px 14px; border-radius:8px; cursor:pointer;
+  font-size:11px; font-weight:600;
+  font-family:'JetBrains Mono', monospace;
+  transition:all .2s;
+}
+.topo-connect-btn:hover { transform:translateY(-1px); }
+.topo-connect-btn:active { transform:translateY(0); }
+.topo-connect-ssh {
+  background:linear-gradient(135deg, rgba(77,199,100,.15), rgba(77,199,100,.08));
+  border:1px dashed rgba(77,199,100,.35);
+  color:var(--ssh);
+}
+.topo-connect-ssh:hover {
+  background:linear-gradient(135deg, rgba(77,199,100,.25), rgba(77,199,100,.18));
+  border-color:rgba(77,199,100,.5); color:var(--text);
+}
+.topo-connect-rdp {
+  background:linear-gradient(135deg, rgba(167,139,250,.15), rgba(167,139,250,.08));
+  border:1px dashed rgba(167,139,250,.35);
+  color:var(--rdp);
+}
+.topo-connect-rdp:hover {
+  background:linear-gradient(135deg, rgba(167,139,250,.25), rgba(167,139,250,.18));
+  border-color:rgba(167,139,250,.5); color:var(--text);
+}
+
+/* ─── Toast Container ─── */
+.topo-toast-container {
+  position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+  display:flex; flex-direction:column; gap:6px; z-index:70;
+  pointer-events:none;
+}
+.topo-toast {
+  padding:8px 16px; border-radius:6px; font-size:12px;
+  font-family:JetBrains Mono,monospace;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);
+  opacity:0; transition:opacity .3s;
+  pointer-events:auto; white-space:nowrap;
+}
+.topo-toast.visible { opacity:1; }
+.topo-toast-info { background:var(--s2); color:var(--text); border:1px solid var(--b1); }
+.topo-toast-success { background:rgba(74,222,128,.15); color:#4ade80; border:1px solid rgba(74,222,128,.3); }
+.topo-toast-warn { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
+.topo-toast-error { background:rgba(248,113,113,.15); color:#f87171; border:1px solid rgba(248,113,113,.3); }
+
+/* ─── Protocol picker (select/input in analyze panel) ─── */
+.topo-protocol-select, .topo-port-input {
+  padding:4px 6px; border:1px solid var(--b1); border-radius:4px;
+  background:var(--s3); color:var(--text); font-size:11px; font-family:inherit;
+}
+
+/* ─── Networking pills (SG, NACL, RT) ─── */
+.net-pill-node rect { transition: stroke-width 0.2s, stroke 0.2s; }
+.net-pill-node:hover rect { stroke-width: 2; filter: brightness(1.2); }
 </style>
 </head>
 <body>
@@ -1215,6 +1662,9 @@ body {
     </button>
     <button class="topbar-btn" id="settingsBtn" title="Settings">
       <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <button class="topbar-btn" id="aiToggleBtn" title="AI Assistant">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1h1a2 2 0 1 1 0 4h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a2 2 0 1 1 0-4h1v-1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="9" cy="13" r="1.5" fill="currentColor"/><circle cx="15" cy="13" r="1.5" fill="currentColor"/><path d="M9 17h6" stroke-linecap="round"/></svg>
     </button>
 
     <!-- Theme selector -->
@@ -1355,6 +1805,8 @@ body {
   <div class="ctx-item" data-action="browse"><span class="ico">&#x1F4C1;</span>Browse Files</div>
   <div class="ctx-item" data-action="broadcast"><span class="ico">&#x1F4E1;</span>Broadcast Command</div>
   <div class="ctx-item" data-action="port-forward"><span class="ico">&#x1F517;</span>Port Forward</div>
+  <div class="ctx-item" data-action="topology"><span class="ico">&#x1F5FA;</span>Network Topology</div>
+  <div class="ctx-item" data-action="clone"><span class="ico">&#x1F4CB;</span>Clone Instance</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" data-action="upload"><span class="ico">&#x2B06;</span>Upload File</div>
   <div class="ctx-item" data-action="download"><span class="ico">&#x2B07;</span>Download File</div>
@@ -1532,6 +1984,7 @@ body {
       <button class="settings-tab active" data-tab="general">General</button>
       <button class="settings-tab" data-tab="appearance">Appearance</button>
       <button class="settings-tab" data-tab="aws-accounts">AWS Accounts</button>
+      <button class="settings-tab" data-tab="ai-agent">AI Agent</button>
     </div>
 
     <!-- General Tab -->
@@ -1588,6 +2041,48 @@ body {
         <input id="awsAcctSessionToken" type="password" placeholder="Session Token (optional)" class="settings-input" style="margin-bottom:10px;">
         <button id="awsAcctAddBtn" class="settings-action-btn">Add Account</button>
       </div>
+    </div>
+
+    <!-- AI Agent Tab -->
+    <div class="settings-pane" id="settingsPane-ai-agent">
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">LLM Provider</div>
+      <select id="aiProviderSelect" class="settings-input" style="margin-bottom:12px;">
+        <option value="bedrock">AWS Bedrock</option>
+        <option value="anthropic">Anthropic API</option>
+        <option value="openai">OpenAI</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="ollama">Ollama (Local)</option>
+      </select>
+
+      <div id="aiBedrockFields">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Bedrock Region</div>
+        <input id="aiBedrockRegion" type="text" class="settings-input" placeholder="us-east-1" style="margin-bottom:8px;">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Bedrock Profile</div>
+        <input id="aiBedrockProfile" type="text" class="settings-input" placeholder="default" style="margin-bottom:12px;">
+      </div>
+      <div id="aiAnthropicFields" style="display:none;">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">API Key</div>
+        <input id="aiAnthropicKey" type="password" class="settings-input" placeholder="sk-ant-..." style="margin-bottom:12px;">
+      </div>
+      <div id="aiOpenAIFields" style="display:none;">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">API Key</div>
+        <input id="aiOpenAIKey" type="password" class="settings-input" placeholder="sk-..." style="margin-bottom:12px;">
+      </div>
+      <div id="aiGeminiFields" style="display:none;">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">API Key</div>
+        <input id="aiGeminiKey" type="password" class="settings-input" placeholder="AIza..." style="margin-bottom:12px;">
+      </div>
+      <div id="aiOllamaFields" style="display:none;">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Ollama URL</div>
+        <input id="aiOllamaUrl" type="text" class="settings-input" placeholder="http://localhost:11434" style="margin-bottom:12px;">
+      </div>
+
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Model</div>
+      <input id="aiModel" type="text" class="settings-input" placeholder="Model ID" style="margin-bottom:8px;">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:12px;" id="aiModelHint">e.g. us.anthropic.claude-opus-4-6-v1</div>
+
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Max Tokens</div>
+      <input id="aiMaxTokens" type="number" class="settings-input" value="4096" style="margin-bottom:12px;">
     </div>
 
     <!-- Footer buttons -->
@@ -1667,6 +2162,35 @@ body {
   </div>
 </div>
 
+<!-- CLONE INSTANCE MODAL (step 1: name) -->
+<div class="modal-bg" id="cloneNameModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-title">Clone Instance</div>
+    <div class="modal-x" onclick="document.getElementById('cloneNameModal').classList.remove('show')">&times;</div>
+    <div id="cloneSourceInfo" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+    <label style="font-size:11px;color:var(--dim);margin-bottom:4px;display:block;">Name for AMI and new instance</label>
+    <input id="cloneNameInput" type="text" placeholder="e.g. my-server-clone" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;margin-bottom:12px;">
+    <div style="display:flex;gap:8px;">
+      <button id="cloneStartBtn" style="flex:1;padding:8px;background:linear-gradient(135deg,rgba(251,191,36,.2),rgba(108,92,231,.15));border:1px solid rgba(251,191,36,.4);border-radius:7px;color:var(--orange);font-family:'Lato',sans-serif;font-size:12px;font-weight:600;cursor:pointer;">Start Clone</button>
+      <button class="modal-cancel" onclick="document.getElementById('cloneNameModal').classList.remove('show')" style="flex:1;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLONE INSTANCE MODAL (step 2: settings) -->
+<div class="modal-bg" id="cloneSettingsModal">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-title">Launch Clone</div>
+    <div class="modal-x" onclick="document.getElementById('cloneSettingsModal').classList.remove('show')">&times;</div>
+    <div id="cloneSettingsInfo" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+    <div id="cloneSettingsForm" style="display:grid;gap:10px;max-height:50vh;overflow-y:auto;"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button id="cloneLaunchBtn" style="flex:1;padding:8px;background:linear-gradient(135deg,rgba(61,220,132,.2),rgba(108,92,231,.15));border:1px solid rgba(61,220,132,.4);border-radius:7px;color:var(--ssh);font-family:'Lato',sans-serif;font-size:12px;font-weight:600;cursor:pointer;">Launch Instance</button>
+      <button class="modal-cancel" onclick="document.getElementById('cloneSettingsModal').classList.remove('show')" style="flex:1;">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ACTIVE TUNNELS PANEL -->
 <div class="transfer-panel" id="tunnelPanel">
   <div class="transfer-header" id="tunnelHeader">
@@ -1689,6 +2213,30 @@ body {
   <div class="transfer-body" id="transferBody"></div>
 </div>
 
+<!-- AI ASSISTANT PANEL -->
+<div id="aiPanel" class="ai-panel ai-hidden">
+  <div class="ai-resize-handle"></div>
+  <div class="ai-header">
+    <span>AI Assistant</span>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button id="aiClearBtn" class="ai-header-btn" title="Clear conversation">
+        <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+      <button id="aiCloseBtn" class="ai-header-btn" title="Close">&#x2715;</button>
+    </div>
+  </div>
+  <div id="aiMessages" class="ai-messages"></div>
+  <div id="aiApprovalBox" class="ai-approval ai-hidden"></div>
+  <div class="ai-input-area">
+    <div class="ai-input-bar">
+      <textarea id="aiInput" placeholder="Ask about your instances..." rows="1"></textarea>
+      <button id="aiSendBtn" class="ai-send-btn" title="Send">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
 
@@ -1699,6 +2247,9 @@ body {
 <script src="/static/vendor/xterm/xterm-addon-search.js"></script>
 <script src="/static/vendor/guacamole/guacamole-common.js"></script>
 <!-- Application -->
+<script src="/static/vendor/d3/d3.v7.min.js"></script>
+<script src="/static/js/aws-icons.js"></script>
+<script src="/static/js/topology.js"></script>
 <script src="/static/js/app.js"></script>
 <script>
 function closeModal(bg) {

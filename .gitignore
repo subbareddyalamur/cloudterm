@@ -24,3 +24,7 @@ Thumbs.db
 .cache/
 .sessionrecordings/
 .terminalexport/
+
+# Tests
+tests/node_modules/
+tests/test-results/

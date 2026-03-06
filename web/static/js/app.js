@@ -217,6 +217,12 @@ class WSManager {
         this.handlers[type].push(handler);
     }
 
+    off(type, handler) {
+        if (this.handlers[type]) {
+            this.handlers[type] = this.handlers[type].filter(h => h !== handler);
+        }
+    }
+
     disconnect() {
         this._intentionalClose = true;
         if (this._reconnectTimer) {
@@ -516,7 +522,7 @@ class TabManager {
         // Deactivate current.
         if (this.activeTab && this.tabs.has(this.activeTab)) {
             const prev = this.tabs.get(this.activeTab);
-            prev.element.classList.remove('active-ssh', 'active-rdp');
+            prev.element.classList.remove('active-ssh', 'active-rdp', 'active-topo');
             prev.panel.classList.remove('visible');
         }
 
@@ -525,7 +531,8 @@ class TabManager {
         if (welcome) welcome.classList.add('hidden');
 
         // Activate new.
-        info.element.classList.add(info.type === 'rdp' ? 'active-rdp' : 'active-ssh');
+        const activeClass = info.type === 'rdp' ? 'active-rdp' : info.type === 'topo' ? 'active-topo' : 'active-ssh';
+        info.element.classList.add(activeClass);
         info.panel.classList.add('visible');
         this.activeTab = id;
 
@@ -1109,10 +1116,61 @@ function showToast(msg, duration) {
 showToast._timer = null;
 
 // ---------------------------------------------------------------------------
+// Draggable Panels
+// ---------------------------------------------------------------------------
+
+function makePanelDraggable(panel, header) {
+    if (!panel || !header) return;
+    let startX, startY, startLeft, startTop, dragging = false, moved = false;
+
+    header.addEventListener('mousedown', (e) => {
+        // Don't drag on buttons
+        if (e.target.closest('button')) return;
+        dragging = true;
+        moved = false;
+        const rect = panel.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        panel.classList.add('dragged');
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+        if (!moved) return;
+        let newLeft = startLeft + dx;
+        let newTop = startTop + dy;
+        // Clamp within viewport
+        newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - panel.offsetWidth));
+        newTop = Math.max(0, Math.min(newTop, window.innerHeight - 40));
+        panel.style.left = newLeft + 'px';
+        panel.style.top = newTop + 'px';
+        panel.style.bottom = 'auto';
+        panel.style.right = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        panel.classList.remove('dragged');
+    });
+
+    // Suppress click (collapse toggle) if the user dragged
+    header.addEventListener('click', (e) => {
+        if (moved) { e.stopImmediatePropagation(); moved = false; }
+    }, true); // capture phase to run before collapse handler
+}
+
+// ---------------------------------------------------------------------------
 // RDP Credential Modal
 // ---------------------------------------------------------------------------
 
-function showRDPCredentialModal(instanceID, instanceName) {
+function showRDPCredentialModal(instanceID, instanceName, defaults) {
     return new Promise((resolve, reject) => {
         const bg = document.getElementById('rdpCredModalBg');
         // Build modal on the fly if it doesn't exist yet.
@@ -1126,11 +1184,21 @@ function showRDPCredentialModal(instanceID, instanceName) {
                 '<div style="margin-bottom:12px;font-size:11px;color:var(--muted);" id="rdpCredTarget"></div>' +
                 '<div style="margin-bottom:10px;">' +
                 '<input id="rdpUser" type="text" placeholder="Username (e.g. Administrator)" ' +
-                'style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;">' +
+                'style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;box-sizing:border-box;">' +
+                '</div>' +
+                '<div style="margin-bottom:10px;position:relative;">' +
+                '<input id="rdpPass" type="password" placeholder="Password" ' +
+                'style="width:100%;padding:8px 10px;padding-right:34px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;box-sizing:border-box;">' +
+                '<button id="rdpPassToggle" type="button" tabindex="-1" title="Show password" ' +
+                'style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;padding:2px;font-size:14px;line-height:1;">&#x1F441;</button>' +
                 '</div>' +
                 '<div style="margin-bottom:14px;">' +
-                '<input id="rdpPass" type="password" placeholder="Password" ' +
-                'style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;">' +
+                '<select id="rdpSecurity" style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;box-sizing:border-box;">' +
+                '<option value="any">Security: Auto (any)</option>' +
+                '<option value="nla">Security: NLA</option>' +
+                '<option value="tls">Security: TLS</option>' +
+                '<option value="rdp">Security: RDP</option>' +
+                '</select>' +
                 '</div>' +
                 '<label style="display:flex;align-items:center;gap:6px;margin-bottom:14px;cursor:pointer;font-size:11px;color:var(--muted);">' +
                 '<input id="rdpRecordChk" type="checkbox" style="accent-color:var(--red);cursor:pointer;">' +
@@ -1142,23 +1210,32 @@ function showRDPCredentialModal(instanceID, instanceName) {
                 '</div>' +
                 '</div>';
             document.body.appendChild(el);
+            document.getElementById('rdpPassToggle').addEventListener('click', () => {
+                const inp = document.getElementById('rdpPass');
+                const isHidden = inp.type === 'password';
+                inp.type = isHidden ? 'text' : 'password';
+                document.getElementById('rdpPassToggle').title = isHidden ? 'Hide password' : 'Show password';
+            });
         }
 
         const modal = document.getElementById('rdpCredModalBg');
         document.getElementById('rdpCredTarget').textContent = instanceName + ' (' + instanceID + ')';
-        document.getElementById('rdpUser').value = 'Administrator';
-        document.getElementById('rdpPass').value = '';
+        document.getElementById('rdpUser').value = (defaults && defaults.username) || 'Administrator';
+        document.getElementById('rdpPass').value = (defaults && defaults.password) || '';
+        document.getElementById('rdpPass').type = 'password';
+        if (defaults && defaults.security) document.getElementById('rdpSecurity').value = defaults.security;
         modal.classList.add('show');
 
         const cleanup = () => { modal.classList.remove('show'); };
 
-        document.getElementById('rdpRecordChk').checked = false;
+        document.getElementById('rdpRecordChk').checked = (defaults && defaults.record) || false;
         document.getElementById('rdpCredConnect').onclick = () => {
             const user = document.getElementById('rdpUser').value.trim();
             const pass = document.getElementById('rdpPass').value;
             const record = document.getElementById('rdpRecordChk').checked;
+            const security = document.getElementById('rdpSecurity').value;
             cleanup();
-            resolve({ username: user, password: pass, record: record });
+            resolve({ username: user, password: pass, record: record, security: security });
         };
 
         document.getElementById('rdpCredCancel').onclick = () => {
@@ -1224,6 +1301,8 @@ class TransferManager {
             e.stopPropagation();
             this.clearAll();
         });
+
+        makePanelDraggable(this._panel, document.getElementById('transferHeader'));
     }
 
     add(type, name) {
@@ -1238,7 +1317,7 @@ class TransferManager {
 
         const icon = document.createElement('span');
         icon.className = 'transfer-row-icon';
-        icon.textContent = type === 'upload' ? '\u2B06' : '\u2B07';
+        icon.textContent = type === 'upload' ? '\u2B06' : type === 'clone' ? '\uD83D\uDCCB' : '\u2B07';
 
         const nameEl = document.createElement('span');
         nameEl.className = 'transfer-row-name';
@@ -1321,9 +1400,246 @@ class TransferManager {
     }
 
     _autoRemove(id, delay) { setTimeout(() => this.remove(id), delay); }
-    _updateCount() { if (this._countEl) this._countEl.textContent = this._transfers.size; }
+    _updateCount() {
+        if (this._countEl) this._countEl.textContent = this._transfers.size;
+        const titleEl = this._panel?.querySelector('.transfer-header-title');
+        if (titleEl) {
+            const types = new Set([...this._transfers.values()].map(t => t.type));
+            if (types.size === 0) titleEl.textContent = 'Transfers';
+            else if (types.size === 1) {
+                const t = [...types][0];
+                titleEl.textContent = t === 'clone' ? 'Cloning' : t === 'upload' ? 'Uploads' : 'Downloads';
+            } else titleEl.textContent = 'Transfers';
+        }
+    }
     _show() { this._panel?.classList.add('visible'); }
     _hide() { this._panel?.classList.remove('visible'); }
+}
+
+// ---------------------------------------------------------------------------
+// Clone Manager — clone EC2 instances via AMI → launch flow
+// ---------------------------------------------------------------------------
+
+class CloneManager {
+    constructor(transfers) {
+        this._transfers = transfers;
+        this._activeClones = new Map(); // cloneID -> { transferID, pollInterval }
+    }
+
+    startClone(instanceID, instanceName) {
+        const modal = document.getElementById('cloneNameModal');
+        const info = document.getElementById('cloneSourceInfo');
+        const input = document.getElementById('cloneNameInput');
+        const btn = document.getElementById('cloneStartBtn');
+
+        if (info) info.textContent = 'Source: ' + instanceName + ' (' + instanceID + ')';
+        if (input) input.value = instanceName + '-clone';
+
+        // Clone button to remove old listeners
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+
+        newBtn.addEventListener('click', async () => {
+            const cloneName = input.value.trim();
+            if (!cloneName) { input.focus(); return; }
+
+            modal.classList.remove('show');
+
+            try {
+                const resp = await fetch('/clone/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: instanceID, clone_name: cloneName })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast('Clone failed: ' + (err.error || resp.statusText), 5000);
+                    return;
+                }
+                const data = await resp.json();
+                const cloneID = data.id;
+
+                // Add to transfer panel
+                const transferID = this._transfers.add('clone', 'Clone: ' + cloneName);
+                this._transfers.update(transferID, 10, 'Creating AMI (no reboot)...', 'active');
+
+                this._startPolling(cloneID, transferID, cloneName);
+            } catch (e) {
+                showToast('Clone error: ' + e.message, 5000);
+            }
+        });
+
+        modal.classList.add('show');
+        if (input) { input.select(); input.focus(); }
+    }
+
+    _startPolling(cloneID, transferID, cloneName) {
+        const interval = setInterval(async () => {
+            try {
+                const resp = await fetch('/clone/status/' + cloneID);
+                if (!resp.ok) {
+                    this._transfers.update(transferID, 0, 'Status check failed', 'error');
+                    clearInterval(interval);
+                    this._activeClones.delete(cloneID);
+                    return;
+                }
+                const status = await resp.json();
+
+                if (status.phase === 'error') {
+                    this._transfers.update(transferID, 100, status.message, 'error');
+                    clearInterval(interval);
+                    this._activeClones.delete(cloneID);
+                } else if (status.phase === 'ami_ready') {
+                    this._transfers.update(transferID, 90, 'AMI ready — configuring launch...', 'active');
+                    clearInterval(interval);
+                    this._activeClones.delete(cloneID);
+                    this._showSettingsModal(cloneID, cloneName, transferID);
+                } else if (status.phase === 'complete') {
+                    this._transfers.update(transferID, 100, status.message, 'complete');
+                    clearInterval(interval);
+                    this._activeClones.delete(cloneID);
+                } else {
+                    this._transfers.update(transferID, status.progress, status.message, 'active');
+                }
+            } catch (e) {
+                // Network error — keep polling
+            }
+        }, 15000);
+
+        this._activeClones.set(cloneID, { transferID, pollInterval: interval });
+    }
+
+    async _showSettingsModal(cloneID, cloneName, transferID) {
+        try {
+            const resp = await fetch('/clone/settings/' + cloneID);
+            if (!resp.ok) {
+                showToast('Failed to load clone settings', 5000);
+                return;
+            }
+            const s = await resp.json();
+
+            const modal = document.getElementById('cloneSettingsModal');
+            const info = document.getElementById('cloneSettingsInfo');
+            const form = document.getElementById('cloneSettingsForm');
+
+            if (info) info.textContent = 'Configure launch settings for: ' + cloneName;
+
+            const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            const inputStyle = 'width:100%;box-sizing:border-box;padding:6px 8px;background:var(--s3);border:1px solid var(--b1);border-radius:6px;color:var(--text);font-family:"JetBrains Mono",monospace;font-size:11px;outline:none;';
+            const labelStyle = 'font-size:11px;color:var(--dim);white-space:nowrap;';
+
+            let html = '';
+            // Instance Type
+            html += '<div style="display:grid;grid-template-columns:110px 1fr;align-items:center;gap:8px;">';
+            html += '<label style="' + labelStyle + '">Instance Type</label>';
+            html += '<input id="cloneInstanceType" type="text" value="' + esc(s.instance_type) + '" style="' + inputStyle + '">';
+            html += '</div>';
+
+            // Subnet
+            html += '<div style="display:grid;grid-template-columns:110px 1fr;align-items:center;gap:8px;">';
+            html += '<label style="' + labelStyle + '">Subnet</label>';
+            html += '<select id="cloneSubnet" style="' + inputStyle + '">';
+            for (const sub of (s.available_subnets || [])) {
+                const sel = sub.subnet_id === s.subnet_id ? ' selected' : '';
+                const label = (sub.name || sub.subnet_id) + ' (' + sub.az + ', ' + sub.cidr + ')';
+                html += '<option value="' + esc(sub.subnet_id) + '"' + sel + '>' + esc(label) + '</option>';
+            }
+            html += '</select></div>';
+
+            // Security Groups
+            html += '<div style="display:grid;grid-template-columns:110px 1fr;align-items:start;gap:8px;">';
+            html += '<label style="' + labelStyle + ';padding-top:4px;">Security Groups</label>';
+            html += '<div id="cloneSGs" style="max-height:100px;overflow-y:auto;border:1px solid var(--b1);border-radius:6px;padding:4px 6px;background:var(--s3);">';
+            for (const sg of (s.available_sgs || [])) {
+                const chk = (s.security_group_ids || []).includes(sg.group_id) ? ' checked' : '';
+                html += '<label style="display:block;font-size:11px;color:var(--text);cursor:pointer;"><input type="checkbox" value="' + esc(sg.group_id) + '"' + chk + ' style="margin-right:4px;"> ' + esc(sg.group_name) + ' (' + esc(sg.group_id) + ')</label>';
+            }
+            html += '</div></div>';
+
+            // Key Pair
+            html += '<div style="display:grid;grid-template-columns:110px 1fr;align-items:center;gap:8px;">';
+            html += '<label style="' + labelStyle + '">Key Pair</label>';
+            html += '<input id="cloneKeyPair" type="text" value="' + esc(s.key_name) + '" style="' + inputStyle + '">';
+            html += '</div>';
+
+            // IAM Profile
+            html += '<div style="display:grid;grid-template-columns:110px 1fr;align-items:center;gap:8px;">';
+            html += '<label style="' + labelStyle + '">IAM Profile</label>';
+            html += '<input id="cloneIAMProfile" type="text" value="' + esc(s.iam_profile) + '" style="' + inputStyle + '">';
+            html += '</div>';
+
+            // Name Tag
+            html += '<div style="display:grid;grid-template-columns:110px 1fr;align-items:center;gap:8px;">';
+            html += '<label style="' + labelStyle + '">Name Tag</label>';
+            html += '<input id="cloneNameTag" type="text" value="' + esc(s.tags && s.tags['Name'] || '') + '" style="' + inputStyle + '">';
+            html += '</div>';
+
+            form.innerHTML = html;
+
+            // Wire launch button
+            const btn = document.getElementById('cloneLaunchBtn');
+            const newBtn = btn.cloneNode(true);
+            btn.parentNode.replaceChild(newBtn, btn);
+
+            newBtn.addEventListener('click', () => this._launchClone(cloneID, s, transferID));
+
+            modal.classList.add('show');
+        } catch (e) {
+            showToast('Clone settings error: ' + e.message, 5000);
+        }
+    }
+
+    async _launchClone(cloneID, originalSettings, transferID) {
+        const modal = document.getElementById('cloneSettingsModal');
+
+        // Gather form values
+        const instanceType = document.getElementById('cloneInstanceType')?.value || originalSettings.instance_type;
+        const subnetID = document.getElementById('cloneSubnet')?.value || originalSettings.subnet_id;
+        const keyName = document.getElementById('cloneKeyPair')?.value || '';
+        const iamProfile = document.getElementById('cloneIAMProfile')?.value || '';
+        const nameTag = document.getElementById('cloneNameTag')?.value || '';
+
+        // Gather checked SGs
+        const sgCheckboxes = document.querySelectorAll('#cloneSGs input[type="checkbox"]:checked');
+        const securityGroupIDs = Array.from(sgCheckboxes).map(cb => cb.value);
+
+        // Build tags — copy original, override Name
+        const tags = Object.assign({}, originalSettings.tags || {});
+        if (nameTag) tags['Name'] = nameTag;
+
+        const settings = {
+            ami_id: originalSettings.ami_id,
+            instance_type: instanceType,
+            subnet_id: subnetID,
+            security_group_ids: securityGroupIDs,
+            key_name: keyName,
+            iam_profile: iamProfile,
+            tags: tags
+        };
+
+        modal.classList.remove('show');
+        this._transfers.update(transferID, 95, 'Launching instance...', 'active');
+
+        try {
+            const resp = await fetch('/clone/launch/' + cloneID, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            if (!resp.ok) {
+                const err = await resp.json();
+                this._transfers.update(transferID, 100, 'Launch failed: ' + (err.error || resp.statusText), 'error');
+                showToast('Clone launch failed: ' + (err.error || resp.statusText), 5000);
+                return;
+            }
+            const data = await resp.json();
+            this._transfers.update(transferID, 100, 'Launched: ' + data.instance_id, 'complete');
+            showToast('Instance cloned: ' + data.instance_id, 5000);
+        } catch (e) {
+            this._transfers.update(transferID, 100, 'Error: ' + e.message, 'error');
+            showToast('Clone launch error: ' + e.message, 5000);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1507,6 +1823,7 @@ class CloudTermApp {
         this.favorites = new FavoritesManager((id, name, type) => this.openSession(id, name, type));
         this.snippets = new SnippetsManager();
         this.transfers = new TransferManager();
+        this.cloneManager = new CloneManager(this.transfers);
         this.settings = new SettingsManager();
         this.splitManager = new SplitManager();
         this._sessionCounter = 0;
@@ -1525,6 +1842,7 @@ class CloudTermApp {
         try { this.envColorMap = JSON.parse(this.settings.get('env_color_map') || '{}'); } catch (_) { this.envColorMap = {}; }
         this.rdpMode = config.rdpMode || 'native';
         this.guacWSURL = config.guacWSURL || '';
+        this.aiChat = new AIChatManager(this);
     }
 
     init() {
@@ -1552,6 +1870,7 @@ class CloudTermApp {
         this._setupTunnelPanel();
         this._setupRecordingsButton();
         this._setupTabContextMenu();
+        this._setupAIToggle();
 
         // Wire up server preference sync callbacks
         this.favorites.onSave = () => this._pushPreferencesToServer();
@@ -1769,62 +2088,11 @@ class CloudTermApp {
 
     // -- RDP -----------------------------------------------------------------
 
-    async _startRDPSession(tabID, instanceID, instanceName) {
+    async _startRDPSession(tabID, instanceID, instanceName, defaults) {
         if (this.rdpMode === 'guacamole') {
             try {
-                const creds = await showRDPCredentialModal(instanceID, instanceName);
-                const inst = this.sidebar.getInstance(instanceID);
-
-                showToast('Starting Guacamole RDP session...');
-                const resp = await fetch('/start-guacamole-rdp', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        instance_id: instanceID,
-                        instance_name: instanceName,
-                        aws_profile: inst ? inst.aws_profile : '',
-                        aws_region: inst ? inst.aws_region : '',
-                        username: creds.username,
-                        password: creds.password,
-                        record: creds.record
-                    })
-                });
-
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    throw new Error(err.error || 'HTTP ' + resp.status);
-                }
-
-                const data = await resp.json();
-
-                // Show recording indicator on the RDP tab if recording.
-                if (data.recording) {
-                    const tab = document.querySelector('.tab[data-id="' + tabID + '"]');
-                    if (tab && !tab.querySelector('.tab-rec')) {
-                        const span = document.createElement('span');
-                        span.className = 'tab-rec';
-                        span.textContent = '\u25CF';
-                        span.title = 'Recording';
-                        tab.querySelector('.tab-name').after(span);
-                    }
-                }
-
-                // Place an iframe in the RDP panel.
-                const panel = document.getElementById('panel-' + tabID);
-                if (panel) {
-                    const viewport = panel.querySelector('.rdp-viewport');
-                    if (viewport) {
-                        viewport.innerHTML = '<iframe src="' + data.url + '" ' +
-                            'style="width:100%;height:100%;border:none;" ' +
-                            'allow="clipboard-read; clipboard-write"></iframe>';
-                        const rdpIframe = viewport.querySelector('iframe');
-                        if (rdpIframe) {
-                            rdpIframe.addEventListener('load', () => {
-                                rdpIframe.contentWindow.focus();
-                            });
-                        }
-                    }
-                }
+                const creds = await showRDPCredentialModal(instanceID, instanceName, defaults);
+                await this._connectGuacRDP(tabID, instanceID, instanceName, creds);
             } catch (e) {
                 if (e.message !== 'cancelled') {
                     showToast('RDP error: ' + e.message, 5000);
@@ -1863,6 +2131,77 @@ class CloudTermApp {
             } catch (e) {
                 showToast('RDP error: ' + e.message, 5000);
             }
+        }
+    }
+
+    async _connectGuacRDP(tabID, instanceID, instanceName, creds) {
+        const inst = this.sidebar.getInstance(instanceID);
+
+        showToast('Starting Guacamole RDP session...');
+        const resp = await fetch('/start-guacamole-rdp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                instance_id: instanceID,
+                instance_name: instanceName,
+                aws_profile: inst ? inst.aws_profile : '',
+                aws_region: inst ? inst.aws_region : '',
+                username: creds.username,
+                password: creds.password,
+                record: creds.record,
+                security: creds.security
+            })
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || 'HTTP ' + resp.status);
+        }
+
+        const data = await resp.json();
+
+        if (data.recording) {
+            const tab = document.querySelector('.tab[data-id="' + tabID + '"]');
+            if (tab && !tab.querySelector('.tab-rec')) {
+                const span = document.createElement('span');
+                span.className = 'tab-rec';
+                span.textContent = '\u25CF';
+                span.title = 'Recording';
+                tab.querySelector('.tab-name').after(span);
+            }
+        }
+
+        const panel = document.getElementById('panel-' + tabID);
+        if (panel) {
+            const viewport = panel.querySelector('.rdp-viewport');
+            if (viewport) {
+                viewport.innerHTML = '<iframe src="' + data.url + '" ' +
+                    'style="width:100%;height:100%;border:none;" ' +
+                    'allow="clipboard-read; clipboard-write"></iframe>';
+                const rdpIframe = viewport.querySelector('iframe');
+                if (rdpIframe) {
+                    rdpIframe.addEventListener('load', () => {
+                        rdpIframe.contentWindow.focus();
+                    });
+                }
+            }
+        }
+
+        // Store last creds for re-auth and listen for iframe re-auth requests
+        this._lastRDPCreds = this._lastRDPCreds || {};
+        this._lastRDPCreds[instanceID] = { tabID, creds };
+
+        // Set up postMessage listener (once per instance)
+        if (!this._rdpReauthListener) {
+            this._rdpReauthListener = true;
+            window.addEventListener('message', (e) => {
+                if (e.data && e.data.type === 'rdp-reauth' && e.data.instanceId) {
+                    const saved = this._lastRDPCreds && this._lastRDPCreds[e.data.instanceId];
+                    if (saved) {
+                        this._startRDPSession(saved.tabID, e.data.instanceId, e.data.instanceName, saved.creds);
+                    }
+                }
+            });
         }
     }
 
@@ -2038,6 +2377,7 @@ class CloudTermApp {
         this.currentPageTheme = name;
         try { localStorage.setItem('cloudterm_page_theme', name); } catch (e) {}
         this._pushPreferencesToServer();
+        document.dispatchEvent(new CustomEvent('cloudterm-theme-changed'));
 
         document.querySelectorAll('[data-page-theme]').forEach(el => {
             const isActive = el.dataset.pageTheme === name;
@@ -2111,6 +2451,19 @@ class CloudTermApp {
 
             // Re-render favorites section if data changed
             this._renderFavorites();
+
+            // Load AI settings into settings UI
+            if (prefs.aiProvider) this._aiPrefs = {
+                provider: prefs.aiProvider || 'bedrock',
+                model: prefs.aiModel || '',
+                bedrockRegion: prefs.aiBedrockRegion || 'us-east-1',
+                bedrockProfile: prefs.aiBedrockProfile || 'dev',
+                anthropicKey: prefs.aiAnthropicKey || '',
+                openaiKey: prefs.aiOpenAIKey || '',
+                geminiKey: prefs.aiGeminiKey || '',
+                ollamaUrl: prefs.aiOllamaUrl || 'http://localhost:11434',
+                maxTokens: prefs.aiMaxTokens || 4096
+            };
         } catch (e) {
             // Server unavailable — localStorage is the fallback
         }
@@ -2127,6 +2480,19 @@ class CloudTermApp {
                 env_colors_enabled: this.envColorsEnabled,
                 env_color_map: this.envColorMap
             };
+            // Include AI settings if present
+            const ai = this._aiPrefs;
+            if (ai) {
+                prefs.aiProvider = ai.provider;
+                prefs.aiModel = ai.model;
+                prefs.aiBedrockRegion = ai.bedrockRegion;
+                prefs.aiBedrockProfile = ai.bedrockProfile;
+                prefs.aiAnthropicKey = ai.anthropicKey;
+                prefs.aiOpenAIKey = ai.openaiKey;
+                prefs.aiGeminiKey = ai.geminiKey;
+                prefs.aiOllamaUrl = ai.ollamaUrl;
+                prefs.aiMaxTokens = ai.maxTokens;
+            }
             fetch('/preferences', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -2210,6 +2576,10 @@ class CloudTermApp {
                     this._showBroadcastModal(id);
                 } else if (text.includes('port forward')) {
                     this._showPortForwardModal(id, name);
+                } else if (text.includes('network topology')) {
+                    this._openTopologyTab(id, name);
+                } else if (text.includes('clone instance')) {
+                    this.cloneManager.startClone(id, name);
                 } else if (text.includes('close all')) {
                     this._closeSession(id);
                 }
@@ -2217,6 +2587,64 @@ class CloudTermApp {
                 menu.classList.remove('show');
             });
         });
+    }
+
+    // -- Topology Tab ---------------------------------------------------------
+
+    _openTopologyTab(instanceID, instanceName) {
+        const tabID = 'topo-' + instanceID;
+        // If tab already exists, switch to it
+        if (this.tabManager.tabs.has(tabID)) {
+            this.tabManager.switchTab(tabID);
+            return;
+        }
+
+        // Create the tab
+        const tab = document.createElement('div');
+        tab.className = 'tab';
+        tab.dataset.id = tabID;
+        tab.dataset.name = instanceName;
+        tab.dataset.type = 'topo';
+        tab.innerHTML =
+            '<span class="tab-type topo">TOPO</span> ' +
+            '<span class="tab-name">' + this.tabManager._escapeHTML(instanceName) + '</span>' +
+            ' <span class="tab-close">\u2715</span>';
+
+        tab.addEventListener('click', (e) => {
+            if (e.target.classList.contains('tab-close')) return;
+            this.tabManager.switchTab(tabID);
+        });
+        tab.querySelector('.tab-close').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.tabManager.closeTab(tabID);
+        });
+
+        const addBtn = this.tabManager.tabBar.querySelector('.tab-add');
+        if (addBtn) {
+            this.tabManager.tabBar.insertBefore(tab, addBtn);
+        } else {
+            this.tabManager.tabBar.appendChild(tab);
+        }
+
+        // Create the panel
+        const panel = document.createElement('div');
+        panel.id = 'panel-' + tabID;
+        panel.className = 'panel topo-panel';
+        this.tabManager.panels.appendChild(panel);
+
+        this.tabManager.tabs.set(tabID, {
+            type: 'topo',
+            name: instanceName,
+            instanceID: instanceID,
+            sessionID: tabID,
+            element: tab,
+            panel: panel
+        });
+
+        this.tabManager.switchTab(tabID);
+
+        // Initialize the topology renderer
+        new TopologyRenderer(panel.id, instanceID);
     }
 
     // -- Instance Details Modal -----------------------------------------------
@@ -2784,6 +3212,7 @@ class CloudTermApp {
             const envCheck = document.getElementById('settingsEnvColors');
             if (envCheck) envCheck.checked = this.envColorsEnabled;
             this._renderEnvColorList();
+            this._populateAISettings();
             modal?.classList.add('show');
         });
 
@@ -2829,12 +3258,70 @@ class CloudTermApp {
             this.settings.set('env_colors_enabled', this.envColorsEnabled ? 'true' : 'false');
             this.settings.set('env_color_map', JSON.stringify(this.envColorMap));
             this._applyEnvColorsToAll();
+
+            // Save AI settings
+            this._aiPrefs = {
+                provider: document.getElementById('aiProviderSelect')?.value || 'bedrock',
+                model: document.getElementById('aiModel')?.value || '',
+                bedrockRegion: document.getElementById('aiBedrockRegion')?.value || 'us-east-1',
+                bedrockProfile: document.getElementById('aiBedrockProfile')?.value || 'dev',
+                anthropicKey: document.getElementById('aiAnthropicKey')?.value || '',
+                openaiKey: document.getElementById('aiOpenAIKey')?.value || '',
+                geminiKey: document.getElementById('aiGeminiKey')?.value || '',
+                ollamaUrl: document.getElementById('aiOllamaUrl')?.value || 'http://localhost:11434',
+                maxTokens: parseInt(document.getElementById('aiMaxTokens')?.value, 10) || 4096
+            };
+            this._pushPreferencesToServer();
+
             document.getElementById('settingsModal')?.classList.remove('show');
             showToast('Settings saved');
         });
 
+        // AI provider dropdown — show/hide relevant fields
+        document.getElementById('aiProviderSelect')?.addEventListener('change', (e) => {
+            this._updateAIProviderFields(e.target.value);
+        });
+
         // AWS account add button
         document.getElementById('awsAcctAddBtn')?.addEventListener('click', () => this._addAWSAccount());
+    }
+
+    _updateAIProviderFields(provider) {
+        const fields = ['aiBedrockFields', 'aiAnthropicFields', 'aiOpenAIFields', 'aiGeminiFields', 'aiOllamaFields'];
+        fields.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        const hints = {
+            bedrock: 'e.g. us.anthropic.claude-opus-4-6-v1',
+            anthropic: 'e.g. claude-sonnet-4-20250514',
+            openai: 'e.g. gpt-4o',
+            gemini: 'e.g. gemini-2.0-flash',
+            ollama: 'e.g. llama3.1'
+        };
+        const map = { bedrock: 'aiBedrockFields', anthropic: 'aiAnthropicFields', openai: 'aiOpenAIFields', gemini: 'aiGeminiFields', ollama: 'aiOllamaFields' };
+        if (map[provider]) {
+            const el = document.getElementById(map[provider]);
+            if (el) el.style.display = '';
+        }
+        const hint = document.getElementById('aiModelHint');
+        if (hint) hint.textContent = hints[provider] || '';
+    }
+
+    _populateAISettings() {
+        const ai = this._aiPrefs || {};
+        const sel = document.getElementById('aiProviderSelect');
+        if (sel) sel.value = ai.provider || 'bedrock';
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+        set('aiModel', ai.model);
+        set('aiBedrockRegion', ai.bedrockRegion || 'us-east-1');
+        set('aiBedrockProfile', ai.bedrockProfile || 'dev');
+        set('aiAnthropicKey', ai.anthropicKey);
+        set('aiOpenAIKey', ai.openaiKey);
+        set('aiGeminiKey', ai.geminiKey);
+        set('aiOllamaUrl', ai.ollamaUrl || 'http://localhost:11434');
+        set('aiMaxTokens', ai.maxTokens || 4096);
+        this._updateAIProviderFields(ai.provider || 'bedrock');
     }
 
     _renderEnvColorList() {
@@ -3530,6 +4017,8 @@ class CloudTermApp {
             closeBtn.addEventListener('click', () => panel.classList.remove('visible'));
         }
 
+        makePanelDraggable(panel, header);
+
         // Poll for active tunnels every 10s
         this._loadActiveTunnels();
         setInterval(() => this._loadActiveTunnels(), 10000);
@@ -4193,6 +4682,11 @@ class CloudTermApp {
         this._setupBroadcastBar();
     }
 
+    _setupAIToggle() {
+        const btn = document.getElementById('aiToggleBtn');
+        if (btn) btn.addEventListener('click', () => this.aiChat.toggle());
+    }
+
     _toggleBroadcastBar() {
         const bar = document.getElementById('broadcastBar');
         if (!bar) return;
@@ -4567,6 +5061,434 @@ class CloudTermApp {
         if (this.tabManager.activeTab) {
             this.termManager.focusTerminal(this.tabManager.activeTab);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AI Chat Manager
+// ---------------------------------------------------------------------------
+
+class AIChatManager {
+    constructor(app) {
+        this.app = app;
+        this.panel = document.getElementById('aiPanel');
+        this.messagesEl = document.getElementById('aiMessages');
+        this.input = document.getElementById('aiInput');
+        this.sendBtn = document.getElementById('aiSendBtn');
+        this.approvalBox = document.getElementById('aiApprovalBox');
+        this.clearBtn = document.getElementById('aiClearBtn');
+        this.closeBtn = document.getElementById('aiCloseBtn');
+        this.conversationMessages = []; // full conversation history from server
+        this.pendingToolCall = null;
+        this.isStreaming = false;
+        this._panelWidth = 400;
+        this._setupEvents();
+        this._setupResize();
+    }
+
+    toggle() {
+        const isOpen = !this.panel.classList.contains('ai-hidden');
+        if (isOpen) {
+            this.panel.classList.add('ai-hidden');
+            document.body.classList.remove('ai-open');
+        } else {
+            this.panel.classList.remove('ai-hidden');
+            document.body.classList.add('ai-open');
+            this.input.focus();
+        }
+        // Refit terminals after layout change
+        setTimeout(() => this.app.termManager.resizeAll(), 250);
+    }
+
+    _setupEvents() {
+        this.sendBtn.addEventListener('click', () => this._onSend());
+        this.input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this._onSend();
+            }
+        });
+        // Auto-grow textarea
+        this.input.addEventListener('input', () => {
+            this.input.style.height = 'auto';
+            this.input.style.height = Math.min(this.input.scrollHeight, 100) + 'px';
+        });
+        this.clearBtn.addEventListener('click', () => this._clearConversation());
+        this.closeBtn.addEventListener('click', () => this.toggle());
+    }
+
+    _setupResize() {
+        const handle = this.panel.querySelector('.ai-resize-handle');
+        let startX, startW;
+        const onMove = (e) => {
+            const delta = startX - e.clientX;
+            const newW = Math.max(280, Math.min(window.innerWidth * 0.6, startW + delta));
+            this._panelWidth = newW;
+            this.panel.style.width = newW + 'px';
+            document.body.style.setProperty('--ai-panel-w', newW + 'px');
+            this.app.termManager.resizeAll();
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        };
+        handle.addEventListener('mousedown', (e) => {
+            startX = e.clientX;
+            startW = this.panel.offsetWidth;
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    _onSend() {
+        const text = this.input.value.trim();
+        if (!text || this.isStreaming) return;
+        this.input.value = '';
+        this.input.style.height = 'auto';
+
+        // Cancel pending approval if user sends a new message instead
+        if (this.pendingToolCall) {
+            this.pendingToolCall = null;
+            this._hideApproval();
+        }
+
+        this._addMessage('user', text);
+        this.conversationMessages.push({ role: 'user', content: text });
+        this._streamChat();
+    }
+
+    _streamChat() {
+        this.isStreaming = true;
+        this.sendBtn.disabled = true;
+
+        // Show typing indicator
+        this._showTyping();
+
+        // Get active instance ID from the currently selected tab
+        const activeInstanceId = this._getActiveInstanceId();
+
+        const body = JSON.stringify({
+            messages: this.conversationMessages,
+            active_instance_id: activeInstanceId || ''
+        });
+
+        let msgEl = null;
+        let assistantText = '';
+
+        fetch('/ai-agent/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body
+        }).then(response => {
+            if (!response.ok) {
+                return response.json().then(e => { throw new Error(e.error || 'Request failed'); });
+            }
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            const processChunk = ({ done, value }) => {
+                if (done) {
+                    this._hideTyping();
+                    this.isStreaming = false;
+                    this.sendBtn.disabled = false;
+                    return;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep incomplete line
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        switch (data.type) {
+                            case 'text':
+                                // Remove typing indicator on first text chunk
+                                if (!msgEl) {
+                                    this._hideTyping();
+                                    msgEl = this._addMessage('assistant', '');
+                                }
+                                assistantText += data.text;
+                                msgEl.innerHTML = this._renderMarkdown(assistantText);
+                                this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+                                break;
+                            case 'tool_call':
+                                if (!msgEl) {
+                                    this._hideTyping();
+                                    msgEl = this._addMessage('assistant', '');
+                                }
+                                this._showApproval(data.tool_call);
+                                break;
+                            case 'error':
+                                this._hideTyping();
+                                if (msgEl && !assistantText) msgEl.remove();
+                                this._addMessage('assistant', 'Error: ' + data.error);
+                                this.isStreaming = false;
+                                this.sendBtn.disabled = false;
+                                return;
+                            case 'done':
+                                this._hideTyping();
+                                if (data.messages) {
+                                    this.conversationMessages = data.messages;
+                                }
+                                this.isStreaming = false;
+                                this.sendBtn.disabled = false;
+                                return;
+                        }
+                    } catch (e) { /* skip unparseable lines */ }
+                }
+                return reader.read().then(processChunk);
+            };
+            return reader.read().then(processChunk);
+        }).catch(err => {
+            this._hideTyping();
+            this._addMessage('assistant', 'Error: ' + err.message);
+            this.isStreaming = false;
+            this.sendBtn.disabled = false;
+        });
+    }
+
+    _showApproval(toolCall) {
+        const args = typeof toolCall.arguments === 'string' ? JSON.parse(toolCall.arguments) : toolCall.arguments;
+        const cmd = args.command || '';
+        const instanceId = args.instance_id || '';
+        const destructive = this._isDestructive(cmd);
+
+        this.approvalBox.classList.remove('ai-hidden', 'destructive');
+        if (destructive) this.approvalBox.classList.add('destructive');
+
+        this.approvalBox.innerHTML = `
+            <div class="ai-approval-label">Command Approval</div>
+            <div class="ai-approval-cmd">${this._escapeHtml(cmd)}</div>
+            <div class="ai-approval-target">Target: ${this._escapeHtml(instanceId)}</div>
+            ${destructive ? '<div class="ai-approval-warn">BLOCKED: This command matches a destructive pattern and cannot be executed.</div>' : ''}
+            <div class="ai-approval-actions">
+                <button class="ai-approve-btn" id="aiApproveBtn" ${destructive ? 'disabled' : ''}>Approve</button>
+                <button class="ai-reject-btn" id="aiRejectBtn">Reject</button>
+            </div>
+        `;
+
+        this.pendingToolCall = toolCall;
+
+        document.getElementById('aiApproveBtn').addEventListener('click', () => this._approveCommand());
+        document.getElementById('aiRejectBtn').addEventListener('click', () => this._rejectCommand());
+    }
+
+    _approveCommand() {
+        if (!this.pendingToolCall) return;
+        const args = typeof this.pendingToolCall.arguments === 'string' ? JSON.parse(this.pendingToolCall.arguments) : this.pendingToolCall.arguments;
+        const cmd = args.command || '';
+        const instanceId = args.instance_id || '';
+
+        // Find active session for this instance
+        const sessionId = this._findSessionForInstance(instanceId);
+        if (!sessionId) {
+            this._addMessage('assistant', `No active SSH session for ${instanceId}. Open an SSH session first.`);
+            this._hideApproval();
+            this._addToolResult(this.pendingToolCall.id, 'Error: No active SSH session for this instance. The user needs to open an SSH session first.');
+            this._streamChat();
+            return;
+        }
+
+        this._hideApproval();
+        this._addMessage('assistant', `Executing: \`${cmd}\``);
+
+        // Type command into the terminal via WebSocket
+        this.app.ws.send('terminal_input', {
+            session_id: sessionId,
+            input: cmd + '\r'
+        });
+
+        // Capture output
+        this._captureOutput(sessionId).then(output => {
+            if (output) {
+                this._addMessage('assistant', '```\n' + output + '\n```');
+            }
+            this._addToolResult(this.pendingToolCall.id, output || '(no output captured)');
+            this.pendingToolCall = null;
+            this._streamChat();
+        });
+    }
+
+    _rejectCommand() {
+        this._hideApproval();
+        this._addMessage('assistant', 'Command rejected by user.');
+        this._addToolResult(this.pendingToolCall.id, 'Command rejected by user. Do not retry this command.');
+        this.pendingToolCall = null;
+        this._streamChat();
+    }
+
+    _addToolResult(toolCallId, result) {
+        this.conversationMessages.push({
+            role: 'tool',
+            content: result,
+            tool_call_id: toolCallId
+        });
+    }
+
+    _captureOutput(sessionId) {
+        return new Promise(resolve => {
+            let buffer = '';
+            let timer = null;
+            let maxTimer = null;
+            const promptPattern = /[$#>]\s*$|PS [A-Z]:\\.*>/;
+
+            const handler = (payload) => {
+                if (payload.session_id !== sessionId) return;
+                buffer += payload.output;
+
+                // Reset inactivity timer
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(() => {
+                    cleanup();
+                    resolve(buffer.trim());
+                }, 3000); // 3s of inactivity
+
+                // Check for prompt pattern
+                if (promptPattern.test(buffer)) {
+                    if (timer) clearTimeout(timer);
+                    // Small delay to catch any trailing output
+                    timer = setTimeout(() => {
+                        cleanup();
+                        resolve(buffer.trim());
+                    }, 500);
+                }
+            };
+
+            const cleanup = () => {
+                this.app.ws.off('terminal_output', handler);
+                if (maxTimer) clearTimeout(maxTimer);
+                if (timer) clearTimeout(timer);
+            };
+
+            this.app.ws.on('terminal_output', handler);
+
+            // Max timeout: 30s safety cutoff
+            maxTimer = setTimeout(() => {
+                cleanup();
+                resolve(buffer.trim());
+            }, 30000);
+        });
+    }
+
+    _findSessionForInstance(instanceId) {
+        // Check open tabs — tab IDs are like "i-0abc123-ssh-1"
+        const tabs = this.app.tabManager.tabs;
+        for (const [tabId] of tabs) {
+            if (tabId.includes(instanceId) && tabId.includes('ssh')) {
+                return tabId;
+            }
+        }
+        // Fallback: check if any active tab matches
+        const active = this.app.tabManager.activeTab;
+        if (active && active.includes(instanceId)) return active;
+        return null;
+    }
+
+    _getActiveInstanceId() {
+        const activeTab = this.app.tabManager.activeTab;
+        if (!activeTab) return '';
+        // Tab IDs are typically like "i-0abc123def-ssh" or similar
+        const match = activeTab.match(/i-[a-f0-9]+/);
+        return match ? match[0] : '';
+    }
+
+    _hideApproval() {
+        this.approvalBox.classList.add('ai-hidden');
+        this.approvalBox.innerHTML = '';
+    }
+
+    _addMessage(role, content) {
+        const div = document.createElement('div');
+        div.className = `ai-msg ${role}`;
+        div.innerHTML = role === 'user' ? this._escapeHtml(content) : this._renderMarkdown(content);
+        this.messagesEl.appendChild(div);
+        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+        return div;
+    }
+
+    _showTyping() {
+        this._hideTyping();
+        const div = document.createElement('div');
+        div.className = 'ai-typing-indicator';
+        div.innerHTML = '<span></span><span></span><span></span>';
+        this.messagesEl.appendChild(div);
+        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    }
+
+    _hideTyping() {
+        const el = this.messagesEl.querySelector('.ai-typing-indicator');
+        if (el) el.remove();
+    }
+
+    _clearConversation() {
+        this.conversationMessages = [];
+        this.messagesEl.innerHTML = '';
+        this._hideApproval();
+    }
+
+    _isDestructive(cmd) {
+        // Check each pipeline segment's leading command, not grep/awk arguments
+        const segments = cmd.split(/\s*\|\s*/);
+        const patterns = [
+            /\brm\s+(-[a-z]*f|-[a-z]*r|--force|--recursive)\b/i,
+            /\brm\s+-rf\b/i,
+            /\bmkfs\b/i,
+            /\bdd\s+.*of=\/dev\//i,
+            /:()\{\s*:\|:&\s*\};:/,
+            /^\s*shutdown\b/i,
+            /^\s*reboot\b/i,
+            /^\s*init\s+[06]\b/i,
+            /\bsystemctl\s+(stop|disable|mask)\b/i,
+            /\biptables\s+-F\b/i,
+            /\bchmod\s+-R\s+777\b/i,
+            /\bkill\s+-9\s+-1\b/i,
+            />\s*\/dev\/sda/i,
+            /^\s*format\b.*\b[cC]:\b/i,
+            /^\s*del\s+\/[sS]\b/i,
+            /\bStop-Computer\b/i,
+            /\bRestart-Computer\b/i,
+            /\bdrop\s+database\b/i,
+            /\btruncate\s+table\b/i,
+        ];
+        return segments.some(seg => patterns.some(p => p.test(seg)));
+    }
+
+    _renderMarkdown(text) {
+        if (!text) return '';
+        // Basic markdown rendering
+        let html = this._escapeHtml(text);
+        // Code blocks
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+        // Inline code
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // Headers (must be before bold)
+        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;">$1</h4>');
+        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 4px;font-size:14px;">$1</h3>');
+        html = html.replace(/^# (.+)$/gm, '<h2 style="margin:12px 0 6px;font-size:15px;">$1</h2>');
+        // Bold
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // Italic
+        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        // Bullet lists
+        html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+        // Numbered lists
+        html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+        // Newlines to <br> (outside of pre blocks)
+        html = html.replace(/\n/g, '<br>');
+        // Clean up double <br> inside pre
+        html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (m, code) => {
+            return '<pre><code>' + code.replace(/<br>/g, '\n') + '</code></pre>';
+        });
+        return html;
+    }
+
+    _escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 }
 

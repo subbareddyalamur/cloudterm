@@ -555,7 +555,8 @@
         <div class="error-title" id="error-title">Connection Failed</div>
         <div class="error-detail" id="error-detail">Unable to establish RDP connection.</div>
         <div class="error-actions">
-            <button class="btn-reconnect" onclick="reconnect()">Reconnect</button>
+            <button class="btn-reconnect" onclick="requestReauth()">Re-enter Credentials</button>
+            <button class="btn-reconnect" onclick="reconnect()" style="background:var(--s3);border-color:var(--b2);">Retry Same</button>
             <button class="btn-close" onclick="window.close()">Close</button>
         </div>
     </div>
@@ -629,6 +630,25 @@
             document.getElementById('error-title').textContent = title;
             document.getElementById('error-detail').textContent = detail;
             updateStatus('error', 'Disconnected');
+            // Notify parent frame about the error for re-authentication
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'rdp-error',
+                    instanceId: instanceId,
+                    instanceName: instanceName,
+                    error: detail
+                }, '*');
+            }
+        }
+
+        function requestReauth() {
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'rdp-reauth',
+                    instanceId: instanceId,
+                    instanceName: instanceName
+                }, '*');
+            }
         }
 
         function hideLoading() {
@@ -1013,6 +1033,7 @@
                 var KEY_RCTRL  = 0xFFE4;
                 var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
                 var metaHeld = false; // track whether Cmd is down
+                var asyncPasteInFlight = false; // Cmd+V handled async, skip keyup
 
                 // Map of keysyms that should be remapped from Cmd+key → Ctrl+key on Mac.
                 // Letters a-z (keysym 0x61-0x7a), plus common shortcuts.
@@ -1045,6 +1066,33 @@
                         if (metaHeld) {
                             if (shouldBlockWinKey(keysym)) return true; // swallow Win+L etc.
                             if (shouldRemapMeta(keysym)) {
+                                // Cmd+V: sync local clipboard → remote before pasting
+                                var keyLower = keysym | 0x20;
+                                if (keyLower === 0x76 && navigator.clipboard && navigator.clipboard.readText) {
+                                    asyncPasteInFlight = true;
+                                    navigator.clipboard.readText().then(function(text) {
+                                        if (text && guac) {
+                                            var stream = guac.createClipboardStream('text/plain');
+                                            var writer = new Guacamole.StringWriter(stream);
+                                            writer.sendText(text);
+                                            writer.sendEnd();
+                                        }
+                                        // Send Ctrl+V after clipboard data is queued
+                                        setTimeout(function() {
+                                            if (guac) {
+                                                guac.sendKeyEvent(1, KEY_LCTRL);
+                                                guac.sendKeyEvent(1, keysym);
+                                                guac.sendKeyEvent(0, keysym);
+                                                guac.sendKeyEvent(0, KEY_LCTRL);
+                                            }
+                                        }, 100);
+                                    }).catch(function() {
+                                        // Permission denied — fall through to normal Ctrl+V
+                                        guac.sendKeyEvent(1, KEY_LCTRL);
+                                        guac.sendKeyEvent(1, keysym);
+                                    });
+                                    return true;
+                                }
                                 // Send Ctrl+key instead of Win+key
                                 guac.sendKeyEvent(1, KEY_LCTRL);
                                 guac.sendKeyEvent(1, keysym);
@@ -1069,6 +1117,11 @@
                         }
 
                         if (metaHeld && shouldRemapMeta(keysym)) {
+                            // Async paste already sent its own key release
+                            if (asyncPasteInFlight && (keysym | 0x20) === 0x76) {
+                                asyncPasteInFlight = false;
+                                return;
+                            }
                             guac.sendKeyEvent(0, keysym);
                             guac.sendKeyEvent(0, KEY_LCTRL);
                             return;

@@ -22,6 +22,9 @@ type EC2Instance struct {
 	AMIID           string            `json:"ami_id,omitempty" yaml:"ami_id,omitempty"`
 	InstanceProfile string            `json:"instance_profile,omitempty" yaml:"instance_profile,omitempty"`
 	Tags            map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	VpcID           string            `json:"vpc_id,omitempty" yaml:"vpc_id,omitempty"`
+	SubnetID        string            `json:"subnet_id,omitempty" yaml:"subnet_id,omitempty"`
+	SecurityGroups  []string          `json:"security_groups,omitempty" yaml:"security_groups,omitempty"`
 }
 
 // InstanceTree is the 4-level hierarchy: Account → Region → Tag1 → Tag2 → Instances
@@ -149,6 +152,7 @@ type GuacamoleTokenRequest struct {
 	Username     string `json:"username"`
 	Password     string `json:"password"`
 	Record       bool   `json:"record"`
+	Security     string `json:"security"`
 }
 
 type GuacamoleTokenResponse struct {

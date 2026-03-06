@@ -27,6 +27,17 @@ type Config struct {
 	AWSAccountsFile     string
 	ConverterHost       string
 	ConverterPort       int
+	// AI Agent
+	AIProvider       string // "bedrock", "anthropic", "openai", "gemini", "ollama"
+	AIModel          string
+	AIBedrockRegion  string
+	AIBedrockProfile string
+	AIAnthropicKey   string
+	AIOpenAIKey      string
+	AIGeminiKey      string
+	AIOllamaURL      string
+	AIMaxTokens      int
+	AITemperature    float64
 }
 
 func Load() *Config {
@@ -52,6 +63,16 @@ func Load() *Config {
 		AWSAccountsFile:     envStr("AWS_ACCOUNTS_FILE", "aws_accounts.json"),
 		ConverterHost:       envStr("CONVERTER_HOST", "converter"),
 		ConverterPort:       envInt("CONVERTER_PORT", 5002),
+		AIProvider:       envStr("AI_PROVIDER", "bedrock"),
+		AIModel:          envStr("AI_MODEL", ""),
+		AIBedrockRegion:  envStr("AI_BEDROCK_REGION", "us-east-1"),
+		AIBedrockProfile: envStr("AI_BEDROCK_PROFILE", "dev"),
+		AIAnthropicKey:   envStr("AI_ANTHROPIC_KEY", ""),
+		AIOpenAIKey:      envStr("AI_OPENAI_KEY", ""),
+		AIGeminiKey:      envStr("AI_GEMINI_KEY", ""),
+		AIOllamaURL:      envStr("AI_OLLAMA_URL", "http://localhost:11434"),
+		AIMaxTokens:      envInt("AI_MAX_TOKENS", 4096),
+		AITemperature:    envFloat("AI_TEMPERATURE", 0.3),
 	}
 }
 
@@ -66,6 +87,15 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

@@ -41,7 +41,7 @@ func main() {
 	// Initialize AWS account store
 	accountStore := aws.NewAccountStore(cfg.AWSAccountsFile)
 
-	// Initialize HTTP/WS handler
+	// Initialize HTTP/WS handler (AI provider created per-request from settings)
 	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger, accountStore)
 
 	// Start background scanner

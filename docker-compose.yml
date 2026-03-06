@@ -27,6 +27,10 @@ services:
       - TERMINAL_EXPORT_DIR=/app/exports
       - AUTO_RECORD=false
       - AWS_ACCOUNTS_FILE=/app/cache/aws_accounts.json
+      - AI_PROVIDER=${AI_PROVIDER:-bedrock}
+      - AI_MODEL=${AI_MODEL:-}
+      - AI_BEDROCK_REGION=${AI_BEDROCK_REGION:-us-east-1}
+      - AI_BEDROCK_PROFILE=${AI_BEDROCK_PROFILE:-dev}
     depends_on:
       guacd:
         condition: service_started
@@ -46,6 +50,8 @@ services:
   guacd:
     image: guacamole/guacd:latest
     container_name: guacd
+    environment:
+      - GUACD_LOG_LEVEL=debug
     volumes:
       - ./.sessionrecordings:/app/recordings
     deploy:

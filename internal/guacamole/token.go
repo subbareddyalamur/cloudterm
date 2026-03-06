@@ -15,6 +15,7 @@ type ConnectionParams struct {
 	Port          string
 	Username      string
 	Password      string
+	Domain        string
 	Security      string
 	IgnoreCert    string
 	ResizeMethod  string
@@ -30,6 +31,7 @@ type connectionSettings struct {
 	Port          string `json:"port"`
 	Username      string `json:"username"`
 	Password      string `json:"password"`
+	Domain        string `json:"domain,omitempty"`
 	Security      string `json:"security"`
 	IgnoreCert    string `json:"ignore-cert"`
 	ResizeMethod  string `json:"resize-method"`
@@ -71,6 +73,7 @@ func GenerateToken(secret string, params ConnectionParams) (string, error) {
 				Port:          params.Port,
 				Username:      params.Username,
 				Password:      params.Password,
+				Domain:        params.Domain,
 				Security:      params.Security,
 				IgnoreCert:    params.IgnoreCert,
 				ResizeMethod:  params.ResizeMethod,

@@ -76,12 +76,16 @@ const clientOptions = {
 // Callback options for connection events
 const callbacks = {
     processConnectionSettings: (settings, callback) => {
-        console.log('[GuacLite] Processing connection settings:', JSON.stringify({
-            type: settings.connection?.type,
-            hostname: settings.connection?.settings?.hostname,
-            port: settings.connection?.settings?.port,
-            username: settings.connection?.settings?.username ? '***' : 'not set',
-            security: settings.connection?.settings?.security
+        // After mergeConnectionOptions(), settings.connection is the flat merged object
+        const conn = settings.connection || {};
+        console.log('[GuacLite] Merged connection settings:', JSON.stringify({
+            hostname: conn.hostname,
+            port: conn.port,
+            username: conn.username ? '***(' + conn.username.length + ' chars)' : 'MISSING',
+            password: conn.password ? '***(' + conn.password.length + ' chars)' : 'MISSING',
+            domain: conn.domain || '(not set)',
+            security: conn.security || '(not set)',
+            'ignore-cert': conn['ignore-cert']
         }, null, 2));
 
         callback(null, settings);

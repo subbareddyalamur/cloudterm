@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"cloudterm-go/internal/aws"
 	"cloudterm-go/internal/config"
 	"cloudterm-go/internal/guacamole"
+	"cloudterm-go/internal/llm"
 	"cloudterm-go/internal/session"
 	"cloudterm-go/internal/types"
 
@@ -32,16 +34,16 @@ import (
 
 // Handler serves HTTP and WebSocket requests for CloudTerm.
 type Handler struct {
-	cfg       *config.Config
-	discovery *aws.Discovery
-	sessions  *session.Manager
-	logger    *log.Logger
-	audit     *audit.Logger
-	accounts  *aws.AccountStore
-	upgrader  websocket.Upgrader
-	clients   map[*websocket.Conn][]string // conn -> session IDs
-	clientsMu sync.Mutex
-	templates *template.Template
+	cfg         *config.Config
+	discovery   *aws.Discovery
+	sessions    *session.Manager
+	logger      *log.Logger
+	audit       *audit.Logger
+	accounts    *aws.AccountStore
+	upgrader    websocket.Upgrader
+	clients     map[*websocket.Conn][]string // conn -> session IDs
+	clientsMu   sync.Mutex
+	templates   *template.Template
 }
 
 // New creates a Handler wired to the given dependencies.
@@ -122,6 +124,22 @@ func (h *Handler) Router() http.Handler {
 	// API — audit & metrics
 	mux.HandleFunc("GET /audit-log", h.handleAuditLog)
 	mux.HandleFunc("GET /instance-metrics", h.handleInstanceMetrics)
+
+	// AI Agent
+	mux.HandleFunc("POST /ai-agent/chat", h.handleAIChat)
+	mux.HandleFunc("GET /ai-agent/context", h.handleAIContext)
+
+	// Clone instance
+	mux.HandleFunc("POST /clone/start", h.handleCloneStart)
+	mux.HandleFunc("GET /clone/status/{id}", h.handleCloneStatus)
+	mux.HandleFunc("GET /clone/settings/{id}", h.handleCloneSettings)
+	mux.HandleFunc("POST /clone/launch/{id}", h.handleCloneLaunch)
+
+	// Topology & Reachability
+	mux.HandleFunc("GET /topology/{instanceId}", h.handleTopology)
+	mux.HandleFunc("POST /topology/deep-analyze", h.handleTopologyDeepAnalyze)
+	mux.HandleFunc("GET /topology/exposure/{instanceId}", h.handleTopologyExposure)
+	mux.HandleFunc("GET /topology/conflicts/{instanceId}", h.handleTopologyConflicts)
 
 	// API — user preferences
 	mux.HandleFunc("GET /preferences", h.handleGetPreferences)
@@ -260,13 +278,23 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Split ".\username" or "DOMAIN\username" into separate domain + username
+	// FreeRDP needs these as separate parameters for proper NLA/CredSSP auth.
+	rdpUsername := req.Username
+	rdpDomain := ""
+	if idx := strings.Index(req.Username, `\`); idx >= 0 {
+		rdpDomain = req.Username[:idx]
+		rdpUsername = req.Username[idx+1:]
+	}
+
 	// Generate encrypted Guacamole token
 	connParams := guacamole.ConnectionParams{
 		Hostname:     h.cfg.SSMForwarderHost,
 		Port:         fmt.Sprintf("%d", fwdResp.Port),
-		Username:     req.Username,
+		Username:     rdpUsername,
 		Password:     req.Password,
-		Security:     "nla",
+		Domain:       rdpDomain,
+		Security:     req.Security,
 		IgnoreCert:   "true",
 		ResizeMethod: "display-update",
 	}
@@ -1586,6 +1614,273 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 
 func (h *Handler) forwarderURL() string {
 	return fmt.Sprintf("http://%s:%d", h.cfg.SSMForwarderHost, h.cfg.SSMForwarderPort)
+}
+
+// ---------------------------------------------------------------------------
+// AI Agent
+// ---------------------------------------------------------------------------
+
+// getAIProvider builds an LLM provider from preferences (falling back to env/config).
+func (h *Handler) getAIProvider() (llm.Provider, error) {
+	// Read preferences for overrides
+	provider := h.cfg.AIProvider
+	model := h.cfg.AIModel
+	region := h.cfg.AIBedrockRegion
+	profile := h.cfg.AIBedrockProfile
+	anthropicKey := h.cfg.AIAnthropicKey
+	openaiKey := h.cfg.AIOpenAIKey
+	geminiKey := h.cfg.AIGeminiKey
+	ollamaURL := h.cfg.AIOllamaURL
+
+	if data, err := os.ReadFile(h.cfg.PreferencesFile); err == nil {
+		var prefs map[string]interface{}
+		if json.Unmarshal(data, &prefs) == nil {
+			if v, ok := prefs["aiProvider"].(string); ok && v != "" {
+				provider = v
+			}
+			if v, ok := prefs["aiModel"].(string); ok && v != "" {
+				model = v
+			}
+			if v, ok := prefs["aiBedrockRegion"].(string); ok && v != "" {
+				region = v
+			}
+			if v, ok := prefs["aiBedrockProfile"].(string); ok && v != "" {
+				profile = v
+			}
+			if v, ok := prefs["aiAnthropicKey"].(string); ok && v != "" {
+				anthropicKey = v
+			}
+			if v, ok := prefs["aiOpenAIKey"].(string); ok && v != "" {
+				openaiKey = v
+			}
+			if v, ok := prefs["aiGeminiKey"].(string); ok && v != "" {
+				geminiKey = v
+			}
+			if v, ok := prefs["aiOllamaUrl"].(string); ok && v != "" {
+				ollamaURL = v
+			}
+		}
+	}
+
+	if model == "" {
+		return nil, fmt.Errorf("AI model not configured. Go to Settings → AI Agent to set a model.")
+	}
+
+	switch provider {
+	case "bedrock":
+		return llm.NewBedrockProvider(region, profile, model, h.cfg.AITemperature)
+	case "anthropic":
+		return llm.NewAnthropicProvider(anthropicKey, model, h.cfg.AITemperature)
+	case "openai":
+		return llm.NewOpenAIProvider(openaiKey, model, h.cfg.AITemperature)
+	case "gemini":
+		return llm.NewGeminiProvider(geminiKey, model, h.cfg.AITemperature)
+	case "ollama":
+		return llm.NewOllamaProvider(ollamaURL, model, h.cfg.AITemperature)
+	default:
+		return nil, fmt.Errorf("unknown AI provider: %s", provider)
+	}
+}
+
+// handleAIChat streams an AI assistant response via SSE. Server-side networking
+// tools are executed transparently; run_command tool calls are forwarded to the
+// client for user approval.
+func (h *Handler) handleAIChat(w http.ResponseWriter, r *http.Request) {
+	provider, err := h.getAIProvider()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Messages         []llm.Message `json:"messages"`
+		ActiveInstanceID string        `json:"active_instance_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Set up SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Build system prompt with instance context
+	summaries := h.discovery.GetInstanceSummaries()
+	var instanceSummaries []llm.InstanceSummary
+	var activeSummary *llm.InstanceSummary
+	for _, s := range summaries {
+		is := llm.InstanceSummary{
+			InstanceID: s["instance_id"],
+			Name:       s["name"],
+			Platform:   s["platform"],
+			State:      s["state"],
+			PrivateIP:  s["private_ip"],
+			PublicIP:   s["public_ip"],
+			Region:     s["region"],
+		}
+		instanceSummaries = append(instanceSummaries, is)
+		if s["instance_id"] == req.ActiveInstanceID {
+			copy := is
+			activeSummary = &copy
+		}
+	}
+	system := llm.BuildSystemPrompt(instanceSummaries, activeSummary)
+	messages := sanitizeToolMessages(req.Messages)
+
+	// Tool execution loop — server handles networking tools, client handles run_command
+	const maxIterations = 10
+	for i := 0; i < maxIterations; i++ {
+		ch, err := provider.ChatStream(r.Context(), system, messages, llm.AgentTools, h.cfg.AIMaxTokens)
+		if err != nil {
+			h.writeSSE(w, flusher, map[string]interface{}{"type": "error", "error": err.Error()})
+			return
+		}
+
+		var assistantText strings.Builder
+		var toolCalls []llm.ToolCall
+
+		for chunk := range ch {
+			switch chunk.Type {
+			case "text":
+				assistantText.WriteString(chunk.Text)
+				h.writeSSE(w, flusher, map[string]interface{}{"type": "text", "text": chunk.Text})
+			case "tool_call":
+				toolCalls = append(toolCalls, *chunk.ToolCall)
+			case "error":
+				h.writeSSE(w, flusher, map[string]interface{}{"type": "error", "error": chunk.Error})
+				return
+			}
+		}
+
+		// No tool calls — conversation turn complete
+		if len(toolCalls) == 0 {
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: assistantText.String(),
+			})
+			h.writeSSE(w, flusher, map[string]interface{}{"type": "done", "messages": messages})
+			return
+		}
+
+		// Build assistant message with all tool calls
+		assistantMsg := llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   assistantText.String(),
+			ToolCalls: toolCalls,
+		}
+		messages = append(messages, assistantMsg)
+
+		// Execute tool calls
+		hasRunCommand := false
+		for _, tc := range toolCalls {
+			if tc.Name == "run_command" {
+				hasRunCommand = true
+				tcCopy := tc
+				h.writeSSE(w, flusher, map[string]interface{}{"type": "tool_call", "tool_call": &tcCopy})
+				continue
+			}
+
+			// Server-side networking tool — execute and add result
+			result := h.executeNetworkingTool(r.Context(), tc)
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    result,
+				ToolCallID: tc.ID,
+			})
+		}
+
+		if hasRunCommand {
+			// Client handles run_command — send current messages so it can continue
+			h.writeSSE(w, flusher, map[string]interface{}{"type": "done", "messages": messages})
+			return
+		}
+		// All tools were server-side — loop back to re-prompt LLM
+	}
+
+	h.writeSSE(w, flusher, map[string]interface{}{"type": "error", "error": "too many tool iterations"})
+}
+
+// writeSSE writes a single SSE data event.
+func (h *Handler) writeSSE(w http.ResponseWriter, flusher http.Flusher, data interface{}) {
+	b, _ := json.Marshal(data)
+	fmt.Fprintf(w, "data: %s\n\n", b)
+	flusher.Flush()
+}
+
+// executeNetworkingTool dispatches a server-side networking tool call.
+func (h *Handler) executeNetworkingTool(ctx context.Context, tc llm.ToolCall) string {
+	var args struct {
+		InstanceID string `json:"instance_id"`
+	}
+	json.Unmarshal(tc.Arguments, &args)
+
+	var result string
+	var err error
+	switch tc.Name {
+	case "describe_security_groups":
+		result, err = h.discovery.DescribeSecurityGroups(ctx, args.InstanceID)
+	case "describe_network_acls":
+		result, err = h.discovery.DescribeNetworkACLs(ctx, args.InstanceID)
+	case "describe_route_tables":
+		result, err = h.discovery.DescribeRouteTables(ctx, args.InstanceID)
+	case "describe_load_balancers":
+		result, err = h.discovery.DescribeLoadBalancers(ctx, args.InstanceID)
+	case "describe_instance":
+		result, err = h.discovery.DescribeInstance(args.InstanceID)
+	default:
+		return fmt.Sprintf("unknown tool: %s", tc.Name)
+	}
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return result
+}
+
+// handleAIContext returns current instance summaries for the AI agent.
+// sanitizeToolMessages ensures every assistant tool_use has a matching tool_result.
+// Bedrock requires tool_result blocks immediately after any tool_use.
+// If the user sends a new message before completing tool approval, dangling
+// tool_use blocks cause a validation error. We add synthetic "cancelled" results.
+func sanitizeToolMessages(msgs []llm.Message) []llm.Message {
+	result := make([]llm.Message, 0, len(msgs))
+	for i, msg := range msgs {
+		result = append(result, msg)
+		if msg.Role != llm.RoleAssistant || len(msg.ToolCalls) == 0 {
+			continue
+		}
+		// Collect tool_result IDs in the messages immediately following this assistant message
+		answered := make(map[string]bool)
+		for j := i + 1; j < len(msgs); j++ {
+			if msgs[j].Role == llm.RoleTool && msgs[j].ToolCallID != "" {
+				answered[msgs[j].ToolCallID] = true
+			} else {
+				break // stop at first non-tool message
+			}
+		}
+		// Add synthetic results for any unanswered tool calls
+		for _, tc := range msg.ToolCalls {
+			if !answered[tc.ID] {
+				result = append(result, llm.Message{
+					Role:       llm.RoleTool,
+					Content:    "Command was not executed — the user moved on without approving.",
+					ToolCallID: tc.ID,
+				})
+			}
+		}
+	}
+	return result
+}
+
+func (h *Handler) handleAIContext(w http.ResponseWriter, r *http.Request) {
+	summaries := h.discovery.GetInstanceSummaries()
+	jsonResponse(w, summaries)
 }
 
 // ---------------------------------------------------------------------------
