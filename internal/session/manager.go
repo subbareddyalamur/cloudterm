@@ -29,6 +29,12 @@ func stripANSI(data []byte) []byte {
 
 const maxOutputBuf = 5 * 1024 * 1024 // 5 MB output buffer per session
 
+// ssmKeepaliveInterval is how often we check whether an SSM session has been
+// idle. If no user input has been received for this duration, a null byte is
+// written to the PTY so that AWS SSM does not consider the session idle and
+// terminate it (default SSM idle timeout is 20 min).
+const ssmKeepaliveInterval = 5 * time.Minute
+
 // SSMSession represents a single SSM terminal session backed by a PTY.
 type SSMSession struct {
 	InstanceID   string
@@ -40,6 +46,7 @@ type SSMSession struct {
 	onOutput   func([]byte)
 	outputBuf  bytes.Buffer
 	recorder   *Recorder
+	lastInput  time.Time // last time user sent input
 	mu         sync.Mutex
 }
 
@@ -113,6 +120,7 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 		ptmx:         ptmx,
 		done:         make(chan struct{}),
 		onOutput:     onOutput,
+		lastInput:    time.Now(),
 	}
 
 	// Auto-start recording if enabled.
@@ -131,6 +139,7 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 	m.mu.Unlock()
 
 	go s.readLoop(m.logger)
+	go s.ssmKeepalive(m.logger)
 
 	m.logger.Printf("session %s started for instance %s", sessionID, instanceID)
 	return nil
@@ -150,6 +159,7 @@ func (m *Manager) WriteInput(sessionID string, data []byte) error {
 		return fmt.Errorf("session %s pty closed", sessionID)
 	}
 
+	s.lastInput = time.Now()
 	_, err := s.ptmx.Write(data)
 	return err
 }
@@ -302,6 +312,32 @@ func (m *Manager) CloseSessionsForClient(sessionIDs []string) {
 	for _, id := range sessionIDs {
 		if err := m.CloseSession(id); err != nil {
 			m.logger.Printf("close session %s: %v", id, err)
+		}
+	}
+}
+
+// ssmKeepalive periodically sends a null byte to the PTY when the session has
+// been idle, preventing AWS SSM from hitting its idle-session timeout.
+func (s *SSMSession) ssmKeepalive(logger *log.Logger) {
+	ticker := time.NewTicker(ssmKeepaliveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			idle := time.Since(s.lastInput) >= ssmKeepaliveInterval
+			ptmx := s.ptmx
+			s.mu.Unlock()
+
+			if idle && ptmx != nil {
+				if _, err := ptmx.Write([]byte{0}); err != nil {
+					logger.Printf("session %s ssm keepalive write failed: %v", s.SessionID, err)
+					return
+				}
+			}
+		case <-s.done:
+			return
 		}
 	}
 }

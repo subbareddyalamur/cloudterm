@@ -1201,10 +1201,13 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
-	// Keepalive: send WebSocket pings every 30s; expect pong within 60s.
-	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	// Keepalive: send WebSocket pings every 30s; tolerate up to 5 min of
+	// silence so that background-tab throttling or brief network blips
+	// don't kill long-running sessions.
+	const wsReadDeadline = 5 * time.Minute
+	conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
 		return nil
 	})
 
@@ -1236,7 +1239,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Any message from client resets the read deadline.
-		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
 
 		var msg types.WSMessage
 		if err := json.Unmarshal(message, &msg); err != nil {

@@ -256,12 +256,36 @@ class WSManager {
 
     _startKeepalive() {
         this._stopKeepalive();
-        this._keepaliveTimer = setInterval(() => {
-            this.send('keepalive', {});
-        }, 30000);
+        // Use a Web Worker so keepalives survive browser tab throttling.
+        // Browsers throttle setInterval to ≥1 min in background tabs, which
+        // would cause the server's 90 s read-deadline to expire.
+        try {
+            const blob = new Blob([
+                'var iv;',
+                'onmessage=function(e){',
+                '  if(e.data==="start"){clearInterval(iv);iv=setInterval(function(){postMessage("ping")},25000);}',
+                '  if(e.data==="stop"){clearInterval(iv);}',
+                '};'
+            ], { type: 'application/javascript' });
+            this._keepaliveWorker = new Worker(URL.createObjectURL(blob));
+            this._keepaliveWorker.onmessage = () => {
+                this.send('keepalive', {});
+            };
+            this._keepaliveWorker.postMessage('start');
+        } catch (_) {
+            // Fallback for environments without Worker support.
+            this._keepaliveTimer = setInterval(() => {
+                this.send('keepalive', {});
+            }, 25000);
+        }
     }
 
     _stopKeepalive() {
+        if (this._keepaliveWorker) {
+            this._keepaliveWorker.postMessage('stop');
+            this._keepaliveWorker.terminate();
+            this._keepaliveWorker = null;
+        }
         if (this._keepaliveTimer) {
             clearInterval(this._keepaliveTimer);
             this._keepaliveTimer = null;
