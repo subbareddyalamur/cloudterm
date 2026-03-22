@@ -467,3 +467,152 @@ func (d *Discovery) GetInstanceSummaries() []map[string]string {
 	}
 	return out
 }
+
+func (d *Discovery) GetInstanceDetails(ctx context.Context, instanceID string) (*types.EC2InstanceDetails, error) {
+	inst, err := d.findCachedInstance(instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := d.ec2ClientForInstance(ctx, inst)
+	if err != nil {
+		return nil, err
+	}
+
+	descOut, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describe instances: %w", err)
+	}
+
+	details := &types.EC2InstanceDetails{EC2Instance: *inst}
+
+	if len(descOut.Reservations) > 0 && len(descOut.Reservations[0].Instances) > 0 {
+		live := descOut.Reservations[0].Instances[0]
+		details.KeyName = aws.ToString(live.KeyName)
+		details.Architecture = string(live.Architecture)
+		details.RootDeviceName = aws.ToString(live.RootDeviceName)
+		details.RootDeviceType = string(live.RootDeviceType)
+		details.VirtualizationType = string(live.VirtualizationType)
+		details.Hypervisor = string(live.Hypervisor)
+		details.EnaSupport = live.EnaSupport != nil && *live.EnaSupport
+		details.EBSOptimized = live.EbsOptimized != nil && *live.EbsOptimized
+		details.SourceDestCheck = live.SourceDestCheck != nil && *live.SourceDestCheck
+		details.PrivateDNS = aws.ToString(live.PrivateDnsName)
+		details.PublicDNS = aws.ToString(live.PublicDnsName)
+		details.AvailabilityZone = ""
+		details.Tenancy = ""
+		details.Monitoring = ""
+		if live.Placement != nil {
+			details.AvailabilityZone = aws.ToString(live.Placement.AvailabilityZone)
+			details.Tenancy = string(live.Placement.Tenancy)
+		}
+		if live.Monitoring != nil {
+			details.Monitoring = string(live.Monitoring.State)
+		}
+
+		for _, bdm := range live.BlockDeviceMappings {
+			bd := types.BlockDeviceInfo{
+				DeviceName: aws.ToString(bdm.DeviceName),
+			}
+			if bdm.Ebs != nil {
+				bd.VolumeID = aws.ToString(bdm.Ebs.VolumeId)
+				bd.DeleteOnTermination = bdm.Ebs.DeleteOnTermination != nil && *bdm.Ebs.DeleteOnTermination
+			}
+			details.BlockDevices = append(details.BlockDevices, bd)
+		}
+
+		for _, eni := range live.NetworkInterfaces {
+			ni := types.NetworkIfaceInfo{
+				InterfaceID: aws.ToString(eni.NetworkInterfaceId),
+				SubnetID:    aws.ToString(eni.SubnetId),
+				PrivateIP:   aws.ToString(eni.PrivateIpAddress),
+				MacAddress:  aws.ToString(eni.MacAddress),
+				Status:      string(eni.Status),
+			}
+			if eni.Association != nil {
+				ni.PublicIP = aws.ToString(eni.Association.PublicIp)
+			}
+			details.NetworkInterfaces = append(details.NetworkInterfaces, ni)
+		}
+	}
+
+	if len(inst.SecurityGroups) > 0 {
+		sgOut, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+			GroupIds: inst.SecurityGroups,
+		})
+		if err == nil {
+			for _, sg := range sgOut.SecurityGroups {
+				sgi := types.SecurityGroupInfo{
+					GroupID:     aws.ToString(sg.GroupId),
+					GroupName:   aws.ToString(sg.GroupName),
+					Description: aws.ToString(sg.Description),
+				}
+				for _, perm := range sg.IpPermissions {
+					for _, ipRange := range perm.IpRanges {
+						sgi.InboundRules = append(sgi.InboundRules, types.SGRule{
+							Protocol:    aws.ToString(perm.IpProtocol),
+							FromPort:    aws.ToInt32(perm.FromPort),
+							ToPort:      aws.ToInt32(perm.ToPort),
+							Source:      aws.ToString(ipRange.CidrIp),
+							Description: aws.ToString(ipRange.Description),
+						})
+					}
+					for _, sg2 := range perm.UserIdGroupPairs {
+						sgi.InboundRules = append(sgi.InboundRules, types.SGRule{
+							Protocol:    aws.ToString(perm.IpProtocol),
+							FromPort:    aws.ToInt32(perm.FromPort),
+							ToPort:      aws.ToInt32(perm.ToPort),
+							Source:      aws.ToString(sg2.GroupId),
+							Description: aws.ToString(sg2.Description),
+						})
+					}
+				}
+				for _, perm := range sg.IpPermissionsEgress {
+					for _, ipRange := range perm.IpRanges {
+						sgi.OutboundRules = append(sgi.OutboundRules, types.SGRule{
+							Protocol:    aws.ToString(perm.IpProtocol),
+							FromPort:    aws.ToInt32(perm.FromPort),
+							ToPort:      aws.ToInt32(perm.ToPort),
+							Source:      aws.ToString(ipRange.CidrIp),
+							Description: aws.ToString(ipRange.Description),
+						})
+					}
+				}
+				details.SecurityGroupDetails = append(details.SecurityGroupDetails, sgi)
+			}
+		}
+	}
+
+	if len(details.BlockDevices) > 0 {
+		var volIDs []string
+		for _, bd := range details.BlockDevices {
+			if bd.VolumeID != "" {
+				volIDs = append(volIDs, bd.VolumeID)
+			}
+		}
+		if len(volIDs) > 0 {
+			volOut, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+				VolumeIds: volIDs,
+			})
+			if err == nil {
+				volMap := make(map[string]ec2types.Volume)
+				for _, v := range volOut.Volumes {
+					volMap[aws.ToString(v.VolumeId)] = v
+				}
+				for i := range details.BlockDevices {
+					if vol, ok := volMap[details.BlockDevices[i].VolumeID]; ok {
+						details.BlockDevices[i].VolumeSize = aws.ToInt32(vol.Size)
+						details.BlockDevices[i].VolumeType = string(vol.VolumeType)
+						details.BlockDevices[i].IOPS = aws.ToInt32(vol.Iops)
+						details.BlockDevices[i].Encrypted = aws.ToBool(vol.Encrypted)
+						details.BlockDevices[i].KMSKeyID = aws.ToString(vol.KmsKeyId)
+					}
+				}
+			}
+		}
+	}
+
+	return details, nil
+}

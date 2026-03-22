@@ -15,6 +15,8 @@ import (
 	"cloudterm-go/internal/config"
 	"cloudterm-go/internal/handlers"
 	"cloudterm-go/internal/session"
+	"cloudterm-go/internal/suggest"
+	"cloudterm-go/internal/vault"
 )
 
 func main() {
@@ -41,8 +43,32 @@ func main() {
 	// Initialize AWS account store
 	accountStore := aws.NewAccountStore(cfg.AWSAccountsFile)
 
-	// Initialize HTTP/WS handler (AI provider created per-request from settings)
-	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger, accountStore)
+	var encKey []byte
+	if cfg.SuggestEncryptionKey != "" {
+		encKey = []byte(cfg.SuggestEncryptionKey)
+		if len(encKey) < 32 {
+			padded := make([]byte, 32)
+			copy(padded, encKey)
+			encKey = padded
+		} else if len(encKey) > 32 {
+			encKey = encKey[:32]
+		}
+	}
+	suggestEngine, err := suggest.New(suggest.Config{
+		Enabled:       cfg.SuggestEnabled,
+		DataDir:       cfg.SuggestDataDir,
+		EncryptionKey: encKey,
+	})
+	if err != nil {
+		logger.Printf("warning: suggest engine init failed: %v", err)
+	}
+
+	vaultStore, err := vault.Open(cfg.SuggestDataDir, encKey)
+	if err != nil {
+		logger.Printf("warning: vault init failed: %v", err)
+	}
+
+	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger, accountStore, suggestEngine, vaultStore)
 
 	// Start background scanner
 	ctx, cancel := context.WithCancel(context.Background())
@@ -76,7 +102,13 @@ func main() {
 	defer shutdownCancel()
 
 	sessionMgr.CloseAll()
-	cancel() // stop background scanner
+	if suggestEngine != nil {
+		suggestEngine.Close()
+	}
+	if vaultStore != nil {
+		vaultStore.Close()
+	}
+	cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Printf("Shutdown error: %v", err)

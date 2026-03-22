@@ -25,8 +25,10 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - Interactive terminal sessions via `aws ssm start-session` — no SSH keys needed
 - Full xterm.js emulation with resize, scroll, Ctrl+C interrupt
 - Multiple concurrent sessions as tabbed panels
+- **Terminal title bar** with action buttons: Suggest, Details, Export, Record, Split, Fullscreen, End
 - Zoom controls and configurable terminal font size
-- Multiple terminal color themes (GitHub Dark, Nord, Dracula, Monokai, Catppuccin, Warp, etc.)
+- Multiple terminal color themes (GitHub Dark, Nord, Dracula, Monokai, Catppuccin, Railway, Replit, Raycast, Unify, etc.)
+- **Multi-term sidebar search**: type space-separated terms (e.g., `syc23 windows`) to filter instances matching ALL terms
 
 ![SSH Terminal Session](docs/screenshots/ssh-session.png)
 
@@ -34,15 +36,18 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - Browser-based RDP via Apache Guacamole integration
 - SSM port forwarding — no public IPs or open RDP ports required
 - Resolution selector and fullscreen mode
-- Clipboard sync between local and remote
+- **Clipboard sync**: Cmd+C/V/X (Mac) and Ctrl+C/V/X (Windows/Linux) work seamlessly between host and remote
 - Mac Cmd-to-Ctrl key remapping (Cmd+C/V/A work as Ctrl+C/V/A in Windows)
+- Local clipboard auto-synced to remote on focus/click — paste works on first try
+- Remote clipboard auto-copied to local system clipboard via postMessage bridge
 - Auto-reconnect on transient connection drops with exponential backoff
 - RDP sessions appear as tabs alongside SSH sessions
+- **Credential Vault**: auto-connect with saved credentials (see below)
 
 ![RDP Session](docs/screenshots/rdp-session.png)
 
 ### Session Recording & Playback
-- **SSH recording**: Toggle recording on any SSH session — captures terminal output in `.cast` (asciicast v2) format
+- **SSH recording**: Toggle recording from the terminal title bar — captures terminal output in `.cast` (asciicast v2) format
 - **RDP recording**: Server-side recording of Guacamole sessions in `.guac` format
 - **Recordings browser**: List, play, convert, download, and delete recordings from a dedicated modal
 - **Recording toggle**: Click the record button in the status bar to start/stop — synced with server state
@@ -157,48 +162,119 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 - One-click to connect, persisted across sessions
 - Toggle from the context menu or directly in the sidebar
 
+### AI Assistant
+- Context-aware AI chat panel for AWS operations and diagnostics
+- **Multi-provider support**: AWS Bedrock (default), Anthropic, OpenAI, Google Gemini, and local Ollama
+- AI has full awareness of your fleet — all instances, IPs, states, and the active session
+- **Tool use**: AI can query security groups, NACLs, route tables, load balancers, and instance details autonomously
+- **Run commands on instances**: AI proposes commands, you approve or reject before execution — output is captured and fed back to the AI for follow-up analysis
+- **Safety guardrails**: destructive commands (`rm -rf`, `shutdown`, `reboot`, `drop database`, etc.) are detected and blocked in both frontend and backend
+- Streaming responses via Server-Sent Events with markdown rendering
+- Conversation history maintained per session
+- Configurable model, temperature, and max tokens via environment variables or Settings UI
+
+### Terminal Intelligence Engine
+- **Embedded, self-learning** autocomplete and error analysis — no external model or API required
+- **Ghost text suggestions**: dim inline text appears as you type, like fish shell
+  - **Tab**: accept full suggestion
+  - **Right Arrow**: accept word-by-word (at end of line)
+  - **Escape**: dismiss suggestion
+  - Tab passes through to shell completion when no suggestion is visible
+- **Trie prefix tree**: instant command lookup from bootstrap corpus (~190 common Linux/AWS/Docker/K8s commands)
+- **Frecency scoring**: frequency × recency ranking with 1-week half-life — frequently used commands surface first
+- **Micro neural network**: 47-parameter MLP (mcfly-style) for contextual re-ranking based on exit code, directory, environment, and usage patterns
+- **Error detection**: 20 built-in regex patterns (permission denied, command not found, disk full, OOM, etc.) + TF-IDF cosine similarity for learned patterns
+- **Self-learning**: every command is recorded; n-gram model and frecency scores update automatically; error resolutions are learned
+- **Per-session toggle**: Suggest button in terminal title bar to enable/disable
+- **Encrypted storage**: command history and learned patterns stored in bbolt with AES-256-GCM encryption at rest
+- **Log insight toasts**: non-intrusive notifications when errors are detected, with suggested fixes
+- **Zero external dependencies**: pure Go engine, ships inside Docker, ~2MB binary overhead
+
+### RDP Credential Vault
+- **Encrypted password vault** for RDP session credentials
+- **Auto-connect**: when connecting to an RDP instance, the vault checks for matching credentials and connects immediately — no modal prompt
+- **Match hierarchy** (checked in priority order):
+  1. **Exact instance ID**: credential saved for a specific instance
+  2. **Name substring**: matches any instance whose name contains the substring (e.g., `windows`)
+  3. **Name pattern**: glob matching (e.g., `*-windows-*`)
+  4. **Environment**: matches all instances in an environment tag (e.g., `dev`)
+  5. **Account**: matches all instances in an AWS account
+  6. **Global**: fallback for all instances
+- **Save to Vault** checkbox in the RDP credential modal — pick a match rule, label it, and save
+- **Vault Management UI** in Settings → Credential Vault: view, delete saved credentials with colored type badges
+- **AES-256-GCM encryption** at rest — passwords never sent to frontend (backend resolves vault ID → real password → Guacamole)
+- **bbolt storage**: single file, pure Go, no external database
+
+### Network Topology Map
+- Interactive D3.js visualization of your entire VPC architecture
+- **Resource coverage**: VPC, subnets, instances, security groups, NACLs, route tables, internet gateways, NAT gateways, transit gateway attachments, VPC peerings, VPC endpoints, load balancers, Elastic IPs, DHCP options, flow logs, and prefix lists
+- Layout grouped by Availability Zone with subnets, instances, and networking components
+- Zoom, pan, and search with auto-focus on matched resources
+- Click any resource for a detail panel showing full metadata and rules
+
+### Network Reachability Analyzer
+- **Interactive path analysis**: click a source instance, click a destination (or enter an IP), pick protocol/port, and analyze
+- **Local rule-based analysis**: traces traffic through SG outbound → NACL outbound → route table → NACL inbound → SG inbound (5-hop forward + 2-hop return path)
+- **AWS Network Insights integration**: real packet-path simulation using `CreateNetworkInsightsPath` / `StartNetworkInsightsAnalysis` for accurate deep analysis
+- Real-time SSE streaming of hop-by-hop results as analysis progresses
+- **Exposure scan**: identifies internet-exposed instances and ports with severity ratings
+- **Rule conflict detection**: flags overly permissive rules, redundant SG rules, shadowed NACL rules, and missing ephemeral port allowances
+
 ### Fleet Summary
 - Dashboard showing total/running/stopped counts per account
 - Platform breakdown (Amazon Linux, RHEL, Ubuntu, Windows, SUSE)
 - Scan duration tracking
 
 ### Instance Details
-- Right-click context menu on any instance
-- Detailed view: name, ID, IPs, state, platform, instance type, AMI ID, IAM instance profile, launch time, and all tags
+- **Terminal title bar button**: Click "Details" on any active session to view full instance info
+- **Live API fetch**: Calls `DescribeInstances` + `DescribeSecurityGroups` + `DescribeVolumes` for real-time data
+- **Full-screen modal** with organized sections:
+  - **Instance**: Name, ID, type, architecture, key pair, IAM profile, AMI, launch time, virtualization, ENA, EBS-optimized
+  - **Network**: VPC, subnet, AZ, tenancy, private/public IP, private/public DNS
+  - **Network Interfaces**: ENI ID, subnet, IPs, MAC, status
+  - **Storage**: EBS volumes with device name, size, type, IOPS, encryption status, KMS key (inline)
+  - **Security Groups**: Card layout with inbound/outbound rules **side by side**, showing protocol:port, source CIDR/SG, description
+  - **Tags**: Full tag listing in 2-column grid
+  - **Quick Metrics**: Load-on-demand CPU/memory/disk gauges
 
 ![Context Menu and Instance Details](docs/screenshots/context-menu-details.png)
 
 ### Settings
-- **General**: App font size (70%–150%), S3 bucket for Express Transfers
-- **Appearance**: App theme, terminal theme, environment color mapping
-- **Transfer**: S3 bucket configuration
-- Full-screen settings modal (90vw × 90vh) with tabbed navigation
+- **Vertical tab sidebar** (Claude.ai-style layout) with section titles and descriptions
+- **General**: S3 bucket for Express Transfers, auto-recording toggle, terminal suggestions toggle, error analysis toggle
+- **Appearance**: App font size (zoom), environment color mapping with custom color picker
+- **AWS Accounts**: Add/remove manual AWS accounts with access keys
+- **AI Agent**: Multi-provider config (Bedrock, Anthropic, OpenAI, Gemini, Ollama) with model, temperature, max tokens
+- **Credential Vault**: View and manage saved RDP credentials with delete and refresh
+- Settings modal: `90vw × max 900px` with clean section dividers
 - Preferences synced to server and persisted across sessions
 
 ### UI Themes
-- **App themes**: Dark (default), Nord, Dracula, Cyberpunk, Warp Hero, Light
-- **Terminal themes**: GitHub Dark, Atom One Dark, Nord, Dracula, Solarized Dark, Monokai, Catppuccin Mocha, Warp
+- **App themes**: Dark (default), Nord, Dracula, Cyberpunk, Warp Hero, Light, Railway, Replit, Raycast, Unify
+- **Terminal themes**: GitHub Dark, Atom One Dark, Nord, Dracula, Solarized Dark, Monokai, Catppuccin Mocha, Warp, Railway, Replit, Raycast, Unify
 
 ## Architecture
 
 ```
-+---------------------------------------------------------+
-|                       Browser                           |
-|   xterm.js terminals | Guacamole RDP | File I/O        |
-+----------+-----------+-------+-------+------+-----------+
-           | WebSocket         | WebSocket     | HTTP
++----------------------------------------------------------------------+
+|                            Browser                                   |
+|  xterm.js terminals | Guacamole RDP | File I/O | AI Chat | Topology |
++----------+-----------+-------+-------+------+-------+-------+-------+
+           | WebSocket         | WebSocket     | HTTP / SSE
            v                   v               v
-+--------------------+  +--------------+  +--------------+
-|  CloudTerm (Go)    |  |  guac-lite   |  |  CloudTerm   |
-|  Port 5000         |  |  (Node.js)   |  |  /upload     |
-|                    |  |  Port 8080   |  |  /download   |
-|  - EC2 Discovery   |  +------+-------+  +--------------+
-|  - SSM Sessions    |         |
++--------------------+  +--------------+  +----------------------+
+|  CloudTerm (Go)    |  |  guac-lite   |  |  CloudTerm           |
+|  Port 5000         |  |  (Node.js)   |  |  /upload  /download  |
+|                    |  |  Port 8080   |  |  /ai-agent/chat      |
+|  - EC2 Discovery   |  +------+-------+  |  /topology           |
+|  - SSM Sessions    |         |          +----------------------+
 |  - File Transfer   |         v
 |  - Broadcast       |  +--------------+
-|  - Audit Log       |  |    guacd     |
-|  - Recordings API  |  |  Port 4822   |
-|  - REST API        |  +--------------+
+|  - AI Assistant    |  |    guacd     |
+|  - Topology API    |  |  Port 4822   |
+|  - Audit Log       |  +--------------+
+|  - Recordings API  |
+|  - REST API        |
 +--------+-----------+
          |                +-----------------+
          v                |  Converter      |
@@ -211,7 +287,7 @@ A secure, web-based terminal and RDP client for managing AWS EC2 instances via S
 +--------------------+
          |
          v
-    AWS SSM / EC2
+  AWS SSM / EC2 / VPC / Bedrock
 ```
 
 **Services:**
@@ -238,7 +314,7 @@ git clone https://github.com/subbareddyalamur/cloudterm.git
 cd cloudterm
 
 # Create data directories (container runs as non-root)
-mkdir -p .cache .sessionrecordings .terminalexport
+mkdir -p .cache .sessionrecordings .terminalexport .suggestdata
 
 # Start all services
 docker compose up -d
@@ -273,6 +349,19 @@ All configuration is via environment variables (set in `docker-compose.yml` or s
 | `TERMINAL_EXPORT_DIR` | `.terminalexport` | Directory for exported terminal logs |
 | `AUTO_RECORD` | `false` | Auto-start recording on new sessions |
 | `AWS_ACCOUNTS_FILE` | `aws_accounts.json` | Manual AWS accounts storage |
+| `AI_PROVIDER` | `bedrock` | AI provider: `bedrock`, `anthropic`, `openai`, `gemini`, `ollama` |
+| `AI_MODEL` | — | Model identifier (e.g., `anthropic.claude-3-sonnet-20240229-v1:0`) |
+| `AI_MAX_TOKENS` | `4096` | Max response tokens |
+| `AI_TEMPERATURE` | `0.3` | Sampling temperature |
+| `AI_BEDROCK_REGION` | — | AWS region for Bedrock |
+| `AI_BEDROCK_PROFILE` | — | AWS profile for Bedrock |
+| `AI_ANTHROPIC_KEY` | — | Anthropic API key (if provider is `anthropic`) |
+| `AI_OPENAI_KEY` | — | OpenAI API key (if provider is `openai`) |
+| `AI_GEMINI_KEY` | — | Gemini API key (if provider is `gemini`) |
+| `AI_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL (if provider is `ollama`) |
+| `SUGGEST_ENABLED` | `true` | Enable terminal autocomplete and suggestion engine |
+| `SUGGEST_DATA_DIR` | `/app/suggestdata` | Directory for suggestion engine data (bbolt DB, learned models) |
+| `SUGGEST_ENCRYPTION_KEY` | — | AES-256 encryption key for suggestion data and vault (auto-generated if empty) |
 | `DEBUG` | `false` | Enable debug logging |
 
 ## Project Structure
@@ -291,18 +380,51 @@ cloudterm/
 │   │   ├── s3transfer.go             # Express file transfer via S3 presigned URLs
 │   │   ├── filebrowser.go            # Remote directory browsing via SSM
 │   │   ├── broadcast.go              # Multi-instance command execution
-│   │   └── metrics.go                # Instance CPU/memory/disk metrics
+│   │   ├── metrics.go                # Instance CPU/memory/disk metrics
+│   │   ├── topology.go               # VPC topology fetching (16+ AWS APIs)
+│   │   ├── reachability.go           # Local reachability analysis & exposure scan
+│   │   ├── network_insights.go       # AWS Network Insights deep analysis
+│   │   └── networking.go             # Network utility functions
 │   ├── config/config.go              # Environment variable config
+│   ├── crypto/aes.go                 # AES-256-GCM encryption helpers (shared)
 │   ├── guacamole/token.go            # Guacamole token encryption (AES-256-CBC)
-│   ├── handlers/handlers.go          # HTTP + WebSocket handlers
+│   ├── handlers/
+│   │   ├── handlers.go               # HTTP + WebSocket handlers
+│   │   └── topology.go               # Topology & reachability endpoints
+│   ├── llm/
+│   │   ├── provider.go               # LLM provider interface & types
+│   │   ├── bedrock.go                # AWS Bedrock provider
+│   │   ├── anthropic.go              # Anthropic API provider
+│   │   ├── openai.go                 # OpenAI API provider
+│   │   ├── gemini.go                 # Google Gemini provider
+│   │   ├── ollama.go                 # Local Ollama provider
+│   │   ├── factory.go                # Provider factory
+│   │   ├── agent.go                  # System prompts & instance context
+│   │   ├── tools.go                  # AI tool definitions
+│   │   └── safety.go                 # Destructive command patterns
 │   ├── session/
 │   │   ├── manager.go                # Terminal session lifecycle (PTY)
 │   │   └── recorder.go               # Session recording (.cast format)
+│   ├── suggest/
+│   │   ├── engine.go                 # Suggestion engine orchestrator
+│   │   ├── trie.go                   # Compressed radix trie (prefix lookup)
+│   │   ├── frecency.go              # Frequency × recency scorer
+│   │   ├── mlp.go                   # 47-param micro neural network
+│   │   ├── store.go                 # bbolt encrypted KV storage
+│   │   ├── errorkb.go              # Error pattern detection + TF-IDF
+│   │   ├── observer.go             # Non-blocking terminal I/O observer
+│   │   ├── ansistrip.go            # ANSI escape sequence stripper
+│   │   ├── bootstrap.go            # Bootstrap command corpus loader
+│   │   └── data/                   # Embedded JSON data (commands, error patterns)
+│   ├── vault/
+│   │   └── store.go                 # RDP credential vault (bbolt + AES-GCM)
 │   └── types/types.go                # Shared data structures
 ├── web/
 │   ├── static/
-│   │   ├── js/app.js                 # Frontend application
-│   │   └── vendor/                   # xterm.js, guacamole-common.js
+│   │   ├── js/
+│   │   │   ├── app.js                # Frontend application + AI chat
+│   │   │   └── topology.js           # D3.js topology visualization
+│   │   └── vendor/                   # xterm.js, guacamole-common.js, d3.js
 │   └── templates/
 │       ├── index.html                # Main UI
 │       └── rdp-client.html           # RDP client page
@@ -320,9 +442,11 @@ cloudterm/
 
 | Service | Purpose |
 |---------|---------|
-| **EC2** | `DescribeInstances` for discovery |
+| **EC2** | `DescribeInstances` for discovery; `DescribeVpcs`, `DescribeSubnets`, `DescribeSecurityGroups`, `DescribeNetworkAcls`, `DescribeRouteTables`, `DescribeInternetGateways`, `DescribeNatGateways`, `DescribeTransitGatewayAttachments`, `DescribeVpcPeeringConnections`, `DescribeVpcEndpoints`, `DescribeAddresses`, `DescribeDhcpOptions`, `DescribeFlowLogs`, `DescribeManagedPrefixLists` for topology; `CreateNetworkInsightsPath`, `StartNetworkInsightsAnalysis`, `GetNetworkInsightsAnalysis` for reachability |
+| **ELB** | `DescribeLoadBalancers`, `DescribeListeners`, `DescribeTargetGroups`, `DescribeTargetHealth` for topology |
 | **SSM** | `StartSession` for terminals, `SendCommand` for file transfer, broadcast, and metrics |
 | **S3** | `PutObject`, `GetObject`, `DeleteObject` for Express Transfers (optional, only when S3 bucket is configured) |
+| **Bedrock** | `ConverseStream` for AI assistant (optional, configurable provider) |
 | **STS** | `GetCallerIdentity` for account ID resolution |
 | **IAM** | `ListAccountAliases` for account alias lookup |
 
@@ -339,6 +463,29 @@ The AWS profiles used by CloudTerm need the following permissions:
       "Action": [
         "ec2:DescribeInstances",
         "ec2:DescribeRegions",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeNatGateways",
+        "ec2:DescribeTransitGatewayAttachments",
+        "ec2:DescribeVpcPeeringConnections",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeDhcpOptions",
+        "ec2:DescribeFlowLogs",
+        "ec2:DescribeManagedPrefixLists",
+        "ec2:CreateNetworkInsightsPath",
+        "ec2:DeleteNetworkInsightsPath",
+        "ec2:StartNetworkInsightsAnalysis",
+        "ec2:GetNetworkInsightsAnalyses",
+        "ec2:DeleteNetworkInsightsAnalysis",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
         "ssm:StartSession",
         "ssm:TerminateSession",
         "ssm:SendCommand",
@@ -347,7 +494,8 @@ The AWS profiles used by CloudTerm need the following permissions:
         "iam:ListAccountAliases",
         "s3:PutObject",
         "s3:GetObject",
-        "s3:DeleteObject"
+        "s3:DeleteObject",
+        "bedrock:InvokeModelWithResponseStream"
       ],
       "Resource": "*"
     }
@@ -355,14 +503,14 @@ The AWS profiles used by CloudTerm need the following permissions:
 }
 ```
 
-> **Note:** S3 permissions are only required if you use Express Transfers. You can scope the S3 actions to a specific bucket ARN (e.g., `arn:aws:s3:::my-transfer-bucket/*`).
+> **Note:** S3 permissions are only required if you use Express Transfers. You can scope the S3 actions to a specific bucket ARN (e.g., `arn:aws:s3:::my-transfer-bucket/*`). Bedrock permission is only required if you use the AI assistant with the Bedrock provider. Network Insights permissions (`CreateNetworkInsightsPath`, `StartNetworkInsightsAnalysis`, etc.) are only required for deep reachability analysis.
 
 EC2 instances must have an IAM instance profile with the `AmazonSSMManagedInstanceCore` managed policy (or equivalent).
 
 ## Tech Stack
 
-- **Backend**: Go 1.24, AWS SDK v2, Gorilla WebSocket, creack/pty
-- **Frontend**: Vanilla JS, xterm.js, guacamole-common.js
+- **Backend**: Go 1.24, AWS SDK v2, Gorilla WebSocket, creack/pty, bbolt (encrypted KV)
+- **Frontend**: Vanilla JS, xterm.js, guacamole-common.js, D3.js (topology)
 - **Containers**: Docker with multi-stage builds on amazonlinux:2023
 - **RDP Proxy**: Apache Guacamole (guacd + guacamole-lite)
 - **Converter**: Python 3 + guacenc + agg + ffmpeg on debian:bookworm-slim
@@ -373,8 +521,11 @@ EC2 instances must have an IAM instance profile with the `AmazonSSMManagedInstan
 - AWS credentials are mounted read-only from the host
 - Manual account credentials are held in memory only (never written to AWS config)
 - Guacamole RDP tokens are encrypted with AES-256-CBC
+- **Credential vault**: RDP passwords encrypted at rest with AES-256-GCM; passwords never sent to frontend (backend resolves vault ID → Guacamole)
+- **Suggestion engine data**: command history and learned patterns encrypted at rest with AES-256-GCM in bbolt
 - File transfers are chunked via SSM with timeouts that scale with file size
 - Each terminal session runs in an isolated PTY with its own process group
+- RDP clipboard sync uses postMessage bridge (no plaintext clipboard in WS messages)
 - All actions are logged to an append-only audit log
 
 ## License

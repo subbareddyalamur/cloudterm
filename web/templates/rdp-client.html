@@ -226,80 +226,6 @@
             color: var(--text);
         }
 
-        /* ── Clipboard Panel ── */
-        #clipboard-panel {
-            position: fixed;
-            top: 40px;
-            right: 0;
-            width: 320px;
-            background: var(--s1);
-            border-left: 1px solid var(--b1);
-            border-bottom: 1px solid var(--b1);
-            z-index: 90;
-            display: none;
-            flex-direction: column;
-            border-bottom-left-radius: 6px;
-            box-shadow: -4px 4px 16px rgba(0,0,0,0.4);
-        }
-
-        #clipboard-panel.show {
-            display: flex;
-        }
-
-        .clipboard-header {
-            padding: 8px 12px;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--muted);
-            border-bottom: 1px solid var(--b1);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .clipboard-close {
-            background: none;
-            border: none;
-            color: var(--dim);
-            cursor: pointer;
-            font-size: 16px;
-            line-height: 1;
-            padding: 0 2px;
-        }
-
-        .clipboard-close:hover {
-            color: var(--text);
-        }
-
-        #clipboard-text {
-            width: 100%;
-            height: 160px;
-            background: var(--s2);
-            border: none;
-            color: var(--text);
-            font-family: inherit;
-            font-size: 12px;
-            padding: 10px 12px;
-            resize: none;
-            outline: none;
-        }
-
-        #clipboard-text::placeholder {
-            color: var(--dim);
-        }
-
-        .clipboard-actions {
-            padding: 8px 12px;
-            display: flex;
-            gap: 6px;
-        }
-
-        .clipboard-actions button {
-            flex: 1;
-        }
-
         /* ── RDP Container ── */
         #rdp-container {
             position: fixed;
@@ -486,12 +412,6 @@
 
             <div class="toolbar-divider"></div>
 
-            <!-- Clipboard -->
-            <button class="tb-btn" id="btn-clipboard" onclick="toggleClipboard()" title="Clipboard Sync">
-                <svg viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5a2 2 0 00-2 2v16a2 2 0 002 2h14a2 2 0 002-2V4a2 2 0 00-2-2zm-7 0a1 1 0 110 2 1 1 0 010-2zm7 18H5V4h2v3h10V4h2v16z"/></svg>
-                <span>Clipboard</span>
-            </button>
-
             <!-- Ctrl+Alt+Del -->
             <button class="tb-btn" onclick="sendCtrlAltDel()" title="Send Ctrl+Alt+Del">
                 <svg viewBox="0 0 24 24"><path d="M20 5H4a2 2 0 00-2 2v8a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2zM4 15V7h16v8H4zm2-6h2v2H6V9zm0 3h8v1H6v-1zm10 0h2v1h-2v-1zm-3-3h2v2h-2V9zm-3 0h2v2h-2V9zm-1 0H7v2h2V9z"/></svg>
@@ -520,25 +440,6 @@
 
     <!-- Toolbar show trigger (visible when toolbar is hidden) -->
     <div id="toolbar-show-trigger" style="display:none;" onmouseenter="showToolbar()"></div>
-
-    <!-- Clipboard Panel -->
-    <div id="clipboard-panel">
-        <div class="clipboard-header">
-            <span>Clipboard Sync</span>
-            <button class="clipboard-close" onclick="toggleClipboard()">&times;</button>
-        </div>
-        <textarea id="clipboard-text" placeholder="Paste text here to send to the remote session, or copy from the remote session to see it here..."></textarea>
-        <div class="clipboard-actions">
-            <button class="tb-btn" onclick="sendClipboardToRemote()">
-                <svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
-                Send to Remote
-            </button>
-            <button class="tb-btn" onclick="readClipboardFromLocal()">
-                <svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 1H4a2 2 0 00-2 2v14h2V3h12V1zm3 4H8a2 2 0 00-2 2v14a2 2 0 002 2h11a2 2 0 002-2V7a2 2 0 00-2-2zm0 16H8V7h11v14z"/></svg>
-                Paste from Local
-            </button>
-        </div>
-    </div>
 
     <!-- Loading Overlay -->
     <div id="loading-overlay">
@@ -607,7 +508,6 @@
         var tunnel = null;
         var keyboard = null;
         var toolbarVisible = true;
-        var clipboardVisible = false;
         var lastRemoteClipboard = '';
 
         var mouseState = {
@@ -661,7 +561,6 @@
             var toolbar = document.getElementById('toolbar');
             var container = document.getElementById('rdp-container');
             var trigger = document.getElementById('toolbar-show-trigger');
-            var clipPanel = document.getElementById('clipboard-panel');
             var loadOverlay = document.getElementById('loading-overlay');
 
             if (toolbarVisible) {
@@ -674,8 +573,6 @@
                 container.classList.add('toolbar-hidden');
                 trigger.style.display = 'block';
                 loadOverlay.style.top = '0';
-                // Also hide clipboard panel
-                if (clipboardVisible) toggleClipboard();
             }
             // Recalculate display scaling
             setTimeout(updateDisplay, 50);
@@ -683,48 +580,6 @@
 
         function showToolbar() {
             if (!toolbarVisible) toggleToolbar();
-        }
-
-        // ── Clipboard Panel ──
-        function toggleClipboard() {
-            clipboardVisible = !clipboardVisible;
-            var panel = document.getElementById('clipboard-panel');
-            var btn = document.getElementById('btn-clipboard');
-
-            if (clipboardVisible) {
-                panel.classList.add('show');
-                btn.classList.add('active');
-                // Try to read local clipboard into the textarea
-                readClipboardFromLocal();
-            } else {
-                panel.classList.remove('show');
-                btn.classList.remove('active');
-            }
-        }
-
-        function sendClipboardToRemote() {
-            var text = document.getElementById('clipboard-text').value;
-            if (!guac || !text) return;
-            try {
-                var stream = guac.createClipboardStream('text/plain');
-                var writer = new Guacamole.StringWriter(stream);
-                writer.sendText(text);
-                writer.sendEnd();
-            } catch (err) {
-                console.error('Failed to send clipboard:', err);
-            }
-        }
-
-        function readClipboardFromLocal() {
-            if (navigator.clipboard && navigator.clipboard.readText) {
-                navigator.clipboard.readText().then(function(text) {
-                    if (text) {
-                        document.getElementById('clipboard-text').value = text;
-                    }
-                }).catch(function() {
-                    // Permission denied - ignore
-                });
-            }
         }
 
         // ── Fullscreen ──
@@ -930,42 +785,65 @@
                         };
                         stream.onend = function() {
                             lastRemoteClipboard = data;
-                            // Update clipboard textarea if panel is open
-                            if (clipboardVisible) {
-                                document.getElementById('clipboard-text').value = data;
+                            if (window.parent && window.parent !== window) {
+                                window.parent.postMessage({ type: 'rdp-clipboard', text: data }, '*');
                             }
-                            // Copy to system clipboard
-                            navigator.clipboard.writeText(data).catch(function() {});
                         };
                     }
                 };
 
-                // ── Local clipboard -> remote on focus ──
-                window.addEventListener('focus', function() {
-                    if (navigator.clipboard && navigator.clipboard.readText) {
-                        navigator.clipboard.readText().then(function(text) {
-                            if (text && guac) {
-                                try {
-                                    var stream = guac.createClipboardStream('text/plain');
-                                    var writer = new Guacamole.StringWriter(stream);
-                                    writer.sendText(text);
-                                    writer.sendEnd();
-                                } catch (err) { /* ignore */ }
-                            }
-                        }).catch(function() {});
+                // ── Clipboard events (reliable, browser-native) ──
+                function pushClipToRemote(text) {
+                    if (!text || !guac) return;
+                    try {
+                        var stream = guac.createClipboardStream('text/plain');
+                        var writer = new Guacamole.StringWriter(stream);
+                        writer.sendText(text);
+                        writer.sendEnd();
+                    } catch (err) {}
+                }
+
+                // copy/cut: put remote clipboard data into the system clipboard
+                document.addEventListener('copy', function(e) {
+                    if (lastRemoteClipboard) {
+                        e.clipboardData.setData('text/plain', lastRemoteClipboard);
+                        e.preventDefault();
+                    }
+                });
+                document.addEventListener('cut', function(e) {
+                    if (lastRemoteClipboard) {
+                        e.clipboardData.setData('text/plain', lastRemoteClipboard);
+                        e.preventDefault();
                     }
                 });
 
-                // ── Paste event -> remote ──
+                // paste: push local clipboard to remote, then send Ctrl+V
                 document.addEventListener('paste', function(e) {
                     var text = e.clipboardData.getData('text/plain');
                     if (text && guac) {
-                        try {
-                            var stream = guac.createClipboardStream('text/plain');
-                            var writer = new Guacamole.StringWriter(stream);
-                            writer.sendText(text);
-                            writer.sendEnd();
-                        } catch (err) { /* ignore */ }
+                        pushClipToRemote(text);
+                        setTimeout(function() {
+                            guac.sendKeyEvent(1, 0xFFE3);
+                            guac.sendKeyEvent(1, 0x76);
+                            guac.sendKeyEvent(0, 0x76);
+                            guac.sendKeyEvent(0, 0xFFE3);
+                        }, 30);
+                    }
+                    e.preventDefault();
+                });
+
+                // On focus: push local clipboard to remote proactively
+                window.addEventListener('focus', function() {
+                    if (!navigator.clipboard || !navigator.clipboard.readText || !guac) return;
+                    navigator.clipboard.readText().then(function(text) {
+                        pushClipToRemote(text);
+                    }).catch(function() {});
+                });
+
+                // Listen for clipboard push from parent frame
+                window.addEventListener('message', function(e) {
+                    if (e.data && e.data.type === 'rdp-clipboard-push' && e.data.text) {
+                        pushClipToRemote(e.data.text);
                     }
                 });
 
@@ -1023,81 +901,30 @@
                     e.preventDefault();
                 });
 
-                // ── Keyboard (with Mac Cmd→Ctrl remapping) ──
+                // ── Keyboard ──
+                // Mac: Cmd+key → Ctrl+key remapped for remote Windows.
+                // Clipboard (copy/paste/cut) is handled by DOM events above, NOT here.
+                // This handler just sends raw keys to Guacamole.
                 keyboard = new Guacamole.Keyboard(document);
 
-                // Keysym constants
-                var KEY_LMETA  = 0xFFE7; // Left Cmd / Super
-                var KEY_RMETA  = 0xFFE8; // Right Cmd / Super
-                var KEY_LCTRL  = 0xFFE3;
-                var KEY_RCTRL  = 0xFFE4;
+                var KEY_LMETA = 0xFFE7, KEY_RMETA = 0xFFE8;
+                var KEY_LCTRL = 0xFFE3, KEY_RCTRL = 0xFFE4;
                 var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-                var metaHeld = false; // track whether Cmd is down
-                var asyncPasteInFlight = false; // Cmd+V handled async, skip keyup
-
-                // Map of keysyms that should be remapped from Cmd+key → Ctrl+key on Mac.
-                // Letters a-z (keysym 0x61-0x7a), plus common shortcuts.
-                function shouldRemapMeta(keysym) {
-                    // a-z lowercase
-                    if (keysym >= 0x61 && keysym <= 0x7a) return true;
-                    // A-Z uppercase
-                    if (keysym >= 0x41 && keysym <= 0x5a) return true;
-                    return false;
-                }
-
-                // Block dangerous Win+key combos that affect the remote OS
-                function shouldBlockWinKey(keysym) {
-                    // l/L = Win+L (lock), d/D = Win+D (show desktop)
-                    return keysym === 0x6C || keysym === 0x4C ||
-                           keysym === 0x64 || keysym === 0x44;
-                }
+                var metaHeld = false;
 
                 keyboard.onkeydown = function(keysym) {
                     if (!guac) return false;
 
                     if (isMac) {
-                        // Track Cmd key state
                         if (keysym === KEY_LMETA || keysym === KEY_RMETA) {
                             metaHeld = true;
-                            // Don't send Windows key down — we'll send Ctrl instead when a letter follows
+                            guac.sendKeyEvent(1, KEY_LCTRL);
                             return true;
                         }
-
+                        // Block Win+L (lock), Win+D (desktop)
                         if (metaHeld) {
-                            if (shouldBlockWinKey(keysym)) return true; // swallow Win+L etc.
-                            if (shouldRemapMeta(keysym)) {
-                                // Cmd+V: sync local clipboard → remote before pasting
-                                var keyLower = keysym | 0x20;
-                                if (keyLower === 0x76 && navigator.clipboard && navigator.clipboard.readText) {
-                                    asyncPasteInFlight = true;
-                                    navigator.clipboard.readText().then(function(text) {
-                                        if (text && guac) {
-                                            var stream = guac.createClipboardStream('text/plain');
-                                            var writer = new Guacamole.StringWriter(stream);
-                                            writer.sendText(text);
-                                            writer.sendEnd();
-                                        }
-                                        // Send Ctrl+V after clipboard data is queued
-                                        setTimeout(function() {
-                                            if (guac) {
-                                                guac.sendKeyEvent(1, KEY_LCTRL);
-                                                guac.sendKeyEvent(1, keysym);
-                                                guac.sendKeyEvent(0, keysym);
-                                                guac.sendKeyEvent(0, KEY_LCTRL);
-                                            }
-                                        }, 100);
-                                    }).catch(function() {
-                                        // Permission denied — fall through to normal Ctrl+V
-                                        guac.sendKeyEvent(1, KEY_LCTRL);
-                                        guac.sendKeyEvent(1, keysym);
-                                    });
-                                    return true;
-                                }
-                                // Send Ctrl+key instead of Win+key
-                                guac.sendKeyEvent(1, KEY_LCTRL);
-                                guac.sendKeyEvent(1, keysym);
-                                return true;
-                            }
+                            var kl = keysym | 0x20;
+                            if (kl === 0x6c || kl === 0x64) return true;
                         }
                     }
 
@@ -1107,29 +934,20 @@
 
                 keyboard.onkeyup = function(keysym) {
                     if (!guac) return;
-
-                    if (isMac) {
-                        if (keysym === KEY_LMETA || keysym === KEY_RMETA) {
-                            metaHeld = false;
-                            // Release Ctrl if it was being used as remap
-                            guac.sendKeyEvent(0, KEY_LCTRL);
-                            return;
-                        }
-
-                        if (metaHeld && shouldRemapMeta(keysym)) {
-                            // Async paste already sent its own key release
-                            if (asyncPasteInFlight && (keysym | 0x20) === 0x76) {
-                                asyncPasteInFlight = false;
-                                return;
-                            }
-                            guac.sendKeyEvent(0, keysym);
-                            guac.sendKeyEvent(0, KEY_LCTRL);
-                            return;
-                        }
+                    if (isMac && (keysym === KEY_LMETA || keysym === KEY_RMETA)) {
+                        metaHeld = false;
+                        guac.sendKeyEvent(0, KEY_LCTRL);
+                        return;
                     }
-
                     guac.sendKeyEvent(0, keysym);
                 };
+
+                // Prevent Tab key from moving focus out of RDP session
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                    }
+                });
 
                 // ── Keepalive via Web Worker ──
                 var keepaliveInterval = null;

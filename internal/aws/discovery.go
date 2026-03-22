@@ -518,6 +518,9 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 		accountAlias string
 	}
 	accountCache := make(map[string]*accountMeta)
+	// scannedAccountIDs tracks accountID → first profile, so duplicate profiles for
+	// the same AWS account are skipped rather than producing duplicate instances.
+	scannedAccountIDs := make(map[string]string)
 	var accountMu sync.Mutex
 
 	// Use a semaphore to limit concurrency.
@@ -562,7 +565,24 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 
 					accountMu.Lock()
 					accountCache[profile] = meta
+					// Register this account ID as owned by this profile.
+					if meta.accountID != "" {
+						if _, seen := scannedAccountIDs[meta.accountID]; !seen {
+							scannedAccountIDs[meta.accountID] = profile
+						}
+					}
 					accountMu.Unlock()
+				}
+
+				// Skip if another profile already covers this account.
+				if meta.accountID != "" {
+					accountMu.Lock()
+					owner := scannedAccountIDs[meta.accountID]
+					accountMu.Unlock()
+					if owner != profile {
+						d.logger.Printf("Skipping %s/%s: account %s already scanned via profile %s", profile, region, meta.accountID, owner)
+						return
+					}
 				}
 
 				ec2Client := ec2.NewFromConfig(awsCfg)

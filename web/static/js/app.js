@@ -60,6 +60,34 @@ const PAGE_THEMES = {
         '--muted': '#4b5563', '--dim': '#9ca3af',
         '--ssh': '#16a34a', '--rdp': '#2563eb', '--orange': '#ea580c',
         '--red': '#dc2626', '--yellow': '#ca8a04', '--purple': '#7c3aed'
+    },
+    railway: {
+        '--bg': '#13111c', '--s1': '#1c1a27', '--s2': '#24222f', '--s3': '#2d2b3a',
+        '--b1': '#393552', '--b2': '#44415a', '--text': '#e0def4',
+        '--muted': '#908caa', '--dim': '#6e6a86',
+        '--ssh': '#64d8a0', '--rdp': '#82b1ff', '--orange': '#f6c177',
+        '--red': '#eb6f92', '--yellow': '#f6c177', '--purple': '#c4a7e7'
+    },
+    replit: {
+        '--bg': '#0e1525', '--s1': '#141c2e', '--s2': '#1c2439', '--s3': '#242e47',
+        '--b1': '#2b3553', '--b2': '#3c4a6e', '--text': '#f5f9fc',
+        '--muted': '#94a3b8', '--dim': '#576d8a',
+        '--ssh': '#0cd68a', '--rdp': '#3b82f6', '--orange': '#f97316',
+        '--red': '#ef4444', '--yellow': '#eab308', '--purple': '#8b5cf6'
+    },
+    raycast: {
+        '--bg': '#111113', '--s1': '#18181b', '--s2': '#1f1f23', '--s3': '#27272b',
+        '--b1': '#303036', '--b2': '#3f3f46', '--text': '#fafafa',
+        '--muted': '#a1a1aa', '--dim': '#63636e',
+        '--ssh': '#22c55e', '--rdp': '#6366f1', '--orange': '#f97316',
+        '--red': '#ef4444', '--yellow': '#eab308', '--purple': '#a855f7'
+    },
+    unify: {
+        '--bg': '#1a1a1a', '--s1': '#222222', '--s2': '#292929', '--s3': '#333333',
+        '--b1': '#404040', '--b2': '#525252', '--text': '#f5f5f5',
+        '--muted': '#a1a1a1', '--dim': '#666666',
+        '--ssh': '#a4ebd8', '--rdp': '#96c5f1', '--orange': '#ffa95e',
+        '--red': '#ff6d6d', '--yellow': '#ffee9a', '--purple': '#b8b6ff'
     }
 };
 
@@ -144,6 +172,42 @@ const TERMINAL_THEMES = {
         brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1',
         brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#f5c2e7',
         brightCyan: '#94e2d5', brightWhite: '#a6adc8'
+    },
+    railway: {
+        background: '#13111c', foreground: '#e0def4', cursor: '#c4a7e7',
+        selectionBackground: '#393552',
+        black: '#1c1a27', red: '#eb6f92', green: '#64d8a0', yellow: '#f6c177',
+        blue: '#82b1ff', magenta: '#c4a7e7', cyan: '#9ccfd8', white: '#e0def4',
+        brightBlack: '#6e6a86', brightRed: '#eb6f92', brightGreen: '#64d8a0',
+        brightYellow: '#f6c177', brightBlue: '#82b1ff', brightMagenta: '#c4a7e7',
+        brightCyan: '#9ccfd8', brightWhite: '#ffffff'
+    },
+    replit: {
+        background: '#0e1525', foreground: '#f5f9fc', cursor: '#0cd68a',
+        selectionBackground: '#2b3553',
+        black: '#1c2439', red: '#ef4444', green: '#0cd68a', yellow: '#eab308',
+        blue: '#3b82f6', magenta: '#8b5cf6', cyan: '#06b6d4', white: '#f5f9fc',
+        brightBlack: '#576d8a', brightRed: '#f87171', brightGreen: '#34d399',
+        brightYellow: '#fbbf24', brightBlue: '#60a5fa', brightMagenta: '#a78bfa',
+        brightCyan: '#22d3ee', brightWhite: '#ffffff'
+    },
+    raycast: {
+        background: '#111113', foreground: '#fafafa', cursor: '#a855f7',
+        selectionBackground: '#303036',
+        black: '#1f1f23', red: '#ef4444', green: '#22c55e', yellow: '#eab308',
+        blue: '#6366f1', magenta: '#a855f7', cyan: '#06b6d4', white: '#fafafa',
+        brightBlack: '#63636e', brightRed: '#f87171', brightGreen: '#4ade80',
+        brightYellow: '#fbbf24', brightBlue: '#818cf8', brightMagenta: '#c084fc',
+        brightCyan: '#22d3ee', brightWhite: '#ffffff'
+    },
+    unify: {
+        background: '#1a1a1a', foreground: '#f5f5f5', cursor: '#a4ebd8',
+        selectionBackground: '#404040',
+        black: '#292929', red: '#ff6d6d', green: '#a4ebd8', yellow: '#ffee9a',
+        blue: '#96c5f1', magenta: '#b8b6ff', cyan: '#a4ebd8', white: '#f5f5f5',
+        brightBlack: '#666666', brightRed: '#ff8a8a', brightGreen: '#c4f5e8',
+        brightYellow: '#fff4c4', brightBlue: '#b8d8f8', brightMagenta: '#d0cfff',
+        brightCyan: '#c4f5e8', brightWhite: '#ffffff'
     }
 };
 
@@ -297,6 +361,88 @@ class WSManager {
 // Terminal Manager
 // ---------------------------------------------------------------------------
 
+class GhostText {
+    constructor(term, containerEl) {
+        this._term = term;
+        this._el = document.createElement('span');
+        this._el.className = 'ghost-text-overlay';
+        this._el.style.display = 'none';
+        const screen = containerEl.querySelector('.xterm-screen');
+        if (screen) {
+            screen.style.position = 'relative';
+            screen.appendChild(this._el);
+        }
+        this._suggestion = '';
+        this._wordIndex = 0;
+        this._visible = false;
+        this.currentLine = '';
+        term.onCursorMove(() => this._reposition());
+    }
+
+    _getCellDims() {
+        try {
+            const core = this._term._core;
+            return core._renderService.dimensions.css.cell;
+        } catch (e) { return { width: 8, height: 17 }; }
+    }
+
+    _reposition() {
+        if (!this._visible) return;
+        var dims = this._getCellDims();
+        var buf = this._term.buffer.active;
+        this._el.style.left = (buf.cursorX * dims.width) + 'px';
+        this._el.style.top = (buf.cursorY * dims.height) + 'px';
+        this._el.style.lineHeight = dims.height + 'px';
+        var opts = this._term.options;
+        this._el.style.fontSize = (opts.fontSize || 14) + 'px';
+        this._el.style.fontFamily = opts.fontFamily || "'JetBrains Mono', monospace";
+    }
+
+    show(fullSuggestion, currentLine) {
+        if (!fullSuggestion || !currentLine) { this.hide(); return; }
+        var lower = fullSuggestion.toLowerCase();
+        var lowerLine = currentLine.toLowerCase();
+        if (!lower.startsWith(lowerLine)) { this.hide(); return; }
+        this._suggestion = fullSuggestion.substring(currentLine.length);
+        if (!this._suggestion) { this.hide(); return; }
+        this._wordIndex = 0;
+        this._el.textContent = this._suggestion;
+        this._el.style.display = '';
+        this._visible = true;
+        this._reposition();
+    }
+
+    hide() {
+        this._el.textContent = '';
+        this._el.style.display = 'none';
+        this._suggestion = '';
+        this._visible = false;
+        this._wordIndex = 0;
+    }
+
+    isVisible() { return this._visible; }
+
+    acceptFull() {
+        var text = this._suggestion;
+        this.hide();
+        return text;
+    }
+
+    acceptWord() {
+        if (!this._suggestion) return '';
+        var parts = this._suggestion.match(/^\S+\s?/);
+        if (!parts) return this.acceptFull();
+        var word = parts[0];
+        this._suggestion = this._suggestion.substring(word.length);
+        if (!this._suggestion) {
+            this.hide();
+        } else {
+            this._el.textContent = this._suggestion;
+        }
+        return word;
+    }
+}
+
 class TerminalManager {
     constructor(wsManager) {
         this.terminals = new Map(); // sessionID -> {term, fitAddon, searchAddon, instanceID, instanceName}
@@ -333,17 +479,6 @@ class TerminalManager {
             term.loadAddon(searchAddon);
         }
 
-        term.onData((data) => {
-            if (this.inputSyncEnabled) {
-                // Broadcast to all SSH terminals.
-                for (const [sid] of this.terminals) {
-                    this.wsManager.send('terminal_input', { session_id: sid, input: data });
-                }
-            } else {
-                this.wsManager.send('terminal_input', { session_id: sessionID, input: data });
-            }
-        });
-
         term.onResize(({ cols, rows }) => {
             this.wsManager.send('terminal_resize', {
                 session_id: sessionID,
@@ -352,20 +487,94 @@ class TerminalManager {
             });
         });
 
-        // Let Ctrl+F / Cmd+F pass through to our search handler instead of the terminal.
-        term.attachCustomKeyEventHandler((e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'f') return false;
-            return true;
-        });
-
         term.open(containerEl);
 
-        // Slight delay so the container has layout dimensions before fitting.
+        var ghostText = new GhostText(term, containerEl);
+        var suggestEnabled = true;
+        var currentLineBuffer = '';
+        var suggestDebounce = null;
+
+        var origOnData = term.onData;
+        term.onData((data) => {
+            if (data === '\r' || data === '\n') {
+                currentLineBuffer = '';
+                ghostText.currentLine = '';
+                ghostText.hide();
+            } else if (data === '\x7f' || data === '\x08') {
+                currentLineBuffer = currentLineBuffer.slice(0, -1);
+                ghostText.currentLine = currentLineBuffer;
+            } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+                currentLineBuffer += data;
+                ghostText.currentLine = currentLineBuffer;
+            } else if (data.length > 200) {
+                currentLineBuffer = '';
+                ghostText.currentLine = '';
+                ghostText.hide();
+            }
+
+            ghostText.hide();
+
+            if (suggestEnabled && currentLineBuffer.length >= 2 && data.length <= 200) {
+                clearTimeout(suggestDebounce);
+                suggestDebounce = setTimeout(() => {
+                    this.wsManager.send('suggest_request', {
+                        session_id: sessionID,
+                        line: currentLineBuffer,
+                        env: ''
+                    });
+                }, 150);
+            }
+
+            if (this.inputSyncEnabled) {
+                for (const [sid] of this.terminals) {
+                    this.wsManager.send('terminal_input', { session_id: sid, input: data });
+                }
+            } else {
+                this.wsManager.send('terminal_input', { session_id: sessionID, input: data });
+            }
+        });
+
+        term.attachCustomKeyEventHandler((e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') return false;
+            if (e.type !== 'keydown') return true;
+
+            if (e.key === 'Tab' && ghostText.isVisible()) {
+                e.preventDefault();
+                var accepted = ghostText.acceptFull();
+                if (accepted) {
+                    currentLineBuffer += accepted;
+                    this.wsManager.send('terminal_input', { session_id: sessionID, input: accepted });
+                }
+                return false;
+            }
+
+            if (e.key === 'ArrowRight' && ghostText.isVisible()) {
+                var buf = term.buffer.active;
+                var line = buf.getLine(buf.cursorY);
+                var atEnd = !line || !line.getCell(buf.cursorX) || line.getCell(buf.cursorX).getChars() === '';
+                if (atEnd) {
+                    e.preventDefault();
+                    var word = ghostText.acceptWord();
+                    if (word) {
+                        currentLineBuffer += word;
+                        this.wsManager.send('terminal_input', { session_id: sessionID, input: word });
+                    }
+                    return false;
+                }
+            }
+
+            if (e.key === 'Escape' && ghostText.isVisible()) {
+                ghostText.hide();
+                return true;
+            }
+
+            return true;
+        });
         requestAnimationFrame(() => {
             try { fitAddon.fit(); } catch (e) { /* container not yet visible */ }
         });
 
-        this.terminals.set(sessionID, { term, fitAddon, searchAddon, instanceID, instanceName, recording: false });
+        this.terminals.set(sessionID, { term, fitAddon, searchAddon, instanceID, instanceName, recording: false, ghostText, suggestEnabled: true, setSuggestEnabled: function(v) { suggestEnabled = v; if (!v) ghostText.hide(); } });
 
         // Tell the backend to start the SSM session. The instance lookup provides
         // aws_profile and aws_region, but we may not have those on the client at
@@ -467,40 +676,20 @@ class TabManager {
         tab.dataset.id = id;
         tab.dataset.name = name;
         tab.dataset.type = type;
-        const exportBtn = type === 'ssh' ? ' <span class="tab-export" title="Export session">\u2913</span>' : '';
-        const recDot = ''; // Recording dot is added dynamically when recording starts
-        const recToggle = type === 'ssh' ? ' <span class="tab-rec-btn" title="Toggle recording">\u25CF</span>' : '';
         // Note: name is already escaped via _escapeHTML; other parts are static string constants.
         tab.innerHTML =
             '<span class="tab-type ' + type + '">' + type.toUpperCase() + '</span> ' +
             '<span class="tab-name">' + this._escapeHTML(name) + '</span>' +
-            recDot +
-            exportBtn +
-            recToggle +
             ' <span class="tab-close">\u2715</span>';
 
         tab.addEventListener('click', (e) => {
-            if (e.target.classList.contains('tab-close') || e.target.classList.contains('tab-export')) return;
+            if (e.target.classList.contains('tab-close')) return;
             this.switchTab(id);
         });
         tab.querySelector('.tab-close').addEventListener('click', (e) => {
             e.stopPropagation();
             this.closeTab(id);
         });
-        const exportEl = tab.querySelector('.tab-export');
-        if (exportEl) {
-            exportEl.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (this.onExport) this.onExport(id);
-            });
-        }
-        const recBtn = tab.querySelector('.tab-rec-btn');
-        if (recBtn) {
-            recBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (this.onToggleRecording) this.onToggleRecording(id);
-            });
-        }
 
         // Insert before the "+" button.
         const addBtn = this.tabBar.querySelector('.tab-add');
@@ -515,14 +704,78 @@ class TabManager {
         panel.id = 'panel-' + id;
         panel.className = 'panel ' + (type === 'rdp' ? 'rdp-panel' : 'ssh-panel');
 
+        const escName = this._escapeHTML(name);
+
         if (type === 'ssh') {
             panel.innerHTML =
-                '<div class="terminal-container" style="flex:1;overflow:hidden;"></div>';
+                '<div class="term-panel-wrapper">' +
+                  '<div class="term-title-bar">' +
+                    '<div class="term-title-left">' +
+                      '<span class="term-title-dot ssh"></span>' +
+                      '<span class="term-title-name">' + escName + '</span>' +
+                      '<span class="term-title-badge">SSM Session</span>' +
+                    '</div>' +
+                    '<div class="term-title-right">' +
+                      '<button class="term-action-btn suggest-toggle-btn active" title="Toggle AI suggestions"><span class="btn-icon">\uD83D\uDCA1</span> Suggest</button>' +
+                      '<button class="term-action-btn details-btn" title="Instance details"><span class="btn-icon">\u2139</span> Details</button>' +
+                      '<button class="term-action-btn export-btn" title="Export session log"><span class="btn-icon">\u2913</span> Export</button>' +
+                      '<button class="term-action-btn record-btn" title="Toggle recording"><span class="btn-icon">\u25CF</span> Record</button>' +
+                      '<button class="term-action-btn split-btn" title="Split terminal"><span class="btn-icon">\u229E</span> Split</button>' +
+                      '<button class="term-action-btn fullscreen-btn" title="Fullscreen"><span class="btn-icon">\u26F6</span> Fullscreen</button>' +
+                      '<button class="term-action-btn end-btn" title="End session"><span class="btn-icon">\u2715</span> End</button>' +
+                    '</div>' +
+                  '</div>' +
+                  '<div class="terminal-container" style="flex:1;overflow:hidden;"></div>' +
+                '</div>';
         } else {
             panel.innerHTML =
-                '<div class="rdp-viewport" style="flex:1;display:flex;align-items:center;justify-content:center;">' +
-                '<span style="color:var(--muted);font-size:13px;">Preparing RDP session...</span>' +
+                '<div class="term-panel-wrapper">' +
+                  '<div class="term-title-bar">' +
+                    '<div class="term-title-left">' +
+                      '<span class="term-title-dot rdp"></span>' +
+                      '<span class="term-title-name">' + escName + '</span>' +
+                      '<span class="term-title-badge">RDP Session</span>' +
+                    '</div>' +
+                    '<div class="term-title-right">' +
+                      '<button class="term-action-btn details-btn" title="Instance details"><span class="btn-icon">\u2139</span> Details</button>' +
+                      '<button class="term-action-btn fullscreen-btn" title="Fullscreen"><span class="btn-icon">\u26F6</span> Fullscreen</button>' +
+                      '<button class="term-action-btn end-btn" title="End session"><span class="btn-icon">\u2715</span> End</button>' +
+                    '</div>' +
+                  '</div>' +
+                  '<div class="rdp-viewport" style="flex:1;display:flex;align-items:center;justify-content:center;">' +
+                    '<span style="color:var(--muted);font-size:13px;">Preparing RDP session...</span>' +
+                  '</div>' +
                 '</div>';
+        }
+
+        // Wire title bar action buttons.
+        const suggestToggle = panel.querySelector('.suggest-toggle-btn');
+        if (suggestToggle) {
+            suggestToggle.addEventListener('click', () => { if (this.onSuggestToggle) this.onSuggestToggle(id, suggestToggle); });
+        }
+        const detailsBtn = panel.querySelector('.details-btn');
+        if (detailsBtn) {
+            detailsBtn.addEventListener('click', () => { if (this.onDetails) this.onDetails(id); });
+        }
+        const exportBtn = panel.querySelector('.export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => { if (this.onExport) this.onExport(id); });
+        }
+        const recBtn = panel.querySelector('.record-btn');
+        if (recBtn) {
+            recBtn.addEventListener('click', () => { if (this.onToggleRecording) this.onToggleRecording(id); });
+        }
+        const splitBtn = panel.querySelector('.split-btn');
+        if (splitBtn) {
+            splitBtn.addEventListener('click', () => { if (this.onSplit) this.onSplit(id); });
+        }
+        const fsBtn = panel.querySelector('.fullscreen-btn');
+        if (fsBtn) {
+            fsBtn.addEventListener('click', () => { if (this.onFullscreen) this.onFullscreen(id); });
+        }
+        const endBtn = panel.querySelector('.end-btn');
+        if (endBtn) {
+            endBtn.addEventListener('click', () => { this.closeTab(id); });
         }
 
         this.panels.appendChild(panel);
@@ -748,10 +1001,14 @@ class SidebarTree {
         }
 
         // Hide non-matching instances.
+        const terms = q.split(/\s+/).filter(t => t.length > 0);
+
         this.container.querySelectorAll('.t-inst').forEach(el => {
             const name = (el.querySelector('.inst-name')?.textContent || '').toLowerCase();
             const id = (el.querySelector('.inst-id')?.textContent || '').toLowerCase();
-            el.style.display = (name.includes(q) || id.includes(q)) ? '' : 'none';
+            const text = name + ' ' + id;
+            const matches = terms.every(term => text.includes(term));
+            el.style.display = matches ? '' : 'none';
         });
 
         // Hide group containers + labels with no matching instances.
@@ -1228,6 +1485,23 @@ function showRDPCredentialModal(instanceID, instanceName, defaults) {
                 '<input id="rdpRecordChk" type="checkbox" style="accent-color:var(--red);cursor:pointer;">' +
                 '<span>\u25CF Record this session</span>' +
                 '</label>' +
+                '<label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer;font-size:11px;color:var(--muted);">' +
+                '<input id="rdpSaveVault" type="checkbox" style="accent-color:var(--ssh);cursor:pointer;">' +
+                '<span>\uD83D\uDD12 Save to Vault</span>' +
+                '</label>' +
+                '<div id="rdpVaultOpts" style="display:none;margin-bottom:14px;padding:10px 12px;background:var(--s2);border:1px solid var(--b1);border-radius:7px;">' +
+                '<div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Match Rule</div>' +
+                '<select id="rdpVaultType" style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;box-sizing:border-box;margin-bottom:8px;">' +
+                '<option value="instance">This instance only</option>' +
+                '<option value="substring">Name contains (substring)</option>' +
+                '<option value="pattern">Name pattern (glob)</option>' +
+                '<option value="environment">Environment</option>' +
+                '<option value="account">Account</option>' +
+                '<option value="global">All instances</option>' +
+                '</select>' +
+                '<input id="rdpVaultValue" type="text" placeholder="Pattern or value" style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;box-sizing:border-box;margin-bottom:8px;">' +
+                '<input id="rdpVaultLabel" type="text" placeholder="Label (e.g. Dev Windows)" style="width:100%;padding:8px 10px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;color:var(--text);font-family:\'JetBrains Mono\',monospace;font-size:11px;outline:none;box-sizing:border-box;">' +
+                '</div>' +
                 '<div style="display:flex;gap:8px;">' +
                 '<button id="rdpCredConnect" style="flex:1;padding:8px;background:linear-gradient(135deg,rgba(96,165,250,.2),rgba(108,92,231,.15));border:1px solid rgba(96,165,250,.4);border-radius:7px;color:var(--rdp);font-family:\'JetBrains Mono\',monospace;font-size:11px;cursor:pointer;">Connect</button>' +
                 '<button id="rdpCredCancel" class="modal-cancel" style="flex:1;">Cancel</button>' +
@@ -1240,6 +1514,20 @@ function showRDPCredentialModal(instanceID, instanceName, defaults) {
                 inp.type = isHidden ? 'text' : 'password';
                 document.getElementById('rdpPassToggle').title = isHidden ? 'Hide password' : 'Show password';
             });
+            document.getElementById('rdpSaveVault').addEventListener('change', (e) => {
+                document.getElementById('rdpVaultOpts').style.display = e.target.checked ? '' : 'none';
+            });
+            document.getElementById('rdpVaultType').addEventListener('change', (e) => {
+                const valInput = document.getElementById('rdpVaultValue');
+                switch (e.target.value) {
+                    case 'instance': valInput.value = instanceID; valInput.disabled = true; break;
+                    case 'substring': valInput.value = ''; valInput.disabled = false; valInput.placeholder = 'Substring (e.g. windows, guacamole)'; break;
+                    case 'pattern': valInput.value = '*' + instanceName.replace(/[^a-zA-Z-]/g, '') + '*'; valInput.disabled = false; valInput.placeholder = 'Glob pattern (e.g. *-windows-*)'; break;
+                    case 'environment': valInput.value = ''; valInput.disabled = false; valInput.placeholder = 'Environment name'; break;
+                    case 'account': valInput.value = ''; valInput.disabled = false; valInput.placeholder = 'Account ID'; break;
+                    case 'global': valInput.value = '*'; valInput.disabled = true; break;
+                }
+            });
         }
 
         const modal = document.getElementById('rdpCredModalBg');
@@ -1248,6 +1536,12 @@ function showRDPCredentialModal(instanceID, instanceName, defaults) {
         document.getElementById('rdpPass').value = (defaults && defaults.password) || '';
         document.getElementById('rdpPass').type = 'password';
         if (defaults && defaults.security) document.getElementById('rdpSecurity').value = defaults.security;
+        document.getElementById('rdpSaveVault').checked = false;
+        document.getElementById('rdpVaultOpts').style.display = 'none';
+        document.getElementById('rdpVaultType').value = 'instance';
+        document.getElementById('rdpVaultValue').value = instanceID;
+        document.getElementById('rdpVaultValue').disabled = true;
+        document.getElementById('rdpVaultLabel').value = '';
         modal.classList.add('show');
 
         const cleanup = () => { modal.classList.remove('show'); };
@@ -1258,8 +1552,18 @@ function showRDPCredentialModal(instanceID, instanceName, defaults) {
             const pass = document.getElementById('rdpPass').value;
             const record = document.getElementById('rdpRecordChk').checked;
             const security = document.getElementById('rdpSecurity').value;
+            const saveVault = document.getElementById('rdpSaveVault').checked;
+            var result = { username: user, password: pass, record: record, security: security };
+            if (saveVault) {
+                result._saveToVault = true;
+                result._vaultRule = {
+                    type: document.getElementById('rdpVaultType').value,
+                    value: document.getElementById('rdpVaultValue').value,
+                    label: document.getElementById('rdpVaultLabel').value || (user + ' @ ' + instanceName)
+                };
+            }
             cleanup();
-            resolve({ username: user, password: pass, record: record, security: security });
+            resolve(result);
         };
 
         document.getElementById('rdpCredCancel').onclick = () => {
@@ -1682,6 +1986,7 @@ class SplitManager {
      */
     split(tabID, direction, newSessionID, panel, hostInstanceName) {
         if (this._splits.has(tabID)) return null; // already split — only 2 panes for now
+        const wrapper = panel.querySelector('.term-panel-wrapper');
         const existingTC = panel.querySelector('.terminal-container');
         if (!existingTC) return null;
 
@@ -1699,17 +2004,20 @@ class SplitManager {
         pane2.className = 'split-pane';
         pane2.style.flex = '1';
 
-        // Add header to pane1 (original terminal)
         pane1.appendChild(this._createPaneHeader(hostInstanceName || 'Terminal'));
-
-        // Move existing terminal into pane1 (DOM move, preserves xterm.js)
         pane1.appendChild(existingTC);
 
         container.append(pane1, handle, pane2);
 
-        // Replace panel contents with split layout
-        panel.innerHTML = '';
-        panel.appendChild(container);
+        if (wrapper) {
+            const titleBar = wrapper.querySelector('.term-title-bar');
+            wrapper.innerHTML = '';
+            if (titleBar) wrapper.appendChild(titleBar);
+            wrapper.appendChild(container);
+        } else {
+            panel.innerHTML = '';
+            panel.appendChild(container);
+        }
 
         this._splits.set(tabID, {
             container, panel,
@@ -1775,10 +2083,20 @@ class SplitManager {
         if (!info || !info.panel) return null;
         const primary = info.panes.find(p => p.sessionID === tabID);
         if (primary && primary.termContainer) {
-            info.panel.innerHTML = '';
-            primary.termContainer.style.flex = '1';
-            primary.termContainer.style.overflow = 'hidden';
-            info.panel.appendChild(primary.termContainer);
+            const wrapper = info.panel.querySelector('.term-panel-wrapper');
+            if (wrapper) {
+                const titleBar = wrapper.querySelector('.term-title-bar');
+                wrapper.innerHTML = '';
+                if (titleBar) wrapper.appendChild(titleBar);
+                primary.termContainer.style.flex = '1';
+                primary.termContainer.style.overflow = 'hidden';
+                wrapper.appendChild(primary.termContainer);
+            } else {
+                info.panel.innerHTML = '';
+                primary.termContainer.style.flex = '1';
+                primary.termContainer.style.overflow = 'hidden';
+                info.panel.appendChild(primary.termContainer);
+            }
         }
         this._splits.delete(tabID);
         return sessionID;
@@ -1840,6 +2158,21 @@ class CloudTermApp {
         this.tabManager = new TabManager();
         this.tabManager.onExport = (sessionID) => this._exportSession(sessionID);
         this.tabManager.onToggleRecording = (sessionID) => this._toggleRecording(sessionID);
+        this.tabManager.onSplit = (tabID) => this._splitTab(tabID, 'horizontal');
+        this.tabManager.onFullscreen = (tabID) => this._toggleTerminalFullscreen(tabID);
+        this.tabManager.onDetails = (tabID) => this._showInstanceDetails(tabID);
+        this.tabManager.onSuggestToggle = (tabID, btn) => {
+            const entry = this.termManager.terminals.get(tabID);
+            if (!entry) return;
+            const isActive = btn.classList.toggle('active');
+            entry.setSuggestEnabled(isActive);
+            this.ws.send('suggest_toggle', { session_id: tabID, enabled: isActive });
+            const tabInfo = this.tabManager.tabs.get(tabID);
+            if (tabInfo && tabInfo.instanceID) {
+                try { localStorage.setItem('suggest_' + tabInfo.instanceID, isActive ? '1' : '0'); } catch(e) {}
+            }
+            showToast(isActive ? 'Suggestions enabled' : 'Suggestions disabled');
+        };
         this.sidebar = new SidebarTree(
             document.getElementById('treeContainer') || document.getElementById('tree'),
             (id, name, type) => this.openSession(id, name, type)
@@ -1911,23 +2244,37 @@ class CloudTermApp {
             this.termManager.handleOutput(payload.session_id, payload.output);
         });
 
+        this.ws.on('suggest_response', (payload) => {
+            const entry = this.termManager.terminals.get(payload.session_id);
+            if (entry && entry.ghostText && payload.suggestions && payload.suggestions.length > 0) {
+                entry.ghostText.show(payload.suggestions[0].text, entry.ghostText.currentLine);
+            }
+        });
+
+        this.ws.on('log_insight', (payload) => {
+            this._showLogInsight(payload);
+        });
+
         this.ws.on('session_started', (payload) => {
             showToast('Session started: ' + (payload.instance_id || ''));
-            // Sync recording state from backend (auto-record).
             if (payload.recording && payload.session_id) {
                 const s = this.termManager.terminals.get(payload.session_id);
                 if (s) {
                     s.recording = true;
                     const tab = document.querySelector('.tab[data-id="' + payload.session_id + '"]');
-                    if (tab) {
-                        const btn = tab.querySelector('.tab-rec-btn');
-                        if (btn) btn.classList.add('recording');
-                        if (!tab.querySelector('.tab-rec')) {
-                            const span = document.createElement('span');
-                            span.className = 'tab-rec';
-                            span.textContent = '\u25CF';
-                            span.title = 'Recording';
-                            tab.querySelector('.tab-name')?.after(span);
+                    if (tab && !tab.querySelector('.tab-rec')) {
+                        const span = document.createElement('span');
+                        span.className = 'tab-rec';
+                        span.textContent = '\u25CF';
+                        span.title = 'Recording';
+                        tab.querySelector('.tab-name')?.after(span);
+                    }
+                    const panel = document.getElementById('panel-' + payload.session_id);
+                    if (panel) {
+                        const titleRecBtn = panel.querySelector('.record-btn');
+                        if (titleRecBtn) {
+                            titleRecBtn.classList.add('recording');
+                            titleRecBtn.innerHTML = '<span class="btn-icon">\u25CF</span> Recording';
                         }
                     }
                 }
@@ -2114,8 +2461,48 @@ class CloudTermApp {
 
     async _startRDPSession(tabID, instanceID, instanceName, defaults) {
         if (this.rdpMode === 'guacamole') {
+            const inst = this.sidebar.getInstance(instanceID);
+            const env = inst?.tags?.[this.tag2Key] || '';
+            const account = inst?.account_id || '';
+
+            try {
+                const matchResp = await fetch('/vault/match?' + new URLSearchParams({
+                    instance_id: instanceID, name: instanceName, env: env, account: account
+                }));
+                if (matchResp.ok) {
+                    const match = await matchResp.json();
+                    if (match.rule && match.rule.id) {
+                        showToast('Connecting with saved credentials (' + (match.rule.label || match.rule.type) + ')...');
+                        const vaultEntry = await fetch('/vault/credentials?resolve=' + encodeURIComponent(match.rule.id));
+                        const vaultData = await vaultEntry.json();
+                        if (vaultData && vaultData.credential) {
+                            await this._connectGuacRDP(tabID, instanceID, instanceName, {
+                                username: vaultData.credential.username,
+                                password: vaultData.credential.password,
+                                domain: vaultData.credential.domain || '',
+                                security: vaultData.credential.security || 'any'
+                            });
+                            return;
+                        }
+                    }
+                }
+            } catch (e) { /* vault check failed, fall through to manual */ }
+
             try {
                 const creds = await showRDPCredentialModal(instanceID, instanceName, defaults);
+                if (creds._saveToVault && creds._vaultRule) {
+                    try {
+                        await fetch('/vault/credentials', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                rule: creds._vaultRule,
+                                credential: { username: creds.username, password: creds.password, domain: creds.domain || '', security: creds.security }
+                            })
+                        });
+                        showToast('Credentials saved to vault');
+                    } catch (e) { showToast('Failed to save to vault'); }
+                }
                 await this._connectGuacRDP(tabID, instanceID, instanceName, creds);
             } catch (e) {
                 if (e.message !== 'cancelled') {
@@ -2201,11 +2588,25 @@ class CloudTermApp {
             if (viewport) {
                 viewport.innerHTML = '<iframe src="' + data.url + '" ' +
                     'style="width:100%;height:100%;border:none;" ' +
+                    'tabindex="0" ' +
                     'allow="clipboard-read; clipboard-write"></iframe>';
                 const rdpIframe = viewport.querySelector('iframe');
                 if (rdpIframe) {
                     rdpIframe.addEventListener('load', () => {
                         rdpIframe.contentWindow.focus();
+                    });
+                    viewport.addEventListener('click', () => {
+                        rdpIframe.contentWindow.focus();
+                        if (navigator.clipboard && navigator.clipboard.readText) {
+                            navigator.clipboard.readText().then(text => {
+                                if (text && rdpIframe.contentWindow) {
+                                    rdpIframe.contentWindow.postMessage({
+                                        type: 'rdp-clipboard-push',
+                                        text: text
+                                    }, '*');
+                                }
+                            }).catch(() => {});
+                        }
                     });
                 }
             }
@@ -2224,6 +2625,18 @@ class CloudTermApp {
                     if (saved) {
                         this._startRDPSession(saved.tabID, e.data.instanceId, e.data.instanceName, saved.creds);
                     }
+                }
+                if (e.data && e.data.type === 'rdp-clipboard' && e.data.text) {
+                    this._lastRDPClipboard = e.data.text;
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(e.data.text).catch(() => {});
+                    }
+                    if (!this._clipBridge) {
+                        this._clipBridge = document.createElement('textarea');
+                        this._clipBridge.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+                        document.body.appendChild(this._clipBridge);
+                    }
+                    this._clipBridge.value = e.data.text;
                 }
             });
         }
@@ -2673,57 +3086,168 @@ class CloudTermApp {
 
     // -- Instance Details Modal -----------------------------------------------
 
-    _showInstanceDetails(instanceID) {
-        const inst = this.sidebar.getInstance(instanceID);
-        if (!inst) { showToast('Instance data not available'); return; }
-
+    _showInstanceDetails(tabID) {
         const modal = document.getElementById('detailsModal');
         if (!modal) return;
-
         const body = modal.querySelector('.details-body');
         if (!body) return;
 
-        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || '—'; return d.innerHTML; };
+        const tabInfo = this.tabManager.tabs.get(tabID);
+        const instanceID = (tabInfo && tabInfo.instanceID) || tabID;
+
+        body.innerHTML = '<div style="text-align:center;color:var(--dim);padding:40px;">Loading instance details...</div>';
+        modal.classList.add('show');
+
+        const inst = this.sidebar.getInstance(instanceID);
+
+        fetch('/instance-details?id=' + encodeURIComponent(instanceID))
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) throw new Error(d.error);
+                this._renderInstanceDetails(body, d, inst);
+            })
+            .catch(err => {
+                if (inst) {
+                    this._renderBasicInstanceDetails(body, inst);
+                } else {
+                    body.innerHTML = '<div style="color:var(--red);padding:20px;">Failed: ' + err.message + '</div>';
+                }
+            });
+    }
+
+    _renderBasicInstanceDetails(body, inst) {
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s || '\u2014'; return d.innerHTML; };
         const row = (label, val) => '<div class="det-row"><span class="det-label">' + label + '</span><span class="det-val">' + esc(val) + '</span></div>';
+        body.innerHTML =
+            '<div class="det-section">Instance</div>' +
+            row('Name', inst.name) + row('Instance ID', inst.instance_id) + row('State', inst.state) +
+            row('Platform', inst.platform) + row('Instance Type', inst.instance_type) +
+            row('Private IP', inst.private_ip) + row('Public IP', inst.public_ip) +
+            row('Region', inst.aws_region) + row('Account', inst.account_id);
+    }
 
-        let html =
-            row('Name', inst.name) +
-            row('Instance ID', inst.instance_id) +
-            row('State', inst.state) +
-            row('Platform', inst.platform) +
-            row('OS', inst.os) +
-            row('Instance Type', inst.instance_type) +
-            row('AMI ID', inst.ami_id) +
-            row('Instance Profile', inst.instance_profile) +
-            row('Private IP', inst.private_ip) +
-            row('Public IP', inst.public_ip) +
-            row('AWS Profile', inst.aws_profile) +
-            row('Region', inst.aws_region) +
-            row('Account ID', inst.account_id) +
-            row('Account Alias', inst.account_alias) +
-            row('Launch Time', inst.launch_time);
+    _renderInstanceDetails(body, d, fallback) {
+        const esc = (s) => { const el = document.createElement('div'); el.textContent = s || '\u2014'; return el.innerHTML; };
+        const row = (label, val) => '<div class="det-row"><span class="det-label">' + label + '</span><span class="det-val">' + esc(val) + '</span></div>';
+        const section = (title) => '<div class="det-section">' + title + '</div>';
+        const formatPort = (proto, from, to) => {
+            if (proto === '-1') return 'All traffic';
+            const p = proto === '6' ? 'TCP' : proto === '17' ? 'UDP' : proto === '1' ? 'ICMP' : proto.toUpperCase();
+            if (from === to) return p + ':' + from;
+            if (from === 0 && to === 65535) return p + ':All';
+            return p + ':' + from + '-' + to;
+        };
 
-        if (inst.tags && typeof inst.tags === 'object') {
-            const tagKeys = Object.keys(inst.tags).sort();
+        let html = section('Instance');
+        html += '<div class="det-columns">';
+        html += row('Name', d.name) + row('Instance ID', d.instance_id);
+        html += row('State', d.state) + row('Instance Type', d.instance_type);
+        html += row('Platform', d.platform + ' / ' + d.os) + row('Architecture', d.architecture);
+        html += row('AMI ID', d.ami_id) + row('Key Pair', d.key_name);
+        html += row('IAM Profile', d.instance_profile) + row('Launch Time', d.launch_time);
+        html += row('Virtualization', d.virtualization_type) + row('Hypervisor', d.hypervisor);
+        html += row('EBS Optimized', d.ebs_optimized ? 'Yes' : 'No') + row('ENA Support', d.ena_support ? 'Yes' : 'No');
+        html += row('Monitoring', d.monitoring) + row('Source/Dest Check', d.source_dest_check ? 'Yes' : 'No');
+        html += '</div>';
+
+        html += section('Network');
+        html += '<div class="det-columns">';
+        html += row('VPC ID', d.vpc_id) + row('Subnet ID', d.subnet_id);
+        html += row('Availability Zone', d.availability_zone) + row('Tenancy', d.tenancy);
+        html += row('Private IP', d.private_ip) + row('Public IP', d.public_ip);
+        html += row('Private DNS', d.private_dns) + row('Public DNS', d.public_dns);
+        html += row('Account ID', d.account_id) + row('Region', d.aws_region);
+        html += '</div>';
+
+        if (d.network_interfaces && d.network_interfaces.length > 0) {
+            html += section('Network Interfaces');
+            for (const ni of d.network_interfaces) {
+                html += '<div class="det-columns">';
+                html += row('ENI ID', ni.interface_id) + row('Subnet', ni.subnet_id);
+                html += row('Private IP', ni.private_ip) + row('Public IP', ni.public_ip);
+                html += row('MAC', ni.mac_address) + row('Status', ni.status);
+                html += '</div>';
+            }
+        }
+
+        if (d.block_devices && d.block_devices.length > 0) {
+            html += section('Storage (EBS Volumes)');
+            for (const vol of d.block_devices) {
+                html += '<div class="vol-card">';
+                html += '<div><span class="vol-label">Device</span><br><span>' + esc(vol.device_name) + '</span></div>';
+                html += '<div><span class="vol-label">Size / Type</span><br><span>' + (vol.volume_size || '?') + ' GB ' + esc(vol.volume_type) + '</span></div>';
+                html += '<div><span class="vol-label">IOPS</span><br><span>' + (vol.iops || '\u2014') + '</span></div>';
+                html += '<div><span class="vol-label">Encrypted / KMS</span><br><span>' +
+                    (vol.encrypted ? 'Yes' : 'No') +
+                    (vol.kms_key_id ? '<br><span style="font-size:9px;color:var(--dim);word-break:break-all;">' + esc(vol.kms_key_id) + '</span>' : '') +
+                    '</span></div>';
+                html += '</div>';
+            }
+        }
+
+        if (d.security_group_details && d.security_group_details.length > 0) {
+            html += section('Security Groups');
+            for (const sg of d.security_group_details) {
+                html += '<div class="sg-card">';
+                html += '<div class="sg-card-title">' + esc(sg.group_name) + '</div>';
+                html += '<div class="sg-card-id">' + esc(sg.group_id) + '</div>';
+                if (sg.description) html += '<div class="sg-card-desc">' + esc(sg.description) + '</div>';
+
+                html += '<div class="sg-rules-columns">';
+
+                html += '<div>';
+                html += '<div class="sg-rules-label">Inbound Rules</div>';
+                if (sg.inbound_rules && sg.inbound_rules.length > 0) {
+                    for (const rule of sg.inbound_rules) {
+                        html += '<div class="sg-rule-row">';
+                        html += '<span class="sg-rule-proto">' + formatPort(rule.protocol, rule.from_port, rule.to_port) + '</span>';
+                        html += '<span class="sg-rule-source">' + esc(rule.source) + '</span>';
+                        html += '<span class="sg-rule-desc">' + esc(rule.description) + '</span>';
+                        html += '</div>';
+                    }
+                } else {
+                    html += '<div style="font-size:11px;color:var(--dim);padding:4px 0;">None</div>';
+                }
+                html += '</div>';
+
+                html += '<div>';
+                html += '<div class="sg-rules-label">Outbound Rules</div>';
+                if (sg.outbound_rules && sg.outbound_rules.length > 0) {
+                    for (const rule of sg.outbound_rules) {
+                        html += '<div class="sg-rule-row">';
+                        html += '<span class="sg-rule-proto">' + formatPort(rule.protocol, rule.from_port, rule.to_port) + '</span>';
+                        html += '<span class="sg-rule-source">' + esc(rule.source) + '</span>';
+                        html += '<span class="sg-rule-desc">' + esc(rule.description) + '</span>';
+                        html += '</div>';
+                    }
+                } else {
+                    html += '<div style="font-size:11px;color:var(--dim);padding:4px 0;">None</div>';
+                }
+                html += '</div>';
+
+                html += '</div>';
+                html += '</div>';
+            }
+        }
+
+        if (d.tags && typeof d.tags === 'object') {
+            const tagKeys = Object.keys(d.tags).sort();
             if (tagKeys.length > 0) {
-                html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--b1);">' +
-                    '<div style="font-size:10px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Tags</div>';
+                html += section('Tags (' + tagKeys.length + ')');
+                html += '<div class="det-columns">';
                 for (const k of tagKeys) {
-                    html += row(k, inst.tags[k]);
+                    html += row(k, d.tags[k]);
                 }
                 html += '</div>';
             }
         }
 
-        // Metrics section
-        html += '<div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--b1);">' +
-            '<button id="metricsLoadBtn" style="padding:6px 16px;background:var(--s3);border:1px solid var(--b1);border-radius:5px;color:var(--muted);font-size:10px;cursor:pointer;">Load Metrics</button>' +
-            '<div id="metricsContainer" style="margin-top:10px;display:none;"></div>' +
-            '</div>';
+        html += section('Quick Metrics');
+        html += '<button id="metricsLoadBtn" style="padding:6px 16px;background:var(--s3);border:1px solid var(--b1);border-radius:5px;color:var(--muted);font-size:10px;cursor:pointer;">Load Metrics</button>';
+        html += '<div id="metricsContainer" style="margin-top:10px;display:none;"></div>';
 
         body.innerHTML = html;
-        modal.classList.add('show');
-        document.getElementById('metricsLoadBtn')?.addEventListener('click', () => this._loadInstanceMetrics(instanceID));
+        document.getElementById('metricsLoadBtn')?.addEventListener('click', () => this._loadInstanceMetrics(d.instance_id));
     }
 
     _setupDetailsModal() {
@@ -3248,6 +3772,7 @@ class CloudTermApp {
                 tab.classList.add('active');
                 const pane = document.getElementById('settingsPane-' + tab.dataset.tab);
                 if (pane) pane.classList.add('active');
+                if (tab.dataset.tab === 'vault') this._loadVaultEntries();
             });
         });
 
@@ -3308,6 +3833,41 @@ class CloudTermApp {
 
         // AWS account add button
         document.getElementById('awsAcctAddBtn')?.addEventListener('click', () => this._addAWSAccount());
+
+        document.getElementById('vaultRefreshBtn')?.addEventListener('click', () => this._loadVaultEntries());
+    }
+
+    _loadVaultEntries() {
+        const list = document.getElementById('vaultEntryList');
+        if (!list) return;
+        list.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:12px;text-align:center;">Loading...</div>';
+        fetch('/vault/credentials').then(r => r.json()).then(entries => {
+            if (!entries || entries.length === 0) {
+                list.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:16px;text-align:center;">' +
+                    '\uD83D\uDD12 No saved credentials.<br><span style="font-size:10px;color:var(--dim);">Save credentials via the RDP connection modal using the "Save to Vault" checkbox.</span></div>';
+                return;
+            }
+            var typeBadgeColors = { instance: 'var(--rdp)', pattern: 'var(--orange)', environment: 'var(--ssh)', account: 'var(--purple)', global: 'var(--muted)' };
+            var html = '';
+            for (var e of entries) {
+                var badgeColor = typeBadgeColors[e.rule.type] || 'var(--dim)';
+                html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;margin-bottom:6px;">';
+                html += '<div style="flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--s2);border-radius:7px;font-size:16px;">\uD83D\uDD12</div>';
+                html += '<div style="flex:1;min-width:0;">';
+                html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">';
+                html += '<span style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (e.rule.label || e.rule.type) + '</span>';
+                html += '<span style="font-size:9px;padding:1px 6px;border-radius:3px;background:' + badgeColor + ';color:var(--bg);font-weight:600;text-transform:uppercase;white-space:nowrap;">' + e.rule.type + '</span>';
+                html += '</div>';
+                html += '<div style="font-size:10px;color:var(--dim);font-family:\'JetBrains Mono\',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + e.rule.value + '</div>';
+                html += '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + e.credential.username + ' \u2022 Security: ' + e.credential.security + '</div>';
+                html += '</div>';
+                html += '<button onclick="window._deleteVaultEntry(\'' + e.rule.id + '\')" style="flex-shrink:0;background:none;border:1px solid rgba(248,113,113,.3);border-radius:7px;color:var(--red);padding:5px 10px;cursor:pointer;font-size:11px;font-family:\'Lato\',sans-serif;transition:all .15s;" onmouseover="this.style.background=\'rgba(248,113,113,.1)\'" onmouseout="this.style.background=\'none\'">Delete</button>';
+                html += '</div>';
+            }
+            list.innerHTML = html;
+        }).catch(() => {
+            list.innerHTML = '<div style="color:var(--red);font-size:11px;padding:12px;text-align:center;">Failed to load vault entries.</div>';
+        });
     }
 
     _updateAIProviderFields(provider) {
@@ -3725,6 +4285,26 @@ class CloudTermApp {
         this._showSplitPicker(tabID, newSessionID, pane2);
     }
 
+    _toggleTerminalFullscreen(tabID) {
+        const info = this.tabManager.tabs.get(tabID);
+        if (!info) return;
+        const wrapper = info.panel.querySelector('.term-panel-wrapper');
+        if (!wrapper) return;
+
+        wrapper.classList.toggle('fullscreen');
+        const isFS = wrapper.classList.contains('fullscreen');
+
+        const btn = wrapper.querySelector('.fullscreen-btn');
+        if (btn) {
+            btn.innerHTML = '<span class="btn-icon">' + (isFS ? '\u2716' : '\u26F6') + '</span> ' + (isFS ? 'Exit FS' : 'Fullscreen');
+        }
+
+        requestAnimationFrame(() => {
+            const allIDs = this.splitManager.getAllSessionIDs(tabID);
+            for (const sid of allIDs) this.termManager.fitTerminal(sid);
+        });
+    }
+
     /** Show a picker in the split pane listing active SSH instances. */
     _showSplitPicker(tabID, newSessionID, paneEl) {
         // Gather unique instances from open SSH tabs
@@ -3793,6 +4373,21 @@ class CloudTermApp {
     }
 
     // -- Instance Metrics --------------------------------------------------------
+
+    _showLogInsight(payload) {
+        var existing = document.querySelectorAll('.log-insight-toast');
+        if (existing.length >= 3) existing[0].remove();
+
+        var toast = document.createElement('div');
+        toast.className = 'log-insight-toast';
+        toast.innerHTML =
+            '<button class="insight-dismiss" onclick="this.parentElement.remove()">\u2715</button>' +
+            '<div class="insight-title">\u26A0 ' + (payload.error_summary || 'Error detected') + '</div>' +
+            '<div style="color:var(--muted);margin-bottom:4px;">' + (payload.suggested_fix || '') + '</div>' +
+            (payload.confidence ? '<div style="font-size:9px;color:var(--dim);">Confidence: ' + Math.round(payload.confidence * 100) + '%</div>' : '');
+        document.body.appendChild(toast);
+        setTimeout(() => { if (toast.parentElement) toast.remove(); }, 10000);
+    }
 
     _loadInstanceMetrics(instanceID) {
         const container = document.getElementById('metricsContainer');
@@ -4673,11 +5268,10 @@ class CloudTermApp {
             });
             const data = await resp.json();
             s.recording = data.recording;
-            // Update rec indicator in tab
+
             const tab = document.querySelector('.tab[data-id="' + sessionID + '"]');
             if (tab) {
                 const dot = tab.querySelector('.tab-rec');
-                const btn = tab.querySelector('.tab-rec-btn');
                 if (data.recording) {
                     if (!dot) {
                         const span = document.createElement('span');
@@ -4686,12 +5280,25 @@ class CloudTermApp {
                         span.title = 'Recording';
                         tab.querySelector('.tab-name').after(span);
                     }
-                    if (btn) btn.classList.add('recording');
                 } else {
                     if (dot) dot.remove();
-                    if (btn) btn.classList.remove('recording');
                 }
             }
+
+            const panel = document.getElementById('panel-' + sessionID);
+            if (panel) {
+                const titleRecBtn = panel.querySelector('.record-btn');
+                if (titleRecBtn) {
+                    if (data.recording) {
+                        titleRecBtn.classList.add('recording');
+                        titleRecBtn.innerHTML = '<span class="btn-icon">\u25CF</span> Recording';
+                    } else {
+                        titleRecBtn.classList.remove('recording');
+                        titleRecBtn.innerHTML = '<span class="btn-icon">\u25CF</span> Record';
+                    }
+                }
+            }
+
             showToast(data.recording ? 'Recording started' : 'Recording stopped');
         } catch (e) {
             showToast('Toggle recording failed: ' + e.message);
@@ -4968,7 +5575,9 @@ class CloudTermApp {
 
         // Keyboard shortcut: Ctrl+Shift+T for new tab (prevent default).
         document.addEventListener('keydown', (e) => {
-            // Ctrl+W: close active tab.
+            const activeInfo = this.tabManager.activeTab && this.tabManager.tabs.get(this.tabManager.activeTab);
+            if (activeInfo && activeInfo.type === 'rdp') return;
+
             if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
                 if (this.tabManager.activeTab) {
                     e.preventDefault();
@@ -4982,6 +5591,20 @@ class CloudTermApp {
                     if (entry && entry.searchAddon) {
                         e.preventDefault();
                         this._showTermSearch(this.tabManager.activeTab);
+                    }
+                }
+            }
+            // Escape: exit terminal fullscreen.
+            if (e.key === 'Escape') {
+                const active = this.tabManager.activeTab;
+                if (active) {
+                    const info = this.tabManager.tabs.get(active);
+                    if (info) {
+                        const wrapper = info.panel.querySelector('.term-panel-wrapper.fullscreen');
+                        if (wrapper) {
+                            e.preventDefault();
+                            this._toggleTerminalFullscreen(active);
+                        }
                     }
                 }
             }
@@ -5525,4 +6148,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const app = new CloudTermApp(config);
     app.init();
     window.cloudterm = app;
+    window._deleteVaultEntry = function(id) {
+        if (!confirm('Delete this saved credential?')) return;
+        fetch('/vault/credentials?id=' + encodeURIComponent(id), { method: 'DELETE' })
+            .then(() => { showToast('Credential deleted'); app._loadVaultEntries(); })
+            .catch(() => showToast('Delete failed'));
+    };
 });

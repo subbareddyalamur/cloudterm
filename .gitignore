@@ -28,3 +28,8 @@ Thumbs.db
 # Tests
 tests/node_modules/
 tests/test-results/
+
+.claude/
+.sisyphus/
+.suggestdata/
+

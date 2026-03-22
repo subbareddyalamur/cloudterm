@@ -420,15 +420,6 @@ body {
   flex-shrink:0;
 }
 .tab-close:hover { background:rgba(248,113,113,.2); color:var(--red); }
-.tab-export {
-  width:14px; height:14px; border-radius:50%;
-  display:inline-flex; align-items:center; justify-content:center;
-  font-size:13px; color:var(--dim); transition:all .15s;
-  cursor:pointer; flex-shrink:0;
-}
-.tab-export:hover { background:rgba(96,165,250,.2); color:var(--rdp); }
-
-
 
 /* ── Panels ── */
 .panels { flex:1; position:relative; overflow:hidden; }
@@ -503,6 +494,68 @@ body {
 .xterm-viewport::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:2px; }
 .xterm-viewport::-webkit-scrollbar-track { background:transparent; }
 
+/* ── Terminal panel wrapper + title bar ── */
+.term-panel-wrapper {
+  flex:1; display:flex; flex-direction:column;
+  border:1px solid var(--b1); border-radius:8px;
+  margin:6px 8px 8px; overflow:hidden; background:var(--bg);
+  position:relative;
+}
+.term-panel-wrapper.fullscreen {
+  position:fixed; inset:0; z-index:1000;
+  margin:0; border-radius:0; border:none;
+}
+.term-title-bar {
+  display:flex; align-items:center; padding:4px 10px;
+  background:var(--s2); border-bottom:1px solid var(--b1);
+  flex-shrink:0; min-height:32px; gap:8px;
+}
+.term-title-left {
+  display:flex; align-items:center; gap:8px; flex:1; min-width:0;
+}
+.term-title-dot {
+  width:7px; height:7px; border-radius:50%; flex-shrink:0;
+}
+.term-title-dot.ssh { background:var(--ssh); box-shadow:0 0 5px var(--ssh); animation:pulse 2s infinite; }
+.term-title-dot.rdp { background:var(--rdp); box-shadow:0 0 5px var(--rdp); animation:pulse 2s infinite; }
+.term-title-name {
+  font-size:12px; font-weight:500; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.term-title-badge {
+  font-size:10px; color:var(--muted); white-space:nowrap;
+}
+.term-title-right {
+  display:flex; align-items:center; gap:4px; flex-shrink:0;
+}
+.term-action-btn {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:3px 10px; background:none;
+  border:1px solid var(--b1); border-radius:5px;
+  color:var(--muted); font-size:11px; cursor:pointer;
+  transition:all .15s; white-space:nowrap;
+  font-family:'Lato',sans-serif;
+}
+.term-action-btn:hover {
+  background:var(--s3); color:var(--text); border-color:var(--b2);
+}
+.term-action-btn .btn-icon { font-size:12px; line-height:1; }
+.term-action-btn.recording {
+  color:var(--red); border-color:rgba(248,113,113,.4);
+  background:rgba(248,113,113,.08);
+}
+.term-action-btn.recording:hover { background:rgba(248,113,113,.15); }
+.term-action-btn.end-btn { color:var(--red); border-color:rgba(248,113,113,.3); }
+.term-action-btn.end-btn:hover {
+  background:rgba(248,113,113,.1); border-color:rgba(248,113,113,.5);
+}
+.term-action-btn.suggest-toggle-btn.active {
+  color:var(--ssh); border-color:rgba(34,197,94,.3);
+}
+.term-action-btn.suggest-toggle-btn.active:hover {
+  background:rgba(34,197,94,.1);
+}
+
 .term-body {
   flex:1; padding:16px 20px;
   font-size: var(--term-font-size); line-height:2;
@@ -510,6 +563,30 @@ body {
 }
 .term-body::-webkit-scrollbar { width:3px; }
 .term-body::-webkit-scrollbar-thumb { background:var(--b1); }
+
+.ghost-text-overlay {
+  position:absolute; pointer-events:none; white-space:pre; z-index:10;
+  color:var(--dim); opacity:0.5;
+  font-family:'JetBrains Mono',monospace; font-size:inherit; line-height:inherit;
+}
+.log-insight-toast {
+  position:fixed; bottom:60px; right:16px; z-index:2000;
+  background:var(--s2); border:1px solid var(--b1); border-radius:8px;
+  padding:10px 14px; max-width:420px; font-size:11px; color:var(--text);
+  box-shadow:0 4px 16px rgba(0,0,0,.4); animation:slideUp .3s ease;
+}
+.log-insight-toast .insight-title {
+  color:var(--red); font-weight:600; font-size:12px; margin-bottom:4px;
+}
+.log-insight-toast .insight-fix {
+  color:var(--ssh); font-family:'JetBrains Mono',monospace; font-size:10px;
+  background:var(--s3); padding:4px 8px; border-radius:4px; margin-top:6px;
+}
+.log-insight-toast .insight-dismiss {
+  position:absolute; top:6px; right:8px; background:none; border:none;
+  color:var(--dim); cursor:pointer; font-size:14px;
+}
+@keyframes slideUp { from { transform:translateY(20px);opacity:0; } to { transform:translateY(0);opacity:1; } }
 
 .tl { display:flex; align-items:baseline; gap:0; flex-wrap:wrap; }
 .ps1-u { color:#7ec8e3; }
@@ -734,26 +811,59 @@ body {
 }
 .modal-ok:hover { filter:brightness(1.15); }
 
-/* ── Settings Tabs ── */
+/* ── Settings Layout ── */
+.settings-body {
+  display:grid; grid-template-columns:200px 1fr;
+  flex:1; min-height:0; overflow:hidden; gap:0;
+}
 .settings-tabs {
-  display:flex; gap:4px; margin-bottom:16px; flex-shrink:0;
-  border-bottom:1px solid var(--b1); padding-bottom:0;
+  display:flex; flex-direction:column; gap:2px;
+  padding:16px 12px; flex-shrink:0; overflow-y:auto;
+  border-right:1px solid var(--b1);
 }
 .settings-tab {
-  background:none; border:none; border-bottom:2px solid transparent;
-  color:var(--muted); font-family:'Lato',sans-serif; font-size:12px;
-  padding:8px 14px; cursor:pointer; transition:all .2s;
+  background:none; border:none; border-radius:8px;
+  color:var(--muted); font-family:'Lato',sans-serif; font-size:13px;
+  padding:10px 16px; cursor:pointer; transition:all .15s;
+  text-align:left; white-space:nowrap; font-weight:500;
 }
-.settings-tab:hover { color:var(--text); }
-.settings-tab.active { color:var(--ssh); border-bottom-color:var(--ssh); }
-.settings-pane { display:none; min-height:0; flex:1; overflow-y:auto; }
+.settings-tab:hover { color:var(--text); background:var(--s2); }
+.settings-tab.active {
+  color:var(--text); background:var(--s2);
+  font-weight:600;
+}
+.settings-pane {
+  display:none; min-height:0; overflow-y:auto;
+  padding:28px 32px;
+}
 .settings-pane.active { display:block; }
+.settings-section-title {
+  font-size:16px; font-weight:600; color:var(--text);
+  margin-bottom:6px;
+}
+.settings-section-desc {
+  font-size:12px; color:var(--muted); margin-bottom:16px; line-height:1.5;
+}
+.settings-field-label {
+  font-size:12px; color:var(--muted); margin-bottom:6px; display:block;
+}
+.settings-divider {
+  border:none; border-top:1px solid var(--b1); margin:24px 0;
+}
 .settings-input {
-  width:100%; box-sizing:border-box; padding:8px 10px;
-  background:var(--s3); border:1px solid var(--b1); border-radius:7px;
-  color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px; outline:none;
+  width:100%; box-sizing:border-box; padding:10px 14px;
+  background:var(--s2); border:1px solid var(--b1); border-radius:8px;
+  color:var(--text); font-family:'JetBrains Mono',monospace; font-size:13px; outline:none;
+  transition:border .2s;
 }
 .settings-input:focus { border-color:var(--ssh); }
+.settings-toggle-label {
+  display:flex; align-items:center; gap:10px; cursor:pointer;
+  font-size:13px; color:var(--text); padding:8px 0;
+}
+.settings-checkbox {
+  width:18px; height:18px; accent-color:var(--ssh); cursor:pointer; flex-shrink:0;
+}
 .settings-zoom-btn {
   width:30px; height:30px; border-radius:6px; background:var(--s3);
   border:1px solid var(--b1); color:var(--muted); font-size:16px;
@@ -761,52 +871,13 @@ body {
 }
 .settings-zoom-btn:hover { border-color:var(--b2); color:var(--text); }
 .settings-action-btn {
-  padding:8px 16px; background:linear-gradient(135deg,rgba(61,220,132,.2),rgba(108,92,231,.15));
-  border:1px solid rgba(61,220,132,.4); border-radius:7px; color:var(--ssh);
-  font-family:'Lato',sans-serif; font-size:12px; cursor:pointer; transition:all .2s;
+  padding:10px 20px; background:linear-gradient(135deg,rgba(61,220,132,.2),rgba(108,92,231,.15));
+  border:1px solid rgba(61,220,132,.4); border-radius:8px; color:var(--ssh);
+  font-family:'Lato',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:all .2s;
 }
 .settings-action-btn:hover { background:linear-gradient(135deg,rgba(61,220,132,.3),rgba(108,92,231,.25)); }
-.settings-toggle-label {
-  display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text); cursor:pointer;
-}
-.settings-checkbox {
-  appearance:none; width:16px; height:16px; border:1px solid var(--b2);
-  border-radius:4px; background:var(--s3); cursor:pointer; position:relative;
-}
-.settings-checkbox:checked { background:var(--ssh); border-color:var(--ssh); }
-.settings-checkbox:checked::after {
-  content:''; position:absolute; left:4px; top:1px; width:5px; height:9px;
-  border:solid var(--s1); border-width:0 2px 2px 0; transform:rotate(45deg);
-}
-/* ── AWS Accounts ── */
-.aws-accounts-list { margin-bottom:12px; }
-.aws-acct-row {
-  display:flex; align-items:center; gap:8px; padding:8px 10px;
-  background:var(--s3); border:1px solid var(--b1); border-radius:8px; margin-bottom:6px;
-}
-.aws-acct-info { flex:1; min-width:0; }
-.aws-acct-name { font-size:12px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.aws-acct-key { font-size:10px; color:var(--dim); font-family:'JetBrains Mono',monospace; }
-.aws-acct-btn {
-  background:none; border:1px solid var(--b1); border-radius:5px;
-  color:var(--muted); font-size:11px; padding:3px 8px; cursor:pointer; transition:all .2s; white-space:nowrap;
-}
-.aws-acct-btn:hover { border-color:var(--b2); color:var(--text); }
-.aws-acct-btn.scan { color:var(--ssh); border-color:rgba(61,220,132,.4); }
-.aws-acct-btn.scan:hover { background:rgba(61,220,132,.1); }
-.aws-acct-btn.del { color:var(--red); border-color:rgba(239,68,68,.3); }
-.aws-acct-btn.del:hover { background:rgba(239,68,68,.1); }
-.aws-add-form { border-top:1px solid var(--b1); padding-top:12px; }
 
-/* ── Recording indicator ── */
-.tab-rec { color:var(--red); font-size:10px; margin-left:4px; animation:pulse-rec 1.5s infinite; cursor:default; }
 @keyframes pulse-rec { 0%,100%{opacity:1} 50%{opacity:.3} }
-.tab-rec-btn {
-  background:none; border:none; color:var(--muted); cursor:pointer; font-size:11px; padding:0 3px;
-  margin-left:2px;
-}
-.tab-rec-btn:hover { color:var(--red); }
-.tab-rec-btn.recording { color:var(--red); }
 
 /* ── Recordings modal ── */
 .rec-list { max-height:50vh; overflow-y:auto; }
@@ -904,7 +975,7 @@ body {
 
 /* ── Transfer Manager Panel ── */
 .transfer-panel {
-  position:fixed; bottom:16px; left:16px; z-index:450;
+  position:fixed; bottom:16px; left:calc(var(--sidebar-w) + 16px); z-index:450;
   width:340px; background:var(--s2); border:1px solid var(--b2);
   border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,.6);
   font-family:'Lato',sans-serif; overflow:hidden;
@@ -972,9 +1043,41 @@ body {
 .transfer-row.error .transfer-row-msg { color:#f87171; }
 .transfer-row.done .transfer-row-pct { color:var(--ssh); }
 
-.det-row { display:grid; grid-template-columns:120px 1fr; padding:5px 0; border-bottom:1px solid var(--b1); font-size:12px; gap:8px; }
-.det-label { color:var(--muted); }
+.det-row { display:grid; grid-template-columns:160px 1fr; padding:5px 0; border-bottom:1px solid var(--b1); font-size:12px; gap:8px; }
+.det-label { color:var(--muted); font-weight:500; }
 .det-val { color:var(--text); text-align:left; word-break:break-all; }
+.det-section {
+  font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:1px;
+  margin:16px 0 6px; padding-top:12px; border-top:1px solid var(--b1); font-weight:600;
+}
+.det-section:first-child { margin-top:0; padding-top:0; border-top:none; }
+.det-columns { display:grid; grid-template-columns:1fr 1fr; gap:0 32px; }
+.sg-card {
+  background:var(--s3); border:1px solid var(--b1); border-radius:8px;
+  padding:10px 14px; margin-bottom:8px;
+}
+.sg-card-title { font-size:12px; font-weight:600; color:var(--text); margin-bottom:2px; }
+.sg-card-id { font-size:10px; color:var(--dim); font-family:'JetBrains Mono',monospace; margin-bottom:6px; }
+.sg-card-desc { font-size:11px; color:var(--muted); margin-bottom:8px; }
+.sg-rules-label { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin:6px 0 4px; font-weight:600; }
+.sg-rule-row {
+  display:grid; grid-template-columns:90px 1fr auto; gap:6px; align-items:center;
+  font-size:11px; padding:3px 0; border-bottom:1px solid var(--b1);
+  font-family:'JetBrains Mono',monospace;
+}
+.sg-rule-row:last-child { border-bottom:none; }
+.sg-rule-proto { color:var(--ssh); font-weight:600; }
+.sg-rule-ports { color:var(--text); }
+.sg-rule-source { color:var(--muted); word-break:break-all; }
+.sg-rule-desc { color:var(--dim); font-size:10px; font-family:'Lato',sans-serif; }
+.sg-rules-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.vol-card {
+  display:grid; grid-template-columns:100px 1fr 70px 1fr; gap:6px;
+  background:var(--s3); border:1px solid var(--b1); border-radius:6px;
+  padding:8px 12px; margin-bottom:4px; font-size:11px;
+}
+.vol-card span { color:var(--text); }
+.vol-card .vol-label { color:var(--dim); font-size:10px; }
 .details-body { scrollbar-width:none; -ms-overflow-style:none; }
 .details-body::-webkit-scrollbar { display:none; }
 
@@ -1119,7 +1222,7 @@ body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
 
 /* ── Toast ── */
 .toast {
-  position:fixed; bottom:32px; left:20px; z-index:400;
+  position:fixed; bottom:32px; left:calc(var(--sidebar-w) + 20px); z-index:400;
   background:var(--s2); border:1px solid var(--b2);
   border-radius:10px; padding:10px 16px;
   display:flex; align-items:center; gap:10px;
@@ -1680,6 +1783,10 @@ body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
         <div class="theme-opt" data-page-theme="cyber"><div class="theme-dot" style="background:#0a0a12;border-color:rgba(192,132,252,.3)"></div>Cyberpunk</div>
         <div class="theme-opt" data-page-theme="warp-hero"><div class="theme-dot" style="background:#0c110e;border-color:rgba(51,137,92,.4)"></div>Warp Hero Dark</div>
         <div class="theme-opt" data-page-theme="light"><div class="theme-dot" style="background:#f0f2f5;border-color:#c0c5ce"></div>Light</div>
+        <div class="theme-opt" data-page-theme="railway"><div class="theme-dot" style="background:#13111c;border-color:rgba(196,167,231,.3)"></div>Railway</div>
+        <div class="theme-opt" data-page-theme="replit"><div class="theme-dot" style="background:#0e1525;border-color:rgba(12,214,138,.3)"></div>Replit</div>
+        <div class="theme-opt" data-page-theme="raycast"><div class="theme-dot" style="background:#111113;border-color:rgba(168,85,247,.3)"></div>Raycast</div>
+        <div class="theme-opt" data-page-theme="unify"><div class="theme-dot" style="background:#1a1a1a;border-color:rgba(164,235,216,.3)"></div>Unify</div>
         <div class="theme-section-label">Terminal Theme</div>
         <div class="theme-opt active" data-term-theme="github-dark"><div class="theme-dot" style="background:#0d1117"></div>GitHub Dark<span class="check">&#x2713;</span></div>
         <div class="theme-opt" data-term-theme="atom-one-dark"><div class="theme-dot" style="background:#282c34"></div>Atom One Dark</div>
@@ -1690,6 +1797,10 @@ body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
         <div class="theme-opt" data-term-theme="warp-hero-dark"><div class="theme-dot" style="background:#18211d"></div>Warp Hero Dark</div>
         <div class="theme-opt" data-term-theme="warp-dark"><div class="theme-dot" style="background:#20262c"></div>Warp Dark</div>
         <div class="theme-opt" data-term-theme="catppuccin-mocha"><div class="theme-dot" style="background:#1e1e2e"></div>Catppuccin Mocha</div>
+        <div class="theme-opt" data-term-theme="railway"><div class="theme-dot" style="background:#13111c"></div>Railway</div>
+        <div class="theme-opt" data-term-theme="replit"><div class="theme-dot" style="background:#0e1525"></div>Replit</div>
+        <div class="theme-opt" data-term-theme="raycast"><div class="theme-dot" style="background:#111113"></div>Raycast</div>
+        <div class="theme-opt" data-term-theme="unify"><div class="theme-dot" style="background:#1a1a1a"></div>Unify</div>
       </div>
     </div>
 
@@ -1826,10 +1937,10 @@ body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
 
 <!-- INSTANCE DETAILS MODAL -->
 <div class="modal-bg" id="detailsModal">
-  <div class="modal" style="width:560px;max-width:90vw">
-    <div class="modal-title">Instance Details</div>
-    <div class="details-body" style="max-height:60vh;overflow-y:auto"></div>
-    <button class="modal-cancel" onclick="document.getElementById('detailsModal').classList.remove('show')">Close</button>
+  <div class="modal" style="width:90vw;height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-x" onclick="document.getElementById('detailsModal').classList.remove('show')">&times;</div>
+    <div class="modal-title" style="flex-shrink:0;">Instance Details</div>
+    <div class="details-body" style="flex:1;overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -1976,41 +2087,62 @@ body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
 
 <!-- SETTINGS MODAL -->
 <div class="modal-bg" id="settingsModal">
-  <div class="modal" style="width:90vw;height:90vh;display:flex;flex-direction:column;">
-    <div class="modal-title" style="flex-shrink:0;">Settings</div>
+  <div class="modal" style="width:90vw;max-width:900px;height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-title" style="flex-shrink:0;font-size:18px;font-weight:600;padding:20px 24px 16px;">Settings</div>
 
-    <!-- Tab Bar -->
-    <div class="settings-tabs">
-      <button class="settings-tab active" data-tab="general">General</button>
-      <button class="settings-tab" data-tab="appearance">Appearance</button>
-      <button class="settings-tab" data-tab="aws-accounts">AWS Accounts</button>
-      <button class="settings-tab" data-tab="ai-agent">AI Agent</button>
-    </div>
+    <div class="settings-body">
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="general">General</button>
+        <button class="settings-tab" data-tab="appearance">Appearance</button>
+        <button class="settings-tab" data-tab="aws-accounts">AWS Accounts</button>
+        <button class="settings-tab" data-tab="ai-agent">AI Agent</button>
+        <button class="settings-tab" data-tab="vault">Credential Vault</button>
+      </div>
 
-    <!-- General Tab -->
-    <div class="settings-pane active" id="settingsPane-general">
-      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Express Transfer (S3)</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">S3 bucket used as intermediary for fast file transfers via presigned URLs.</div>
-      <input id="settingsS3Bucket" type="text" placeholder="S3 bucket name (e.g. my-transfer-bucket)" class="settings-input">
-      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;">Auto-Record Sessions</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Automatically record SSH terminal sessions on connect.</div>
+      <div style="flex:1;min-height:0;overflow:hidden;position:relative;">
+        <div class="settings-pane active" id="settingsPane-general">
+
+      <div class="settings-section-title">Express Transfer</div>
+      <div class="settings-section-desc">S3 bucket used as intermediary for fast file transfers via presigned URLs.</div>
+      <span class="settings-field-label">S3 Bucket Name</span>
+      <input id="settingsS3Bucket" type="text" placeholder="e.g. my-transfer-bucket" class="settings-input">
+
+      <hr class="settings-divider">
+
+      <div class="settings-section-title">Session Recording</div>
+      <div class="settings-section-desc">Automatically record SSH terminal sessions on connect.</div>
       <label class="settings-toggle-label">
         <input type="checkbox" id="settingsAutoRecord" class="settings-checkbox">
         <span>Enable auto-recording</span>
+      </label>
+
+      <hr class="settings-divider">
+
+      <div class="settings-section-title">Terminal Suggestions</div>
+      <div class="settings-section-desc">AI-powered command autocomplete and error analysis for SSH sessions.</div>
+      <label class="settings-toggle-label">
+        <input type="checkbox" id="settingsSuggestEnabled" class="settings-checkbox" checked>
+        <span>Enable autocomplete suggestions</span>
+      </label>
+      <label class="settings-toggle-label">
+        <input type="checkbox" id="settingsErrorAnalysis" class="settings-checkbox" checked>
+        <span>Enable error analysis</span>
       </label>
     </div>
 
     <!-- Appearance Tab -->
     <div class="settings-pane" id="settingsPane-appearance">
-      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">App Font Size</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <div class="settings-section-title">App Font Size</div>
+      <div class="settings-section-desc">Adjust the zoom level for the entire application.</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
         <button id="settingsFontDec" class="settings-zoom-btn">&#x2212;</button>
         <span id="settingsFontValue" style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text);min-width:40px;text-align:center;">100%</span>
         <button id="settingsFontInc" class="settings-zoom-btn">+</button>
       </div>
 
-      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Environment Colors</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Color-code terminal borders by environment tag. Helps prevent running commands on the wrong host.</div>
+      <hr class="settings-divider">
+      <div class="settings-section-title">Environment Colors</div>
+      <div class="settings-section-desc">Color-code terminal borders by environment tag. Helps prevent running commands on the wrong host.</div>
       <label class="settings-toggle-label" style="margin-bottom:10px;">
         <input type="checkbox" id="settingsEnvColors" class="settings-checkbox">
         <span>Enable environment colors</span>
@@ -2085,8 +2217,25 @@ body.ai-open .main { margin-right:var(--ai-panel-w, 400px); }
       <input id="aiMaxTokens" type="number" class="settings-input" value="4096" style="margin-bottom:12px;">
     </div>
 
-    <!-- Footer buttons -->
-    <div style="display:flex;gap:8px;margin-top:16px;flex-shrink:0;">
+    <div class="settings-pane" id="settingsPane-vault">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div class="settings-section-title">Credential Vault</div>
+        <button id="vaultRefreshBtn" style="padding:6px 14px;background:var(--s2);border:1px solid var(--b1);border-radius:8px;color:var(--muted);font-family:'Lato',sans-serif;font-size:11px;cursor:pointer;transition:all .15s;" onmouseover="this.style.background='var(--s3)';this.style.color='var(--text)'" onmouseout="this.style.background='var(--s2)';this.style.color='var(--muted)'">&#x21BB; Refresh</button>
+      </div>
+      <div class="settings-section-desc">Securely stored RDP credentials. Auto-matched to instances on connect.</div>
+      <div id="vaultEntryList" style="max-height:50vh;overflow-y:auto;"></div>
+      <div style="font-size:11px;color:var(--dim);margin-top:20px;padding:12px 16px;background:var(--s2);border:1px solid var(--b1);border-radius:8px;line-height:1.6;">
+        &#x1F512; Credentials are encrypted at rest using AES-256-GCM.
+        <br>Save new credentials via the RDP connection modal.
+        <br><br>
+        <strong style="color:var(--muted);">Match Priority:</strong> Instance &rarr; Substring &rarr; Name Pattern &rarr; Environment &rarr; Account &rarr; Global
+      </div>
+    </div>
+
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;padding:16px 24px;flex-shrink:0;border-top:1px solid var(--b1);">
       <button id="settingsSaveBtn" class="settings-action-btn" style="flex:1;">Save</button>
       <button class="modal-cancel" onclick="document.getElementById('settingsModal').classList.remove('show')" style="flex:1;">Cancel</button>
     </div>

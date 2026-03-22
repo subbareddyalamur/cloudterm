@@ -15,8 +15,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,27 +27,33 @@ import (
 	"cloudterm-go/internal/guacamole"
 	"cloudterm-go/internal/llm"
 	"cloudterm-go/internal/session"
+	"cloudterm-go/internal/suggest"
 	"cloudterm-go/internal/types"
+	"cloudterm-go/internal/vault"
 
 	"github.com/gorilla/websocket"
 )
 
 // Handler serves HTTP and WebSocket requests for CloudTerm.
 type Handler struct {
-	cfg         *config.Config
-	discovery   *aws.Discovery
-	sessions    *session.Manager
-	logger      *log.Logger
-	audit       *audit.Logger
-	accounts    *aws.AccountStore
-	upgrader    websocket.Upgrader
-	clients     map[*websocket.Conn][]string // conn -> session IDs
-	clientsMu   sync.Mutex
-	templates   *template.Template
+	cfg       *config.Config
+	discovery *aws.Discovery
+	sessions  *session.Manager
+	logger    *log.Logger
+	audit     *audit.Logger
+	accounts  *aws.AccountStore
+	suggest   *suggest.Engine
+	vault     *vault.Store
+	observers map[string]*suggest.Observer
+	obsMu     sync.Mutex
+	upgrader  websocket.Upgrader
+	clients   map[*websocket.Conn][]string
+	clientsMu sync.Mutex
+	templates *template.Template
 }
 
 // New creates a Handler wired to the given dependencies.
-func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger, auditLogger *audit.Logger, accounts *aws.AccountStore) *Handler {
+func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger, auditLogger *audit.Logger, accounts *aws.AccountStore, suggestEngine *suggest.Engine, vaultStore *vault.Store) *Handler {
 	tmpl := template.Must(template.ParseGlob(filepath.Join("web", "templates", "*.html")))
 
 	return &Handler{
@@ -57,6 +63,9 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 		logger:    logger,
 		audit:     auditLogger,
 		accounts:  accounts,
+		suggest:   suggestEngine,
+		vault:     vaultStore,
+		observers: make(map[string]*suggest.Observer),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -124,6 +133,12 @@ func (h *Handler) Router() http.Handler {
 	// API — audit & metrics
 	mux.HandleFunc("GET /audit-log", h.handleAuditLog)
 	mux.HandleFunc("GET /instance-metrics", h.handleInstanceMetrics)
+	mux.HandleFunc("GET /instance-details", h.handleInstanceDetails)
+	mux.HandleFunc("GET /suggest-status", h.handleSuggestStatus)
+	mux.HandleFunc("GET /vault/credentials", h.handleVaultList)
+	mux.HandleFunc("POST /vault/credentials", h.handleVaultSave)
+	mux.HandleFunc("DELETE /vault/credentials", h.handleVaultDelete)
+	mux.HandleFunc("GET /vault/match", h.handleVaultMatch)
 
 	// AI Agent
 	mux.HandleFunc("POST /ai-agent/chat", h.handleAIChat)
@@ -225,7 +240,7 @@ func (h *Handler) handleScanStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleRDPMode(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{
-		"mode":       h.cfg.RDPMode,
+		"mode":        h.cfg.RDPMode,
 		"guac_ws_url": h.cfg.GuacWSURL,
 	})
 }
@@ -999,10 +1014,10 @@ func (h *Handler) handleListAWSAccounts(w http.ResponseWriter, r *http.Request) 
 
 func (h *Handler) handleAddAWSAccount(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name           string `json:"name"`
-		AccessKeyID    string `json:"access_key_id"`
+		Name            string `json:"name"`
+		AccessKeyID     string `json:"access_key_id"`
 		SecretAccessKey string `json:"secret_access_key"`
-		SessionToken   string `json:"session_token"`
+		SessionToken    string `json:"session_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -1264,7 +1279,12 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			h.wsCloseSession(conn, msg.Payload)
 
 		case "keepalive":
-			// Client heartbeat — no action needed, read deadline already reset.
+
+		case "suggest_request":
+			h.wsSuggestRequest(conn, &writeMu, msg.Payload)
+
+		case "suggest_toggle":
+			h.wsSuggestToggle(msg.Payload)
 
 		default:
 			h.logger.Printf("unknown ws message type: %s", msg.Type)
@@ -1313,7 +1333,7 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		acctID := strings.TrimPrefix(awsProfile, "manual:")
 		if acct, ok := h.accounts.Get(acctID); ok {
 			creds = &session.AWSCreds{
-				AccessKeyID:    acct.AccessKeyID,
+				AccessKeyID:     acct.AccessKeyID,
 				SecretAccessKey: acct.SecretAccessKey,
 				SessionToken:    acct.SessionToken,
 			}
@@ -1324,6 +1344,12 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 	}
 
 	onOutput := func(data []byte) {
+		h.obsMu.Lock()
+		obs := h.observers[sessionID]
+		h.obsMu.Unlock()
+		if obs != nil {
+			obs.FeedOutput(data)
+		}
 		writeMu.Lock()
 		defer writeMu.Unlock()
 		outMsg := types.WSMessage{
@@ -1352,6 +1378,46 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		})
 		writeMu.Unlock()
 		return
+	}
+
+	if h.suggest != nil {
+		var obs *suggest.Observer
+		obs = suggest.NewObserver(
+			func(cmd, output string) {
+				if cmd == "" {
+					return
+				}
+				exitCode := 0
+				if suggest.ContainsErrorSignal(output) {
+					exitCode = 1
+				}
+				h.suggest.LearnCommand("", cmd, exitCode, "")
+
+				errOut, resCMD, resolved := obs.WasErrorResolved()
+				if resolved && errOut != "" && resCMD != "" {
+					h.suggest.LearnResolution(errOut, resCMD)
+				}
+			},
+			func(output string) {
+				insights := h.suggest.AnalyzeOutput("", output)
+				for _, insight := range insights {
+					writeMu.Lock()
+					conn.WriteJSON(types.WSMessage{
+						Type: "log_insight",
+						Payload: types.LogInsightMsg{
+							SessionID:    sessionID,
+							ErrorSummary: insight.ErrorSummary,
+							SuggestedFix: insight.SuggestedFix,
+							Confidence:   insight.Confidence,
+						},
+					})
+					writeMu.Unlock()
+				}
+			},
+		)
+		h.obsMu.Lock()
+		h.observers[sessionID] = obs
+		h.obsMu.Unlock()
 	}
 
 	// Audit log the session start.
@@ -1394,6 +1460,12 @@ func (h *Handler) wsTerminalInput(payload interface{}) {
 	var msg types.TerminalInputMsg
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
+	}
+	h.obsMu.Lock()
+	obs := h.observers[msg.SessionID]
+	h.obsMu.Unlock()
+	if obs != nil {
+		obs.FeedInput([]byte(msg.Input))
 	}
 	if err := h.sessions.WriteInput(msg.SessionID, []byte(msg.Input)); err != nil {
 		h.logger.Printf("write input session %s: %v", msg.SessionID, err)
@@ -1445,6 +1517,13 @@ func (h *Handler) wsCloseSession(conn *websocket.Conn, payload interface{}) {
 	if err := h.sessions.CloseSession(msg.SessionID); err != nil {
 		h.logger.Printf("close session %s: %v", msg.SessionID, err)
 	}
+
+	h.obsMu.Lock()
+	if obs, ok := h.observers[msg.SessionID]; ok {
+		obs.Close()
+		delete(h.observers, msg.SessionID)
+	}
+	h.obsMu.Unlock()
 
 	// Remove from the client's tracked sessions.
 	h.clientsMu.Lock()
@@ -1513,6 +1592,21 @@ func (h *Handler) handleInstanceMetrics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	jsonResponse(w, metrics)
+}
+
+func (h *Handler) handleInstanceDetails(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.URL.Query().Get("id")
+	if instanceID == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	details, err := h.discovery.GetInstanceDetails(r.Context(), instanceID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, details)
 }
 
 func (h *Handler) handleBrowseDirectory(w http.ResponseWriter, r *http.Request) {
@@ -1919,4 +2013,149 @@ func (h *Handler) handlePutPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) wsSuggestRequest(conn *websocket.Conn, writeMu *sync.Mutex, payload interface{}) {
+	if h.suggest == nil {
+		return
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	var req types.SuggestRequestMsg
+	if json.Unmarshal(raw, &req) != nil {
+		return
+	}
+	suggestions := h.suggest.Suggest(req.SessionID, req.Env, req.Line, "", 5)
+	var items []types.SuggestItem
+	for _, s := range suggestions {
+		items = append(items, types.SuggestItem{Text: s.Text, Score: s.Score, Source: s.Source})
+	}
+	resp := types.WSMessage{
+		Type: "suggest_response",
+		Payload: types.SuggestResponseMsg{
+			SessionID:   req.SessionID,
+			Suggestions: items,
+		},
+	}
+	writeMu.Lock()
+	conn.WriteJSON(resp)
+	writeMu.Unlock()
+}
+
+func (h *Handler) wsSuggestToggle(payload interface{}) {
+	if h.suggest == nil {
+		return
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	var msg types.SuggestToggleMsg
+	if json.Unmarshal(raw, &msg) != nil {
+		return
+	}
+	h.suggest.SetEnabled(msg.SessionID, msg.Enabled)
+}
+
+func (h *Handler) handleSuggestStatus(w http.ResponseWriter, r *http.Request) {
+	if h.suggest == nil {
+		jsonResponse(w, map[string]interface{}{"enabled": false})
+		return
+	}
+	jsonResponse(w, h.suggest.Stats())
+}
+
+func (h *Handler) handleVaultList(w http.ResponseWriter, r *http.Request) {
+	if h.vault == nil {
+		jsonResponse(w, []vault.VaultEntry{})
+		return
+	}
+	resolveID := r.URL.Query().Get("resolve")
+	if resolveID != "" {
+		entry, err := h.vault.Get(resolveID)
+		if err != nil {
+			jsonError(w, "not found", http.StatusNotFound)
+			return
+		}
+		jsonResponse(w, entry)
+		return
+	}
+	jsonResponse(w, h.vault.List())
+}
+
+func (h *Handler) handleVaultSave(w http.ResponseWriter, r *http.Request) {
+	if h.vault == nil {
+		jsonError(w, "vault not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var entry vault.VaultEntry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		jsonError(w, "invalid request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if entry.Rule.ID == "" {
+		entry.Rule.ID = fmt.Sprintf("v-%d", time.Now().UnixNano())
+	}
+	switch entry.Rule.Type {
+	case "instance":
+		entry.Rule.Priority = 1
+	case "substring":
+		entry.Rule.Priority = 2
+	case "pattern":
+		entry.Rule.Priority = 3
+	case "environment":
+		entry.Rule.Priority = 4
+	case "account":
+		entry.Rule.Priority = 5
+	case "global":
+		entry.Rule.Priority = 6
+	default:
+		jsonError(w, "invalid rule type", http.StatusBadRequest)
+		return
+	}
+	if err := h.vault.Save(entry); err != nil {
+		jsonError(w, "save failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "ok", "id": entry.Rule.ID})
+}
+
+func (h *Handler) handleVaultDelete(w http.ResponseWriter, r *http.Request) {
+	if h.vault == nil {
+		jsonError(w, "vault not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.vault.Delete(id); err != nil {
+		jsonError(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) handleVaultMatch(w http.ResponseWriter, r *http.Request) {
+	if h.vault == nil {
+		jsonError(w, "vault not configured", http.StatusServiceUnavailable)
+		return
+	}
+	instanceID := r.URL.Query().Get("instance_id")
+	name := r.URL.Query().Get("name")
+	env := r.URL.Query().Get("env")
+	account := r.URL.Query().Get("account")
+
+	entry, err := h.vault.FindMatch(instanceID, name, env, account)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		jsonResponse(w, map[string]string{"error": "no match"})
+		return
+	}
+	redacted := *entry
+	redacted.Credential.Password = ""
+	jsonResponse(w, redacted)
 }

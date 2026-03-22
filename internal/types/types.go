@@ -4,18 +4,18 @@ import "time"
 
 // EC2Instance represents a discovered AWS EC2 instance.
 type EC2Instance struct {
-	InstanceID   string `json:"instance_id" yaml:"instance_id"`
-	Name         string `json:"name" yaml:"name"`
-	PrivateIP    string `json:"private_ip" yaml:"private_ip"`
-	PublicIP     string `json:"public_ip,omitempty" yaml:"public_ip,omitempty"`
-	State        string `json:"state" yaml:"state"`
-	Platform     string `json:"platform" yaml:"platform"` // "linux" or "windows"
-	OS           string `json:"os" yaml:"os"`             // "rhel", "amazon-linux", "ubuntu", "windows", etc.
-	InstanceType string `json:"instance_type" yaml:"instance_type"`
-	AWSProfile   string `json:"aws_profile" yaml:"aws_profile"`
-	AWSRegion    string `json:"aws_region" yaml:"aws_region"`
-	AccountID    string `json:"account_id" yaml:"account_id"`
-	AccountAlias string `json:"account_alias,omitempty" yaml:"account_alias,omitempty"`
+	InstanceID      string            `json:"instance_id" yaml:"instance_id"`
+	Name            string            `json:"name" yaml:"name"`
+	PrivateIP       string            `json:"private_ip" yaml:"private_ip"`
+	PublicIP        string            `json:"public_ip,omitempty" yaml:"public_ip,omitempty"`
+	State           string            `json:"state" yaml:"state"`
+	Platform        string            `json:"platform" yaml:"platform"` // "linux" or "windows"
+	OS              string            `json:"os" yaml:"os"`             // "rhel", "amazon-linux", "ubuntu", "windows", etc.
+	InstanceType    string            `json:"instance_type" yaml:"instance_type"`
+	AWSProfile      string            `json:"aws_profile" yaml:"aws_profile"`
+	AWSRegion       string            `json:"aws_region" yaml:"aws_region"`
+	AccountID       string            `json:"account_id" yaml:"account_id"`
+	AccountAlias    string            `json:"account_alias,omitempty" yaml:"account_alias,omitempty"`
 	Tag1Value       string            `json:"tag1_value" yaml:"tag1_value"`
 	Tag2Value       string            `json:"tag2_value" yaml:"tag2_value"`
 	LaunchTime      string            `json:"launch_time,omitempty" yaml:"launch_time,omitempty"`
@@ -25,6 +25,65 @@ type EC2Instance struct {
 	VpcID           string            `json:"vpc_id,omitempty" yaml:"vpc_id,omitempty"`
 	SubnetID        string            `json:"subnet_id,omitempty" yaml:"subnet_id,omitempty"`
 	SecurityGroups  []string          `json:"security_groups,omitempty" yaml:"security_groups,omitempty"`
+}
+
+// EC2InstanceDetails holds the full output from DescribeInstances + DescribeSecurityGroups.
+type EC2InstanceDetails struct {
+	EC2Instance
+
+	KeyName              string              `json:"key_name,omitempty"`
+	Architecture         string              `json:"architecture,omitempty"`
+	RootDeviceName       string              `json:"root_device_name,omitempty"`
+	RootDeviceType       string              `json:"root_device_type,omitempty"`
+	VirtualizationType   string              `json:"virtualization_type,omitempty"`
+	Hypervisor           string              `json:"hypervisor,omitempty"`
+	EnaSupport           bool                `json:"ena_support"`
+	EBSOptimized         bool                `json:"ebs_optimized"`
+	SourceDestCheck      bool                `json:"source_dest_check"`
+	Monitoring           string              `json:"monitoring,omitempty"`
+	AvailabilityZone     string              `json:"availability_zone,omitempty"`
+	Tenancy              string              `json:"tenancy,omitempty"`
+	PrivateDNS           string              `json:"private_dns,omitempty"`
+	PublicDNS            string              `json:"public_dns,omitempty"`
+	BlockDevices         []BlockDeviceInfo   `json:"block_devices,omitempty"`
+	NetworkInterfaces    []NetworkIfaceInfo  `json:"network_interfaces,omitempty"`
+	SecurityGroupDetails []SecurityGroupInfo `json:"security_group_details,omitempty"`
+}
+
+type BlockDeviceInfo struct {
+	DeviceName          string `json:"device_name"`
+	VolumeID            string `json:"volume_id"`
+	VolumeSize          int32  `json:"volume_size"`
+	VolumeType          string `json:"volume_type"`
+	IOPS                int32  `json:"iops,omitempty"`
+	Encrypted           bool   `json:"encrypted"`
+	KMSKeyID            string `json:"kms_key_id,omitempty"`
+	DeleteOnTermination bool   `json:"delete_on_termination"`
+}
+
+type NetworkIfaceInfo struct {
+	InterfaceID string `json:"interface_id"`
+	SubnetID    string `json:"subnet_id"`
+	PrivateIP   string `json:"private_ip"`
+	PublicIP    string `json:"public_ip,omitempty"`
+	MacAddress  string `json:"mac_address"`
+	Status      string `json:"status"`
+}
+
+type SecurityGroupInfo struct {
+	GroupID       string   `json:"group_id"`
+	GroupName     string   `json:"group_name"`
+	Description   string   `json:"description"`
+	InboundRules  []SGRule `json:"inbound_rules,omitempty"`
+	OutboundRules []SGRule `json:"outbound_rules,omitempty"`
+}
+
+type SGRule struct {
+	Protocol    string `json:"protocol"`
+	FromPort    int32  `json:"from_port"`
+	ToPort      int32  `json:"to_port"`
+	Source      string `json:"source"`
+	Description string `json:"description,omitempty"`
 }
 
 // InstanceTree is the 4-level hierarchy: Account → Region → Tag1 → Tag2 → Instances
@@ -218,4 +277,33 @@ type YAMLInstance struct {
 	InstanceType string `yaml:"instance_type"`
 	AWSProfile   string `yaml:"aws_profile"`
 	AWSRegion    string `yaml:"aws_region"`
+}
+
+type SuggestRequestMsg struct {
+	SessionID string `json:"session_id"`
+	Line      string `json:"line"`
+	Env       string `json:"env"`
+}
+
+type SuggestResponseMsg struct {
+	SessionID   string        `json:"session_id"`
+	Suggestions []SuggestItem `json:"suggestions"`
+}
+
+type SuggestItem struct {
+	Text   string  `json:"text"`
+	Score  float64 `json:"score"`
+	Source string  `json:"source"`
+}
+
+type LogInsightMsg struct {
+	SessionID    string  `json:"session_id"`
+	ErrorSummary string  `json:"error_summary"`
+	SuggestedFix string  `json:"suggested_fix"`
+	Confidence   float64 `json:"confidence"`
+}
+
+type SuggestToggleMsg struct {
+	SessionID string `json:"session_id"`
+	Enabled   bool   `json:"enabled"`
 }
