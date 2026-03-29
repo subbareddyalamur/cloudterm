@@ -193,7 +193,7 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("GET /api/k8s/resources/{type}", h.handleK8sListResources)
 	mux.HandleFunc("GET /api/k8s/resource/{type}/{name}", h.handleK8sGetResource)
 	mux.HandleFunc("GET /api/k8s/crds", h.handleK8sListCRDs)
-	mux.HandleFunc("GET /api/k8s/crds/{name...}/resources", h.handleK8sCRDResources)
+	mux.HandleFunc("GET /api/k8s/crds/{name}/resources", h.handleK8sCRDResources)
 	mux.Handle("GET /k8s/", http.StripPrefix("/k8s/", http.FileServer(http.Dir(filepath.Join("web", "k8s-dashboard", "dist")))))
 	mux.HandleFunc("GET /k8s", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/k8s/", http.StatusMovedPermanently)
