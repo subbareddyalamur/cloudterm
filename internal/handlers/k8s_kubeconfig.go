@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 
 	"cloudterm-go/internal/k8s"
 	"k8s.io/client-go/tools/clientcmd"
@@ -70,46 +69,22 @@ func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Requ
 	
 	var req struct {
 		Server      string `json:"server"`
+		Token       string `json:"token"`
 		CAData      string `json:"ca_data"`
 		ClusterName string `json:"cluster_name"`
-		ExecCommand string `json:"exec_command"`
-		ExecArgs    []string `json:"exec_args"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	// Execute the tsh command to get bearer token
-	var token string
-	if req.ExecCommand != "" {
-		cmd := exec.Command(req.ExecCommand, req.ExecArgs...)
-		output, err := cmd.Output()
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("exec tsh: %v", err)})
-			return
-		}
-		
-		// Parse the output to extract token
-		var execOutput map[string]interface{}
-		if err := json.Unmarshal(output, &execOutput); err != nil {
-			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse exec output: %v", err)})
-			return
-		}
-		
-		if t, ok := execOutput["status"].(map[string]interface{})["token"].(string); ok {
-			token = t
-		} else {
-			json.NewEncoder(w).Encode(map[string]string{"error": "token not found in exec output"})
-			return
-		}
-	} else {
-		json.NewEncoder(w).Encode(map[string]string{"error": "no exec command provided"})
+	if req.Token == "" {
+		json.NewEncoder(w).Encode(map[string]string{"error": "bearer token required"})
 		return
 	}
 
 	// Store connection in pool with kubeconfig prefix
-	poolConn, err := h.k8sPool.Connect("kubeconfig", req.ClusterName, "direct", req.Server, token, req.CAData)
+	poolConn, err := h.k8sPool.Connect("kubeconfig", req.ClusterName, "direct", req.Server, req.Token, req.CAData)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("store connection: %v", err)})
 		return

@@ -20,6 +20,7 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
   // Kubeconfig mode state
   const [kubeconfigClusters, setKubeconfigClusters] = useState([])
   const [selectedKubecluster, setSelectedKubecluster] = useState(null)
+  const [kubeconfigToken, setKubeconfigToken] = useState('')
   const [kubeconfigData, setKubeconfigData] = useState(null)
   
   const api = useApi()
@@ -67,18 +68,11 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
   }
 
   const handleKubeconfigConnect = () => {
-    if (!selectedKubecluster) {
-      alert('Please select a cluster')
+    if (!selectedKubecluster || !kubeconfigToken) {
+      alert('Please select a cluster and paste the bearer token')
       return
     }
     
-    // Get the user for this cluster from contexts
-    const context = kubeconfigData.contexts?.[selectedKubecluster.name]
-    if (!context) {
-      alert('No context found for cluster')
-      return
-    }
-
     // Create a fake cluster object
     const cluster = {
       name: selectedKubecluster.name,
@@ -86,31 +80,15 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
       endpoint: selectedKubecluster.server
     }
     
-    // Find the user and extract exec command
-    const userData = Object.values(kubeconfigData.contexts || {}).find(ctx => 
-      ctx.cluster === selectedKubecluster.name
-    )
-    
-    if (!userData) {
-      alert('Could not find user for cluster')
-      return
-    }
-
-    // Connect via kubeconfig API - it will auto-execute tsh
+    // Connect via kubeconfig API
     fetch('/api/k8s/kubeconfig/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         server: selectedKubecluster.server,
+        token: kubeconfigToken,
         ca_data: selectedKubecluster.certificateAuthority,
-        cluster_name: selectedKubecluster.name,
-        exec_command: '/usr/local/bin/tsh',
-        exec_args: [
-          'kube', 'credentials',
-          `--kube-cluster=${selectedKubecluster.name}`,
-          `--teleport-cluster=${selectedKubecluster.name}`,
-          `--proxy=${selectedKubecluster.name.split(':')[0]}:443`
-        ]
+        cluster_name: selectedKubecluster.name
       })
     })
       .then(r => r.json())
@@ -225,10 +203,19 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
                   ))}
                 </select>
 
+                <input
+                  type="password"
+                  className="topbar-input"
+                  placeholder="Bearer Token"
+                  value={kubeconfigToken}
+                  onChange={e => setKubeconfigToken(e.target.value)}
+                  title="Run: tsh kube credentials --kube-cluster=<cluster> --teleport-cluster=<cluster> --proxy=<proxy>:443 --output json | jq -r '.status.token'"
+                />
+
                 <button
                   className="cluster-btn"
                   onClick={handleKubeconfigConnect}
-                  disabled={!selectedKubecluster}
+                  disabled={!selectedKubecluster || !kubeconfigToken}
                 >
                   🔗 Connect
                 </button>
