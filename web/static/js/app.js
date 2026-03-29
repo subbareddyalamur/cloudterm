@@ -7281,6 +7281,13 @@ document.addEventListener('DOMContentLoaded', () => {
             var dashHost = location.hostname;
             window.open('http://' + dashHost + ':5173', '_blank');
         });
+
+        var k8sBtn = document.getElementById('k8sBtn');
+        if (k8sBtn) {
+            k8sBtn.addEventListener('click', function() {
+                window.open('/k8s/', '_blank');
+            });
+        }
     }
 
     if (document.readyState === 'loading') {
