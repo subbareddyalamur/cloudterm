@@ -585,3 +585,61 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Kubeconfig UI */
+.connection-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-right: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px;
+}
+.mode-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.mode-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+.mode-tab:hover { color: var(--text); }
+
+.kubeconfig-upload {
+  position: relative;
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text);
+  transition: all 0.2s;
+}
+.kubeconfig-upload:hover {
+  border-color: var(--accent);
+  background: rgba(50, 108, 229, 0.1);
+}
+.kubeconfig-upload input {
+  display: none;
+}
+
+.topbar-input {
+  padding: 4px 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  width: 150px;
+  outline: none;
+}
+.topbar-input::placeholder { color: var(--muted); }
+.topbar-input:focus { border-color: var(--accent); }

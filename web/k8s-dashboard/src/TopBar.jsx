@@ -8,26 +8,104 @@ const REGIONS = [
 ]
 
 export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect }) {
+  const [mode, setMode] = useState('aws') // 'aws' or 'kubeconfig'
+  
+  // AWS mode state
   const [accounts, setAccounts] = useState([])
   const [selectedAccount, setSelectedAccount] = useState('')
   const [selectedRegion, setSelectedRegion] = useState('')
   const [clusters, setClusters] = useState([])
   const [loading, setLoading] = useState(false)
+  
+  // Kubeconfig mode state
+  const [kubeconfigClusters, setKubeconfigClusters] = useState([])
+  const [selectedKubecluster, setSelectedKubecluster] = useState(null)
+  const [kubeconfigToken, setKubeconfigToken] = useState('')
+  const [kubeconfigData, setKubeconfigData] = useState(null)
+  
   const api = useApi()
 
+  // Load AWS accounts
   useEffect(() => {
     api.get('/aws-accounts').then(r => r.json()).then(setAccounts).catch(() => {})
   }, [])
 
+  // Load AWS clusters when account/region changes
   useEffect(() => {
-    if (!selectedAccount || !selectedRegion) { setClusters([]); return }
+    if (mode !== 'aws' || !selectedAccount || !selectedRegion) { setClusters([]); return }
     setLoading(true)
     api.get('/api/k8s/clusters', { accountId: selectedAccount, region: selectedRegion })
       .then(r => r.json())
       .then(data => setClusters(data || []))
       .catch(() => setClusters([]))
       .finally(() => setLoading(false))
-  }, [selectedAccount, selectedRegion])
+  }, [mode, selectedAccount, selectedRegion])
+
+  const handleKubeconfigUpload = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('kubeconfig', file)
+
+    fetch('/api/k8s/kubeconfig/upload', {
+      method: 'POST',
+      body: formData
+    })
+      .then(r => r.json())
+      .then(data => {
+        setKubeconfigData(data)
+        setKubeconfigClusters(data.clusters || [])
+        if (data.clusters?.length > 0) {
+          setSelectedKubecluster(data.clusters[0])
+        }
+      })
+      .catch(err => alert('Failed to parse kubeconfig: ' + err.message))
+  }
+
+  const handleAWSClusterConnect = (cluster) => {
+    onConnect(selectedAccount, selectedRegion, cluster)
+  }
+
+  const handleKubeconfigConnect = () => {
+    if (!selectedKubecluster || !kubeconfigToken) {
+      alert('Please select a cluster and enter the bearer token')
+      return
+    }
+    
+    // For now, create a fake cluster object
+    const cluster = {
+      name: selectedKubecluster.name,
+      version: '1.0',
+      endpoint: selectedKubecluster.server
+    }
+    
+    // Store kubeconfig data in session storage for later use
+    sessionStorage.setItem('kubeconfig_data', JSON.stringify({
+      server: selectedKubecluster.server,
+      token: kubeconfigToken,
+      ca_data: selectedKubecluster.certificateAuthority,
+      cluster_name: selectedKubecluster.name
+    }))
+    
+    // Connect via kubeconfig API
+    fetch('/api/k8s/kubeconfig/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        server: selectedKubecluster.server,
+        token: kubeconfigToken,
+        ca_data: selectedKubecluster.certificateAuthority,
+        cluster_name: selectedKubecluster.name
+      })
+    })
+      .then(r => r.json())
+      .then(data => {
+        // Simulate cluster connection
+        onConnect('kubeconfig', selectedKubecluster.name, cluster)
+      })
+      .catch(err => alert('Connect failed: ' + err.message))
+  }
 
   return (
     <div className="topbar">
@@ -41,48 +119,112 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
       </div>
 
       <div className="topbar-center">
-        <select
-          className="topbar-select"
-          value={selectedAccount}
-          onChange={e => setSelectedAccount(e.target.value)}
-          disabled={!!clusterId || accounts.length === 0}
-        >
-          <option value="">
-            {accounts.length === 0 ? 'No AWS accounts configured' : 'Select Account'}
-          </option>
-          {accounts.map(a => (
-            <option key={a.id} value={a.id}>{a.name || a.id}</option>
-          ))}
-        </select>
-
-        <select
-          className="topbar-select"
-          value={selectedRegion}
-          onChange={e => setSelectedRegion(e.target.value)}
-          disabled={!selectedAccount || !!clusterId}
-        >
-          <option value="">Select Region</option>
-          {REGIONS.map(r => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-        </select>
-
-        {loading && <span className="topbar-loading">Scanning...</span>}
-
-        {clusters.length > 0 && !clusterId && (
-          <div className="cluster-list">
-            {clusters.map(c => (
-              <button
-                key={c.name}
-                className="cluster-btn"
-                onClick={() => onConnect(selectedAccount, selectedRegion, c)}
-              >
-                <span className={`cluster-status ${c.status === 'ACTIVE' ? 'active' : ''}`} />
-                {c.name}
-                <span className="cluster-version">v{c.version}</span>
-              </button>
-            ))}
+        {!clusterId && (
+          <div className="connection-mode-tabs">
+            <button 
+              className={`mode-tab ${mode === 'aws' ? 'active' : ''}`}
+              onClick={() => setMode('aws')}
+            >
+              AWS Account
+            </button>
+            <button 
+              className={`mode-tab ${mode === 'kubeconfig' ? 'active' : ''}`}
+              onClick={() => setMode('kubeconfig')}
+            >
+              Kubeconfig
+            </button>
           </div>
+        )}
+
+        {mode === 'aws' && !clusterId && (
+          <>
+            <select
+              className="topbar-select"
+              value={selectedAccount}
+              onChange={e => setSelectedAccount(e.target.value)}
+              disabled={!!clusterId}
+            >
+              <option value="">
+                {accounts.length === 0 ? 'No AWS accounts configured' : 'Select Account'}
+              </option>
+              {accounts.map(a => (
+                <option key={a.id} value={a.id}>{a.name || a.id}</option>
+              ))}
+            </select>
+
+            <select
+              className="topbar-select"
+              value={selectedRegion}
+              onChange={e => setSelectedRegion(e.target.value)}
+              disabled={!selectedAccount || !!clusterId}
+            >
+              <option value="">Select Region</option>
+              {REGIONS.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+
+            {loading && <span className="topbar-loading">Scanning...</span>}
+
+            {clusters.length > 0 && !clusterId && (
+              <div className="cluster-list">
+                {clusters.map(c => (
+                  <button
+                    key={c.name}
+                    className="cluster-btn"
+                    onClick={() => handleAWSClusterConnect(c)}
+                  >
+                    <span className={`cluster-status ${c.status === 'ACTIVE' ? 'active' : ''}`} />
+                    {c.name}
+                    <span className="cluster-version">v{c.version}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {mode === 'kubeconfig' && !clusterId && (
+          <>
+            <label className="kubeconfig-upload">
+              <input type="file" onChange={handleKubeconfigUpload} accept=".yaml,.yml" />
+              📄 Choose Kubeconfig
+            </label>
+
+            {kubeconfigClusters.length > 0 && (
+              <>
+                <select
+                  className="topbar-select"
+                  value={selectedKubecluster?.name || ''}
+                  onChange={e => {
+                    const cluster = kubeconfigClusters.find(c => c.name === e.target.value)
+                    setSelectedKubecluster(cluster)
+                  }}
+                >
+                  <option value="">Select Cluster</option>
+                  {kubeconfigClusters.map(c => (
+                    <option key={c.name} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+
+                <input
+                  type="password"
+                  className="topbar-input"
+                  placeholder="Bearer Token (from tsh)"
+                  value={kubeconfigToken}
+                  onChange={e => setKubeconfigToken(e.target.value)}
+                />
+
+                <button
+                  className="cluster-btn"
+                  onClick={handleKubeconfigConnect}
+                  disabled={!selectedKubecluster || !kubeconfigToken}
+                >
+                  🔗 Connect
+                </button>
+              </>
+            )}
+          </>
         )}
 
         {clusterId && clusterInfo && (
