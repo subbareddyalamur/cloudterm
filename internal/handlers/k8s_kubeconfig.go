@@ -13,20 +13,22 @@ import (
 
 // handleK8sKubeconfigUpload parses an uploaded kubeconfig and returns available clusters
 func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
 	if r.Method != "POST" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		return
 	}
 
 	// Parse multipart form with kubeconfig file
 	if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil { // 10MB max
-		http.Error(w, fmt.Sprintf("parse form: %v", err), http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse form: %v", err)})
 		return
 	}
 
 	file, _, err := r.FormFile("kubeconfig")
 	if err != nil {
-		http.Error(w, fmt.Sprintf("get kubeconfig file: %v", err), http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("get kubeconfig file: %v", err)})
 		return
 	}
 	defer file.Close()
@@ -34,21 +36,20 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 	// Read kubeconfig content
 	content, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("read file: %v", err), http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("read file: %v", err)})
 		return
 	}
 
 	// Parse kubeconfig YAML
 	config := &clientcmdapi.Config{}
 	if err := yaml.Unmarshal(content, config); err != nil {
-		http.Error(w, fmt.Sprintf("parse kubeconfig: %v", err), http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse kubeconfig: %v", err)})
 		return
 	}
 
 	// Extract clusters
 	clusters := k8s.ExtractClustersFromKubeconfig(config)
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"clusters": clusters,
 		"contexts": config.Contexts,
@@ -57,27 +58,28 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 
 // handleK8sKubeconfigConnect establishes connection using kubeconfig data
 func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
 	var req struct {
-		Server   string `json:"server"`
-		Token    string `json:"token"`
-		CAData   string `json:"ca_data"`
+		Server      string `json:"server"`
+		Token       string `json:"token"`
+		CAData      string `json:"ca_data"`
 		ClusterName string `json:"cluster_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
 
 	// Store connection in pool with kubeconfig prefix
 	poolConn, err := h.k8sPool.Connect("kubeconfig", req.ClusterName, "direct", req.Server, req.Token, req.CAData)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("store connection: %v", err), http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("store connection: %v", err)})
 		return
 	}
 
 	h.logger.Printf("K8s: connected to cluster via kubeconfig: %s", req.ClusterName)
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"cluster_id": fmt.Sprintf("kubeconfig:%s:direct", req.ClusterName),
 		"status":     "connected",
