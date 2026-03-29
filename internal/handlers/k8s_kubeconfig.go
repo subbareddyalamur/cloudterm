@@ -7,8 +7,7 @@ import (
 	"net/http"
 
 	"cloudterm-go/internal/k8s"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // handleK8sKubeconfigUpload parses an uploaded kubeconfig and returns available clusters
@@ -40,19 +39,26 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Parse kubeconfig YAML
-	config := &clientcmdapi.Config{}
-	if err := yaml.Unmarshal(content, config); err != nil {
+	// Parse kubeconfig using k8s clientcmd
+	clientConfig, err := clientcmd.NewClientConfigFromBytes(content)
+	if err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse kubeconfig: %v", err)})
 		return
 	}
 
+	// Get the raw config
+	rawConfig, err := clientConfig.RawConfig()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("load raw config: %v", err)})
+		return
+	}
+
 	// Extract clusters
-	clusters := k8s.ExtractClustersFromKubeconfig(config)
+	clusters := k8s.ExtractClustersFromKubeconfig(&rawConfig)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"clusters": clusters,
-		"contexts": config.Contexts,
+		"contexts": rawConfig.Contexts,
 	})
 }
 
