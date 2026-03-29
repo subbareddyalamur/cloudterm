@@ -31,7 +31,7 @@
     "testFiles": [],
     "sourceFiles": [
       "internal/handlers/k8s.go",
-      "internal/k8s/client_pool.go"
+      "internal/k8s/resources.go"
     ],
     "redVerificationPending": false
   },

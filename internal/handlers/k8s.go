@@ -108,16 +108,17 @@ func (h *Handler) handleK8sNamespaces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	
+	// Use short timeout to fail fast if cluster is unreachable
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	
 	nsList, err := conn.Client.CoreV1().Namespaces().List(ctx, k8s.ListOpts())
 	if err != nil {
-		h.logger.Printf("WARN: failed to list namespaces: %v", err)
-		// Fall back to common namespaces if API call fails
-		namespaces := []string{"default", "kube-system", "kube-public", "kube-node-lease"}
+		h.logger.Printf("WARN: failed to list namespaces (cluster may be unreachable): %v", err)
+		// Return fallback list of common namespaces
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(namespaces)
+		json.NewEncoder(w).Encode([]string{"default", "kube-system", "kube-public", "kube-node-lease"})
 		return
 	}
 	var names []string
