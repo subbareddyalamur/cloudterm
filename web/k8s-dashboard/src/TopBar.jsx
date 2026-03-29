@@ -45,9 +45,11 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
           className="topbar-select"
           value={selectedAccount}
           onChange={e => setSelectedAccount(e.target.value)}
-          disabled={!!clusterId}
+          disabled={!!clusterId || accounts.length === 0}
         >
-          <option value="">Select Account</option>
+          <option value="">
+            {accounts.length === 0 ? 'No AWS accounts configured' : 'Select Account'}
+          </option>
           {accounts.map(a => (
             <option key={a.id} value={a.id}>{a.name || a.id}</option>
           ))}
