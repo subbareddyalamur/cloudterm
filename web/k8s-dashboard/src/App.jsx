@@ -39,13 +39,12 @@ export default function App() {
 
   const handleSelectResource = useCallback((resource) => {
     setSelectedResource(resource)
-    if (resource && resource.kind === 'Pod') {
-      setSelectedPod({
-        namespace: resource.namespace,
-        name: resource.name,
-        containers: resource.containers || []
-      })
-    }
+    // Don't auto-open bottom panel - user must click Logs/Exec
+  }, [])
+
+  const handleOpenBottomPanel = useCallback((tab, pod) => {
+    setSelectedPod(pod)
+    setBottomTab(tab)
   }, [])
 
   return (
@@ -65,15 +64,19 @@ export default function App() {
           <DetailPanel
             clusterId={clusterId}
             resource={selectedResource}
+            onOpenLogs={(pod) => handleOpenBottomPanel('logs', pod)}
+            onOpenExec={(pod) => handleOpenBottomPanel('exec', pod)}
           />
-          <BottomPanel
-            clusterId={clusterId}
-            pod={selectedPod}
-            tab={bottomTab}
-            onTabChange={setBottomTab}
-            height={bottomHeight}
-            onHeightChange={setBottomHeight}
-          />
+          {selectedPod && (
+            <BottomPanel
+              clusterId={clusterId}
+              pod={selectedPod}
+              tab={bottomTab}
+              onTabChange={setBottomTab}
+              height={bottomHeight}
+              onHeightChange={setBottomHeight}
+            />
+          )}
         </div>
       </div>
     </div>

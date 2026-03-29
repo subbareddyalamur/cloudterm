@@ -16,7 +16,7 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
   const api = useApi()
 
   useEffect(() => {
-    api.get('/api/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
+    api.get('/aws-accounts').then(r => r.json()).then(setAccounts).catch(() => {})
   }, [])
 
   useEffect(() => {

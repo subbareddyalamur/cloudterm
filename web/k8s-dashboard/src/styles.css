@@ -447,6 +447,29 @@ body {
   font-size: 11px;
 }
 
+/* Pod action buttons */
+.pod-action-buttons {
+  display: flex;
+  gap: 6px;
+}
+.pod-action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.pod-action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(50, 108, 229, 0.1);
+}
+
 .detail-code {
   flex: 1;
   overflow: auto;

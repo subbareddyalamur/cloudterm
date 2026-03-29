@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { useApi } from './useApi.js'
 
-export default function DetailPanel({ clusterId, resource }) {
+export default function DetailPanel({ clusterId, resource, onOpenLogs, onOpenExec }) {
   const [data, setData] = useState(null)
   const [format, setFormat] = useState('yaml') // 'yaml' | 'json'
   const [tab, setTab] = useState('definition') // 'definition' | 'events'
@@ -54,6 +54,26 @@ export default function DetailPanel({ clusterId, resource }) {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const handleShowLogs = useCallback(() => {
+    if (resource.kind === 'Pod' && onOpenLogs) {
+      onOpenLogs({
+        namespace: resource.namespace,
+        name: resource.name,
+        containers: resource.containers || []
+      })
+    }
+  }, [resource, onOpenLogs])
+
+  const handleShowExec = useCallback(() => {
+    if (resource.kind === 'Pod' && onOpenExec) {
+      onOpenExec({
+        namespace: resource.namespace,
+        name: resource.name,
+        containers: resource.containers || []
+      })
+    }
+  }, [resource, onOpenExec])
+
   if (!resource) {
     return (
       <div className="detail-panel">
@@ -83,6 +103,16 @@ export default function DetailPanel({ clusterId, resource }) {
               onClick={() => setTab('events')}
             >Events</button>
           </div>
+          {resource.kind === 'Pod' && (
+            <div className="pod-action-buttons">
+              <button className="pod-action-btn logs" onClick={handleShowLogs} title="View logs">
+                📋 Logs
+              </button>
+              <button className="pod-action-btn exec" onClick={handleShowExec} title="Exec into container">
+                💻 Exec
+              </button>
+            </div>
+          )}
           <div className="detail-format-toggle">
             <button
               className={`fmt-btn ${format === 'yaml' ? 'active' : ''}`}
