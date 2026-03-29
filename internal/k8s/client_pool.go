@@ -133,6 +133,82 @@ func (p *ClientPool) Connect(accountID, region, cluster, endpoint, token, caCert
 	return conn, nil
 }
 
+// ConnectWithCerts creates a K8s client using certificate-based auth
+func (p *ClientPool) ConnectWithCerts(endpoint, caCertB64, clientCertB64, clientKeyB64 string) (*ClusterConnection, error) {
+	// Decode certificates
+	caData, err := base64.StdEncoding.DecodeString(caCertB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode CA cert: %w", err)
+	}
+
+	certData, err := base64.StdEncoding.DecodeString(clientCertB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode client cert: %w", err)
+	}
+
+	keyData, err := base64.StdEncoding.DecodeString(clientKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode client key: %w", err)
+	}
+
+	// Create custom transport with longer timeouts
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: len(caData) == 0,
+	}
+	if len(caData) > 0 {
+		if caCertPool, err := x509.SystemCertPool(); err == nil {
+			caCertPool.AppendCertsFromPEM(caData)
+			tlsConfig.RootCAs = caCertPool
+		}
+	}
+
+	// Load client certificate and key
+	cert, err := tls.X509KeyPair(certData, keyData)
+	if err != nil {
+		return nil, fmt.Errorf("load client cert/key: %w", err)
+	}
+	tlsConfig.Certificates = []tls.Certificate{cert}
+
+	transport := &http.Transport{
+		Dial: (&net.Dialer{
+			Timeout:   60 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).Dial,
+		TLSClientConfig:     tlsConfig,
+		TLSHandshakeTimeout: 60 * time.Second,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+	}
+
+	cfg := &rest.Config{
+		Host:      endpoint,
+		Transport: transport,
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create clientset: %w", err)
+	}
+
+	conn := &ClusterConnection{
+		Client:    clientset,
+		RestCfg:   cfg,
+		AccountID: "kubeconfig",
+		Region:    "certs",
+		Cluster:   endpoint,
+		CreatedAt: time.Now(),
+	}
+
+	p.mu.Lock()
+	// Use endpoint as key for cert-based connections
+	key := fmt.Sprintf("kubeconfig:certs:%s", endpoint)
+	p.clients[key] = conn
+	p.mu.Unlock()
+
+	p.logger.Printf("K8s: connected with certificate-based auth to %s", endpoint)
+	return conn, nil
+}
+
 // Get returns a cached connection if it exists.
 func (p *ClientPool) Get(accountID, region, cluster string) (*ClusterConnection, bool) {
 	p.mu.RLock()

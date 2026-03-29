@@ -72,34 +72,30 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
       return
     }
 
-    // Extract the tsh command from the kubeconfig for this cluster
-    const clusterName = selectedKubecluster.name
-    
-    // Build the tsh command
-    const tshCommand = `tsh kube credentials --kube-cluster=${clusterName} --teleport-cluster=${clusterName} --proxy=${clusterName.split(':')[0]}:443 --output json | jq -r '.status.token'`
-    
-    // Show dialog with instructions
-    const message = `To connect to ${clusterName}:\n\n1. Run this command on your local machine:\n\n${tshCommand}\n\n2. Copy the token\n3. Paste it below`
-    
-    const token = prompt(message)
-    if (!token) return
+    // Get exec info from the selected cluster
+    const cluster = kubeconfigClusters.find(c => c.name === selectedKubecluster.name)
+    if (!cluster || !cluster.exec_cmd) {
+      alert('No exec command found in kubeconfig for this cluster')
+      return
+    }
 
     // Create a fake cluster object
-    const cluster = {
-      name: clusterName,
+    const clusterObj = {
+      name: cluster.name,
       version: '1.0',
-      endpoint: selectedKubecluster.server
+      endpoint: cluster.server
     }
     
-    // Connect via kubeconfig API
+    // Connect via kubeconfig API - will execute tsh automatically
     fetch('/api/k8s/kubeconfig/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        server: selectedKubecluster.server,
-        token: token,
-        ca_data: selectedKubecluster.certificateAuthority,
-        cluster_name: clusterName
+        server: cluster.server,
+        ca_data: cluster.certificateAuthority,
+        cluster_name: cluster.name,
+        exec_cmd: cluster.exec_cmd,
+        exec_args: cluster.exec_args || []
       })
     })
       .then(r => r.json())
@@ -109,7 +105,7 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
           return
         }
         // Simulate cluster connection
-        onConnect('kubeconfig', clusterName, cluster)
+        onConnect('kubeconfig', cluster.name, clusterObj)
       })
       .catch(err => alert('Connect failed: ' + err.message))
   }
