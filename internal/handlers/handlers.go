@@ -31,6 +31,8 @@ import (
 	"cloudterm-go/internal/types"
 	"cloudterm-go/internal/vault"
 
+	"cloudterm-go/internal/k8s"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -45,6 +47,8 @@ type Handler struct {
 	suggest      *suggest.Engine
 	vault        *vault.Store
 	costExplorer *aws.CostExplorerService
+	eksService   *aws.EKSService
+	k8sPool      *k8s.ClientPool
 	observers    map[string]*suggest.Observer
 	obsMu        sync.Mutex
 	upgrader     websocket.Upgrader
@@ -58,6 +62,12 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 	tmpl := template.Must(template.ParseGlob(filepath.Join("web", "templates", "*.html")))
 
 	costSvc := aws.NewCostExplorerService(cfg, accounts, logger)
+	eksSvc := aws.NewEKSService(cfg, accounts, logger)
+
+	tokenRefresher := func(accountID, region, clusterName string) (string, error) {
+		return eksSvc.GetToken(context.Background(), accountID, region, clusterName)
+	}
+	k8sPool := k8s.NewClientPool(logger, tokenRefresher)
 
 	return &Handler{
 		cfg:          cfg,
@@ -69,6 +79,8 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 		suggest:      suggestEngine,
 		vault:        vaultStore,
 		costExplorer: costSvc,
+		eksService:   eksSvc,
+		k8sPool:      k8sPool,
 		observers:    make(map[string]*suggest.Observer),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -171,6 +183,23 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("GET /cost-explorer/details", h.handleCostDetails)
 	mux.HandleFunc("GET /cost-explorer/comprehensive", h.handleCostComprehensive)
 	mux.HandleFunc("GET /cost-explorer/filters", h.handleCostFilters)
+
+	// K8s / EKS routes
+	mux.HandleFunc("GET /api/k8s/clusters", h.handleK8sListClusters)
+	mux.HandleFunc("POST /api/k8s/connect", h.handleK8sConnect)
+	mux.HandleFunc("POST /api/k8s/disconnect/{cluster...}", h.handleK8sDisconnect)
+	mux.HandleFunc("GET /api/k8s/namespaces", h.handleK8sNamespaces)
+	mux.HandleFunc("GET /api/k8s/categories", h.handleK8sCategories)
+	mux.HandleFunc("GET /api/k8s/resources/{type}", h.handleK8sListResources)
+	mux.HandleFunc("GET /api/k8s/resource/{type}/{name}", h.handleK8sGetResource)
+	mux.HandleFunc("GET /api/k8s/crds", h.handleK8sListCRDs)
+	mux.HandleFunc("GET /api/k8s/crds/{name...}/resources", h.handleK8sCRDResources)
+	mux.Handle("GET /k8s/", http.StripPrefix("/k8s/", http.FileServer(http.Dir(filepath.Join("web", "k8s-dashboard", "dist")))))
+	mux.HandleFunc("GET /k8s", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/k8s/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /ws/k8s/logs", h.handleK8sLogs)
+	mux.HandleFunc("GET /ws/k8s/exec", h.handleK8sExec)
 
 	// API — user preferences
 	mux.HandleFunc("GET /preferences", h.handleGetPreferences)
