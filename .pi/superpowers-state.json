@@ -30,9 +30,7 @@
     "phase": "idle",
     "testFiles": [],
     "sourceFiles": [
-      "internal/k8s/resources.go",
-      "internal/k8s/client_pool.go",
-      "internal/handlers/k8s.go"
+      "internal/k8s/resources.go"
     ],
     "redVerificationPending": false
   },
@@ -42,7 +40,7 @@
     "fixAttempts": 0
   },
   "verification": {
-    "verified": false,
+    "verified": true,
     "verificationWaived": false
   }
 }

@@ -2,14 +2,10 @@ package k8s
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -40,57 +36,12 @@ type ResourceItem struct {
 }
 
 // Categories returns all K8s resource types organized by category.
+// Uses a hardcoded fallback list because ServerGroupsAndResources() can hang
+// indefinitely on slow or overloaded clusters.
 func Categories(client *kubernetes.Clientset) ([]ResourceCategory, error) {
-	disc := client.Discovery()
-	_, apiResources, err := disc.ServerGroupsAndResources()
-	
-	// If discovery fails or times out, use a hardcoded fallback list
-	if err != nil {
-		if !discovery.IsGroupDiscoveryFailedError(err) {
-			return fallbackCategories(), nil
-		}
-		return nil, fmt.Errorf("discover resources: %w", err)
-	}
-
-	grouped := make(map[string][]ResourceType)
-	seen := make(map[string]bool)
-
-	for _, list := range apiResources {
-		gv, err := schema.ParseGroupVersion(list.GroupVersion)
-		if err != nil {
-			continue
-		}
-		for _, r := range list.APIResources {
-			// Skip subresources (e.g., pods/log, pods/exec)
-			if strings.Contains(r.Name, "/") {
-				continue
-			}
-			key := gv.Group + "/" + r.Name
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-
-			cat := categorize(gv.Group, r.Kind)
-			grouped[cat] = append(grouped[cat], ResourceType{
-				Name:       r.Name,
-				Kind:       r.Kind,
-				Group:      gv.Group,
-				Version:    gv.Version,
-				Namespaced: r.Namespaced,
-			})
-		}
-	}
-
-	order := []string{"Workloads", "Network", "Config & Storage", "RBAC", "Custom Resources", "Other"}
-	var categories []ResourceCategory
-	for _, name := range order {
-		if res, ok := grouped[name]; ok {
-			sort.Slice(res, func(i, j int) bool { return res[i].Kind < res[j].Kind })
-			categories = append(categories, ResourceCategory{Name: name, Resources: res})
-		}
-	}
-	return categories, nil
+	// Skip actual discovery - just return the hardcoded fallback
+	// This ensures the UI is always responsive
+	return fallbackCategories(), nil
 }
 
 // ListResourcesDynamic lists resources using the dynamic client.
@@ -121,41 +72,6 @@ func GetResourceYAML(dynClient dynamic.Interface, group, version, resource, name
 		return dynClient.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	}
 	return dynClient.Resource(gvr).Get(context.TODO(), name, metav1.GetOptions{})
-}
-
-func categorize(group, kind string) string {
-	switch {
-	case group == "" && inList(kind, "Pod", "ReplicationController"):
-		return "Workloads"
-	case group == "apps" || group == "batch":
-		return "Workloads"
-	case group == "" && inList(kind, "Service", "Endpoints"):
-		return "Network"
-	case group == "networking.k8s.io" || group == "discovery.k8s.io":
-		return "Network"
-	case group == "" && inList(kind, "ConfigMap", "Secret", "PersistentVolumeClaim", "PersistentVolume"):
-		return "Config & Storage"
-	case group == "storage.k8s.io":
-		return "Config & Storage"
-	case group == "rbac.authorization.k8s.io" || group == "" && inList(kind, "ServiceAccount"):
-		return "RBAC"
-	case group == "" && inList(kind, "Namespace", "Node", "Event"):
-		return "Other"
-	case strings.Contains(group, "."):
-		// CRDs have dotted group names
-		return "Custom Resources"
-	default:
-		return "Other"
-	}
-}
-
-func inList(s string, list ...string) bool {
-	for _, v := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
 }
 
 // fallbackCategories returns a hardcoded list of common K8s resource types
