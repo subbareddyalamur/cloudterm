@@ -1,15 +1,34 @@
 package k8s
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// newHTTPClient creates an HTTP client with custom timeouts suitable for slow K8s clusters
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Dial: (&net.Dialer{
+				Timeout:   60 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).Dial,
+			TLSHandshakeTimeout: 60 * time.Second,
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+		},
+	}
+}
 
 // ClusterConnection holds a Kubernetes client and its metadata.
 type ClusterConnection struct {
@@ -64,13 +83,32 @@ func (p *ClientPool) Connect(accountID, region, cluster, endpoint, token, caCert
 		return nil, fmt.Errorf("decode CA cert: %w", err)
 	}
 
+	// Create custom transport with longer timeouts for slow K8s clusters
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: len(caData) == 0,
+	}
+	if len(caData) > 0 {
+		if caCertPool, err := x509.SystemCertPool(); err == nil {
+			caCertPool.AppendCertsFromPEM(caData)
+			tlsConfig.RootCAs = caCertPool
+		}
+	}
+
+	transport := &http.Transport{
+		Dial: (&net.Dialer{
+			Timeout:   60 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).Dial,
+		TLSClientConfig:     tlsConfig,
+		TLSHandshakeTimeout: 60 * time.Second,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+	}
+
 	cfg := &rest.Config{
 		Host:        endpoint,
 		BearerToken: token,
-		TLSClientConfig: rest.TLSClientConfig{
-			CAData: caData,
-		},
-		Timeout: 30 * time.Second,
+		Transport:   transport,
 	}
 
 	clientset, err := kubernetes.NewForConfig(cfg)

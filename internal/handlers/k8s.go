@@ -108,11 +108,12 @@ func (h *Handler) handleK8sNamespaces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	
 	nsList, err := conn.Client.CoreV1().Namespaces().List(ctx, k8s.ListOpts())
 	if err != nil {
+		h.logger.Printf("WARN: failed to list namespaces: %v", err)
 		// Fall back to common namespaces if API call fails
 		namespaces := []string{"default", "kube-system", "kube-public", "kube-node-lease"}
 		w.Header().Set("Content-Type", "application/json")
@@ -123,6 +124,7 @@ func (h *Handler) handleK8sNamespaces(w http.ResponseWriter, r *http.Request) {
 	for _, ns := range nsList.Items {
 		names = append(names, ns.Name)
 	}
+	h.logger.Printf("K8s: listed %d namespaces", len(names))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(names)
 }
