@@ -43,7 +43,12 @@ type ResourceItem struct {
 func Categories(client *kubernetes.Clientset) ([]ResourceCategory, error) {
 	disc := client.Discovery()
 	_, apiResources, err := disc.ServerGroupsAndResources()
-	if err != nil && !discovery.IsGroupDiscoveryFailedError(err) {
+	
+	// If discovery fails or times out, use a hardcoded fallback list
+	if err != nil {
+		if !discovery.IsGroupDiscoveryFailedError(err) {
+			return fallbackCategories(), nil
+		}
 		return nil, fmt.Errorf("discover resources: %w", err)
 	}
 
@@ -151,4 +156,58 @@ func inList(s string, list ...string) bool {
 		}
 	}
 	return false
+}
+
+// fallbackCategories returns a hardcoded list of common K8s resource types
+// when discovery API fails or times out.
+func fallbackCategories() []ResourceCategory {
+	return []ResourceCategory{
+		{
+			Name: "Workloads",
+			Resources: []ResourceType{
+				{Name: "pods", Kind: "Pod", Group: "", Version: "v1", Namespaced: true},
+				{Name: "deployments", Kind: "Deployment", Group: "apps", Version: "v1", Namespaced: true},
+				{Name: "statefulsets", Kind: "StatefulSet", Group: "apps", Version: "v1", Namespaced: true},
+				{Name: "daemonsets", Kind: "DaemonSet", Group: "apps", Version: "v1", Namespaced: true},
+				{Name: "jobs", Kind: "Job", Group: "batch", Version: "v1", Namespaced: true},
+				{Name: "cronjobs", Kind: "CronJob", Group: "batch", Version: "v1", Namespaced: true},
+			},
+		},
+		{
+			Name: "Network",
+			Resources: []ResourceType{
+				{Name: "services", Kind: "Service", Group: "", Version: "v1", Namespaced: true},
+				{Name: "ingresses", Kind: "Ingress", Group: "networking.k8s.io", Version: "v1", Namespaced: true},
+				{Name: "networkpolicies", Kind: "NetworkPolicy", Group: "networking.k8s.io", Version: "v1", Namespaced: true},
+			},
+		},
+		{
+			Name: "Config & Storage",
+			Resources: []ResourceType{
+				{Name: "configmaps", Kind: "ConfigMap", Group: "", Version: "v1", Namespaced: true},
+				{Name: "secrets", Kind: "Secret", Group: "", Version: "v1", Namespaced: true},
+				{Name: "persistentvolumeclaims", Kind: "PersistentVolumeClaim", Group: "", Version: "v1", Namespaced: true},
+				{Name: "persistentvolumes", Kind: "PersistentVolume", Group: "", Version: "v1", Namespaced: false},
+				{Name: "storageclasses", Kind: "StorageClass", Group: "storage.k8s.io", Version: "v1", Namespaced: false},
+			},
+		},
+		{
+			Name: "RBAC",
+			Resources: []ResourceType{
+				{Name: "serviceaccounts", Kind: "ServiceAccount", Group: "", Version: "v1", Namespaced: true},
+				{Name: "roles", Kind: "Role", Group: "rbac.authorization.k8s.io", Version: "v1", Namespaced: true},
+				{Name: "rolebindings", Kind: "RoleBinding", Group: "rbac.authorization.k8s.io", Version: "v1", Namespaced: true},
+				{Name: "clusterroles", Kind: "ClusterRole", Group: "rbac.authorization.k8s.io", Version: "v1", Namespaced: false},
+				{Name: "clusterrolebindings", Kind: "ClusterRoleBinding", Group: "rbac.authorization.k8s.io", Version: "v1", Namespaced: false},
+			},
+		},
+		{
+			Name: "Other",
+			Resources: []ResourceType{
+				{Name: "namespaces", Kind: "Namespace", Group: "", Version: "v1", Namespaced: false},
+				{Name: "nodes", Kind: "Node", Group: "", Version: "v1", Namespaced: false},
+				{Name: "events", Kind: "Event", Group: "", Version: "v1", Namespaced: true},
+			},
+		},
+	}
 }

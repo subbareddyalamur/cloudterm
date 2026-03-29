@@ -70,6 +70,7 @@ func (p *ClientPool) Connect(accountID, region, cluster, endpoint, token, caCert
 		TLSClientConfig: rest.TLSClientConfig{
 			CAData: caData,
 		},
+		Timeout: 30 * time.Second,
 	}
 
 	clientset, err := kubernetes.NewForConfig(cfg)
