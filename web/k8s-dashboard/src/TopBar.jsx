@@ -20,7 +20,6 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
   // Kubeconfig mode state
   const [kubeconfigClusters, setKubeconfigClusters] = useState([])
   const [selectedKubecluster, setSelectedKubecluster] = useState(null)
-  const [kubeconfigToken, setKubeconfigToken] = useState('')
   const [kubeconfigData, setKubeconfigData] = useState(null)
   
   const api = useApi()
@@ -68,14 +67,26 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
   }
 
   const handleKubeconfigConnect = () => {
-    if (!selectedKubecluster || !kubeconfigToken) {
-      alert('Please select a cluster and paste the bearer token')
+    if (!selectedKubecluster) {
+      alert('Please select a cluster')
       return
     }
+
+    // Extract the tsh command from the kubeconfig for this cluster
+    const clusterName = selectedKubecluster.name
     
+    // Build the tsh command
+    const tshCommand = `tsh kube credentials --kube-cluster=${clusterName} --teleport-cluster=${clusterName} --proxy=${clusterName.split(':')[0]}:443 --output json | jq -r '.status.token'`
+    
+    // Show dialog with instructions
+    const message = `To connect to ${clusterName}:\n\n1. Run this command on your local machine:\n\n${tshCommand}\n\n2. Copy the token\n3. Paste it below`
+    
+    const token = prompt(message)
+    if (!token) return
+
     // Create a fake cluster object
     const cluster = {
-      name: selectedKubecluster.name,
+      name: clusterName,
       version: '1.0',
       endpoint: selectedKubecluster.server
     }
@@ -86,9 +97,9 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         server: selectedKubecluster.server,
-        token: kubeconfigToken,
+        token: token,
         ca_data: selectedKubecluster.certificateAuthority,
-        cluster_name: selectedKubecluster.name
+        cluster_name: clusterName
       })
     })
       .then(r => r.json())
@@ -98,7 +109,7 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
           return
         }
         // Simulate cluster connection
-        onConnect('kubeconfig', selectedKubecluster.name, cluster)
+        onConnect('kubeconfig', clusterName, cluster)
       })
       .catch(err => alert('Connect failed: ' + err.message))
   }
@@ -203,19 +214,10 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
                   ))}
                 </select>
 
-                <input
-                  type="password"
-                  className="topbar-input"
-                  placeholder="Bearer Token"
-                  value={kubeconfigToken}
-                  onChange={e => setKubeconfigToken(e.target.value)}
-                  title="Run: tsh kube credentials --kube-cluster=<cluster> --teleport-cluster=<cluster> --proxy=<proxy>:443 --output json | jq -r '.status.token'"
-                />
-
                 <button
                   className="cluster-btn"
                   onClick={handleKubeconfigConnect}
-                  disabled={!selectedKubecluster || !kubeconfigToken}
+                  disabled={!selectedKubecluster}
                 >
                   🔗 Connect
                 </button>

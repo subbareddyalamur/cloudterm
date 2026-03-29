@@ -30,7 +30,6 @@
     "phase": "idle",
     "testFiles": [],
     "sourceFiles": [
-      "internal/handlers/k8s_kubeconfig.go",
       "/Users/subbareddyalamuru/work/my-git/cloudterm-go/web/k8s-dashboard/src/TopBar.jsx"
     ],
     "redVerificationPending": false
