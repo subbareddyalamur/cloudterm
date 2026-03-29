@@ -36,36 +36,40 @@ import (
 
 // Handler serves HTTP and WebSocket requests for CloudTerm.
 type Handler struct {
-	cfg       *config.Config
-	discovery *aws.Discovery
-	sessions  *session.Manager
-	logger    *log.Logger
-	audit     *audit.Logger
-	accounts  *aws.AccountStore
-	suggest   *suggest.Engine
-	vault     *vault.Store
-	observers map[string]*suggest.Observer
-	obsMu     sync.Mutex
-	upgrader  websocket.Upgrader
-	clients   map[*websocket.Conn][]string
-	clientsMu sync.Mutex
-	templates *template.Template
+	cfg          *config.Config
+	discovery    *aws.Discovery
+	sessions     *session.Manager
+	logger       *log.Logger
+	audit        *audit.Logger
+	accounts     *aws.AccountStore
+	suggest      *suggest.Engine
+	vault        *vault.Store
+	costExplorer *aws.CostExplorerService
+	observers    map[string]*suggest.Observer
+	obsMu        sync.Mutex
+	upgrader     websocket.Upgrader
+	clients      map[*websocket.Conn][]string
+	clientsMu    sync.Mutex
+	templates    *template.Template
 }
 
 // New creates a Handler wired to the given dependencies.
 func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager, logger *log.Logger, auditLogger *audit.Logger, accounts *aws.AccountStore, suggestEngine *suggest.Engine, vaultStore *vault.Store) *Handler {
 	tmpl := template.Must(template.ParseGlob(filepath.Join("web", "templates", "*.html")))
 
+	costSvc := aws.NewCostExplorerService(cfg, accounts, logger)
+
 	return &Handler{
-		cfg:       cfg,
-		discovery: discovery,
-		sessions:  sessions,
-		logger:    logger,
-		audit:     auditLogger,
-		accounts:  accounts,
-		suggest:   suggestEngine,
-		vault:     vaultStore,
-		observers: make(map[string]*suggest.Observer),
+		cfg:          cfg,
+		discovery:    discovery,
+		sessions:     sessions,
+		logger:       logger,
+		audit:        auditLogger,
+		accounts:     accounts,
+		suggest:      suggestEngine,
+		vault:        vaultStore,
+		costExplorer: costSvc,
+		observers:    make(map[string]*suggest.Observer),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -102,6 +106,7 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /stop-rdp-session", h.handleStopRDPSession)
 	mux.HandleFunc("POST /start-guacamole-rdp", h.handleStartGuacamoleRDP)
 	mux.HandleFunc("POST /stop-guacamole-rdp", h.handleStopGuacamoleRDP)
+	mux.HandleFunc("GET /guac-ws/", h.handleGuacWebSocketProxy)
 	mux.HandleFunc("POST /upload-file", h.handleUploadFile)
 	mux.HandleFunc("POST /download-file", h.handleDownloadFile)
 	mux.HandleFunc("POST /browse-directory", h.handleBrowseDirectory)
@@ -139,6 +144,7 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /vault/credentials", h.handleVaultSave)
 	mux.HandleFunc("DELETE /vault/credentials", h.handleVaultDelete)
 	mux.HandleFunc("GET /vault/match", h.handleVaultMatch)
+	mux.HandleFunc("GET /db-viewer", h.handleDBViewer)
 
 	// AI Agent
 	mux.HandleFunc("POST /ai-agent/chat", h.handleAIChat)
@@ -155,6 +161,16 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /topology/deep-analyze", h.handleTopologyDeepAnalyze)
 	mux.HandleFunc("GET /topology/exposure/{instanceId}", h.handleTopologyExposure)
 	mux.HandleFunc("GET /topology/conflicts/{instanceId}", h.handleTopologyConflicts)
+
+	// Cost Explorer
+	mux.HandleFunc("GET /cost-explorer/summary", h.handleCostSummary)
+	mux.HandleFunc("GET /cost-explorer/by-service", h.handleCostByService)
+	mux.HandleFunc("GET /cost-explorer/by-account", h.handleCostByAccount)
+	mux.HandleFunc("GET /cost-explorer/by-tag", h.handleCostByTag)
+	mux.HandleFunc("GET /cost-explorer/trend", h.handleCostTrend)
+	mux.HandleFunc("GET /cost-explorer/details", h.handleCostDetails)
+	mux.HandleFunc("GET /cost-explorer/comprehensive", h.handleCostComprehensive)
+	mux.HandleFunc("GET /cost-explorer/filters", h.handleCostFilters)
 
 	// API — user preferences
 	mux.HandleFunc("GET /preferences", h.handleGetPreferences)
@@ -304,14 +320,17 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 
 	// Generate encrypted Guacamole token
 	connParams := guacamole.ConnectionParams{
-		Hostname:     h.cfg.SSMForwarderHost,
-		Port:         fmt.Sprintf("%d", fwdResp.Port),
-		Username:     rdpUsername,
-		Password:     req.Password,
-		Domain:       rdpDomain,
-		Security:     req.Security,
-		IgnoreCert:   "true",
-		ResizeMethod: "display-update",
+		Hostname:          h.cfg.SSMForwarderHost,
+		Port:              fmt.Sprintf("%d", fwdResp.Port),
+		Username:          rdpUsername,
+		Password:          req.Password,
+		Domain:            rdpDomain,
+		Security:          req.Security,
+		IgnoreCert:        "true",
+		ResizeMethod:      "display-update",
+		DisableCopy:       "false",
+		DisablePaste:      "false",
+		ClipboardEncoding: "UTF-8",
 	}
 	recording := false
 	if (h.cfg.AutoRecord || req.Record) && h.cfg.SessionRecordingDir != "" {
@@ -377,6 +396,62 @@ func (h *Handler) handleGuacamoleSessions(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+func (h *Handler) handleGuacWebSocketProxy(w http.ResponseWriter, r *http.Request) {
+	target := fmt.Sprintf("ws://%s:%d/%s", h.cfg.GuacLiteHost, h.cfg.GuacLitePort, r.URL.RawQuery)
+	if r.URL.RawQuery != "" {
+		target = fmt.Sprintf("ws://%s:%d/?%s", h.cfg.GuacLiteHost, h.cfg.GuacLitePort, r.URL.RawQuery)
+	}
+
+	dialer := websocket.Dialer{
+		Subprotocols: []string{"guacamole"},
+	}
+	backendConn, _, err := dialer.Dial(target, nil)
+	if err != nil {
+		h.logger.Printf("guac-ws proxy: failed to dial guac-lite at %s: %v", target, err)
+		http.Error(w, "failed to connect to guac-lite", http.StatusBadGateway)
+		return
+	}
+	defer backendConn.Close()
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin:  func(r *http.Request) bool { return true },
+		Subprotocols: []string{"guacamole"},
+	}
+	clientConn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.logger.Printf("guac-ws proxy: upgrade failed: %v", err)
+		return
+	}
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		for {
+			mt, msg, err := backendConn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := clientConn.WriteMessage(mt, msg); err != nil {
+				return
+			}
+		}
+	}()
+
+	for {
+		mt, msg, err := clientConn.ReadMessage()
+		if err != nil {
+			break
+		}
+		if err := backendConn.WriteMessage(mt, msg); err != nil {
+			break
+		}
+	}
+
+	<-done
 }
 
 // ---------------------------------------------------------------------------
@@ -2158,4 +2233,29 @@ func (h *Handler) handleVaultMatch(w http.ResponseWriter, r *http.Request) {
 	redacted := *entry
 	redacted.Credential.Password = ""
 	jsonResponse(w, redacted)
+}
+
+func (h *Handler) handleDBViewer(w http.ResponseWriter, r *http.Request) {
+	dbName := r.URL.Query().Get("db")
+	if dbName != "suggest" && dbName != "vault" {
+		jsonResponse(w, map[string][]string{"databases": {"suggest", "vault"}})
+		return
+	}
+
+	if dbName == "suggest" {
+		if h.suggest == nil {
+			jsonError(w, "suggest engine not initialized", http.StatusServiceUnavailable)
+			return
+		}
+		buckets := h.suggest.BrowseStore()
+		jsonResponse(w, map[string]interface{}{"db": "suggest", "file": "suggest.db", "buckets": buckets})
+		return
+	}
+
+	if h.vault == nil {
+		jsonError(w, "vault not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	buckets := h.vault.Browse()
+	jsonResponse(w, map[string]interface{}{"db": "vault", "file": "vault.db", "buckets": buckets})
 }

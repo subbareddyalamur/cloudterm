@@ -39,6 +39,12 @@ const guacdOptions = {
 
 // Client options - allow connections with encrypted tokens
 const clientOptions = {
+    // Disable the library's built-in inactivity timeout (default: 10s).
+    // Without this, connections drop when the browser tab loses focus and
+    // stops sending mouse/keyboard events.  We rely on WebSocket-level
+    // ping/pong keepalives configured below instead.
+    maxInactivityTime: 0,
+
     crypt: {
         cypher: CRYPT_CYPHER,
         key: CRYPT_SECRET
@@ -68,6 +74,7 @@ const clientOptions = {
             'disable-offscreen-caching': 'false',
             'disable-copy': 'false',
             'disable-paste': 'false',
+            'clipboard-encoding': 'UTF-8',
             'enable-audio': 'false'
         }
     }

@@ -76,18 +76,18 @@ const PAGE_THEMES = {
         '--red': '#ef4444', '--yellow': '#eab308', '--purple': '#8b5cf6'
     },
     raycast: {
-        '--bg': '#111113', '--s1': '#18181b', '--s2': '#1f1f23', '--s3': '#27272b',
-        '--b1': '#303036', '--b2': '#3f3f46', '--text': '#fafafa',
-        '--muted': '#a1a1aa', '--dim': '#63636e',
-        '--ssh': '#22c55e', '--rdp': '#6366f1', '--orange': '#f97316',
-        '--red': '#ef4444', '--yellow': '#eab308', '--purple': '#a855f7'
+        '--bg': '#0a0a0b', '--s1': '#121214', '--s2': '#1a1a1d', '--s3': '#222225',
+        '--b1': '#2a2a2e', '--b2': '#38383d', '--text': '#ededef',
+        '--muted': '#8e8e93', '--dim': '#56565b',
+        '--ssh': '#30d158', '--rdp': '#5e5ce6', '--orange': '#ff9f0a',
+        '--red': '#ff453a', '--yellow': '#ffd60a', '--purple': '#bf5af2'
     },
     unify: {
-        '--bg': '#1a1a1a', '--s1': '#222222', '--s2': '#292929', '--s3': '#333333',
-        '--b1': '#404040', '--b2': '#525252', '--text': '#f5f5f5',
-        '--muted': '#a1a1a1', '--dim': '#666666',
-        '--ssh': '#a4ebd8', '--rdp': '#96c5f1', '--orange': '#ffa95e',
-        '--red': '#ff6d6d', '--yellow': '#ffee9a', '--purple': '#b8b6ff'
+        '--bg': '#171615', '--s1': '#1e1d1b', '--s2': '#262422', '--s3': '#302e2b',
+        '--b1': '#3a3835', '--b2': '#4a4744', '--text': '#e8e4df',
+        '--muted': '#9c9690', '--dim': '#635e58',
+        '--ssh': '#7ecfb3', '--rdp': '#7baed4', '--orange': '#d4915e',
+        '--red': '#cf6f6f', '--yellow': '#c9b87a', '--purple': '#a09ccc'
     }
 };
 
@@ -192,22 +192,22 @@ const TERMINAL_THEMES = {
         brightCyan: '#22d3ee', brightWhite: '#ffffff'
     },
     raycast: {
-        background: '#111113', foreground: '#fafafa', cursor: '#a855f7',
-        selectionBackground: '#303036',
-        black: '#1f1f23', red: '#ef4444', green: '#22c55e', yellow: '#eab308',
-        blue: '#6366f1', magenta: '#a855f7', cyan: '#06b6d4', white: '#fafafa',
-        brightBlack: '#63636e', brightRed: '#f87171', brightGreen: '#4ade80',
-        brightYellow: '#fbbf24', brightBlue: '#818cf8', brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee', brightWhite: '#ffffff'
+        background: '#0a0a0b', foreground: '#ededef', cursor: '#ff453a',
+        selectionBackground: '#2a2a2e',
+        black: '#1a1a1d', red: '#ff453a', green: '#30d158', yellow: '#ffd60a',
+        blue: '#5e5ce6', magenta: '#bf5af2', cyan: '#64d2ff', white: '#ededef',
+        brightBlack: '#56565b', brightRed: '#ff6961', brightGreen: '#4ae08c',
+        brightYellow: '#ffe040', brightBlue: '#7d7aff', brightMagenta: '#da8fff',
+        brightCyan: '#86e3ff', brightWhite: '#ffffff'
     },
     unify: {
-        background: '#1a1a1a', foreground: '#f5f5f5', cursor: '#a4ebd8',
-        selectionBackground: '#404040',
-        black: '#292929', red: '#ff6d6d', green: '#a4ebd8', yellow: '#ffee9a',
-        blue: '#96c5f1', magenta: '#b8b6ff', cyan: '#a4ebd8', white: '#f5f5f5',
-        brightBlack: '#666666', brightRed: '#ff8a8a', brightGreen: '#c4f5e8',
-        brightYellow: '#fff4c4', brightBlue: '#b8d8f8', brightMagenta: '#d0cfff',
-        brightCyan: '#c4f5e8', brightWhite: '#ffffff'
+        background: '#171615', foreground: '#e8e4df', cursor: '#7ecfb3',
+        selectionBackground: '#3a3835',
+        black: '#262422', red: '#cf6f6f', green: '#7ecfb3', yellow: '#c9b87a',
+        blue: '#7baed4', magenta: '#a09ccc', cyan: '#7ecfb3', white: '#e8e4df',
+        brightBlack: '#635e58', brightRed: '#d99090', brightGreen: '#a3dece',
+        brightYellow: '#d9cc9a', brightBlue: '#9cc4e0', brightMagenta: '#b8b5dd',
+        brightCyan: '#a3dece', brightWhite: '#f5f2ed'
     }
 };
 
@@ -735,9 +735,14 @@ class TabManager {
                       '<span class="term-title-dot rdp"></span>' +
                       '<span class="term-title-name">' + escName + '</span>' +
                       '<span class="term-title-badge">RDP Session</span>' +
+                      '<span class="term-title-badge rdp-status" style="color:var(--dim);">Connecting...</span>' +
                     '</div>' +
                     '<div class="term-title-right">' +
                       '<button class="term-action-btn details-btn" title="Instance details"><span class="btn-icon">\u2139</span> Details</button>' +
+                      '<select class="rdp-res-select" title="Resolution" style="padding:2px 6px;background:var(--s3);border:1px solid var(--b1);border-radius:5px;color:var(--muted);font-size:10px;cursor:pointer;font-family:\'Lato\',sans-serif;">' +
+                        '<option value="auto">Auto</option><option value="1920x1080">1920×1080</option><option value="1280x720">1280×720</option><option value="1024x768">1024×768</option>' +
+                      '</select>' +
+                      '<button class="term-action-btn ctrlaltdel-btn" title="Send Ctrl+Alt+Del"><span class="btn-icon">\u2328</span> CtrlAltDel</button>' +
                       '<button class="term-action-btn fullscreen-btn" title="Fullscreen"><span class="btn-icon">\u26F6</span> Fullscreen</button>' +
                       '<button class="term-action-btn end-btn" title="End session"><span class="btn-icon">\u2715</span> End</button>' +
                     '</div>' +
@@ -776,6 +781,14 @@ class TabManager {
         const endBtn = panel.querySelector('.end-btn');
         if (endBtn) {
             endBtn.addEventListener('click', () => { this.closeTab(id); });
+        }
+        const cadBtn = panel.querySelector('.ctrlaltdel-btn');
+        if (cadBtn) {
+            cadBtn.addEventListener('click', () => { if (this.onCtrlAltDel) this.onCtrlAltDel(id); });
+        }
+        const resSelect = panel.querySelector('.rdp-res-select');
+        if (resSelect) {
+            resSelect.addEventListener('change', () => { if (this.onResChange) this.onResChange(id, resSelect.value); });
         }
 
         this.panels.appendChild(panel);
@@ -1383,6 +1396,31 @@ function positionContextMenu(menu, clientX, clientY) {
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
     menu.classList.add('show');
+}
+
+function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+            .then(function() { showToast('Copied: ' + text); })
+            .catch(function() { fallbackCopy(text); });
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showToast('Copied: ' + text);
+    } catch (e) {
+        showToast('Copy failed — use Ctrl+C manually');
+    }
+    document.body.removeChild(ta);
 }
 
 function showToast(msg, duration) {
@@ -2507,6 +2545,13 @@ class CloudTermApp {
             } catch (e) {
                 if (e.message !== 'cancelled') {
                     showToast('RDP error: ' + e.message, 5000);
+                    const panel = document.getElementById('panel-' + tabID);
+                    if (panel) {
+                        const statusEl = panel.querySelector('.rdp-status');
+                        if (statusEl) { statusEl.textContent = 'Error'; statusEl.style.color = 'var(--red)'; }
+                        const vp = panel.querySelector('.rdp-viewport');
+                        if (vp) { vp.innerHTML = '<span style="color:var(--red);font-size:13px;">' + e.message + '</span>'; }
+                    }
                 }
             }
         } else {
@@ -2583,63 +2628,330 @@ class CloudTermApp {
         }
 
         const panel = document.getElementById('panel-' + tabID);
-        if (panel) {
-            const viewport = panel.querySelector('.rdp-viewport');
-            if (viewport) {
-                viewport.innerHTML = '<iframe src="' + data.url + '" ' +
-                    'style="width:100%;height:100%;border:none;" ' +
-                    'tabindex="0" ' +
-                    'allow="clipboard-read; clipboard-write"></iframe>';
-                const rdpIframe = viewport.querySelector('iframe');
-                if (rdpIframe) {
-                    rdpIframe.addEventListener('load', () => {
-                        rdpIframe.contentWindow.focus();
-                    });
-                    viewport.addEventListener('click', () => {
-                        rdpIframe.contentWindow.focus();
-                        if (navigator.clipboard && navigator.clipboard.readText) {
-                            navigator.clipboard.readText().then(text => {
-                                if (text && rdpIframe.contentWindow) {
-                                    rdpIframe.contentWindow.postMessage({
-                                        type: 'rdp-clipboard-push',
-                                        text: text
-                                    }, '*');
-                                }
-                            }).catch(() => {});
+        if (!panel) return;
+        const viewport = panel.querySelector('.rdp-viewport');
+        if (!viewport) return;
+
+        viewport.innerHTML = '';
+        viewport.style.position = 'relative';
+        viewport.style.overflow = 'hidden';
+        viewport.style.display = 'block';
+        viewport.style.cursor = 'none';
+
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var wsFullUrl = proto + '//' + location.host + '/guac-ws/?width=' + viewport.clientWidth + '&height=' + viewport.clientHeight + '&token=' + encodeURIComponent(data.token);
+
+        var tunnel = new Guacamole.WebSocketTunnel(wsFullUrl);
+        var guac = new Guacamole.Client(tunnel);
+
+        var displayEl = guac.getDisplay().getElement();
+        displayEl.style.position = 'absolute';
+        displayEl.style.left = '0';
+        displayEl.style.top = '0';
+        viewport.appendChild(displayEl);
+
+        var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+        var metaHeld = false;
+        var guacActive = true;
+
+        var statusEl = panel.querySelector('.rdp-status');
+        function updateStatus(text, color) {
+            if (statusEl) { statusEl.textContent = text; statusEl.style.color = color || 'var(--dim)'; }
+        }
+
+        guac.onerror = function(error) {
+            console.error('Guacamole error:', error);
+            updateStatus('Error', 'var(--red)');
+        };
+
+        // Timeout: if stuck in Waiting (state 2) for more than 30s, show timeout and disconnect
+        var waitingTimer = null;
+        guac.onstatechange = function(state) {
+            if (waitingTimer) { clearTimeout(waitingTimer); waitingTimer = null; }
+            switch (state) {
+                case 1: updateStatus('Connecting...', 'var(--dim)'); break;
+                case 2:
+                    updateStatus('Waiting...', 'var(--dim)');
+                    waitingTimer = setTimeout(function() {
+                        updateStatus('Timed out', 'var(--red)');
+                        guacActive = false;
+                        try { guac.disconnect(); } catch(e) {}
+                        showToast('RDP connection timed out — the remote host may be unreachable', 5000);
+                    }, 30000);
+                    break;
+                case 3:
+                    updateStatus('\u25CF Connected', 'var(--ssh)');
+                    updateDisplay();
+                    break;
+                case 5: updateStatus('Disconnected', 'var(--red)'); guacActive = false; break;
+            }
+        };
+
+        var lastRemoteClipboard = '';
+        guac.onclipboard = function(stream, mimetype) {
+            if (mimetype === 'text/plain') {
+                var chunks = [];
+                stream.onblob = function(blob) { chunks.push(blob); };
+                stream.onend = function() {
+                    try {
+                        var binary = atob(chunks.join(''));
+                        var bytes = new Uint8Array(binary.length);
+                        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        var clipData = new TextDecoder('utf-8').decode(bytes);
+                        lastRemoteClipboard = clipData;
+                        if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+                            navigator.clipboard.writeText(clipData).catch(function(){});
                         }
-                    });
-                }
+                    } catch(e) {}
+                };
+            }
+        };
+
+        function pushClipToRemote(text) {
+            if (!text || !guac || !guacActive) return;
+            try {
+                var encoder = new TextEncoder();
+                var bytes = encoder.encode(text);
+                var binary = '';
+                for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                var b64 = btoa(binary);
+                var s = guac.createClipboardStream('text/plain');
+                s.sendBlob(b64);
+                s.sendEnd();
+            } catch(e) {}
+        }
+
+        function updateDisplay() {
+            var display = guac.getDisplay();
+            var cw = viewport.clientWidth, ch = viewport.clientHeight;
+            var dw = display.getWidth(), dh = display.getHeight();
+            if (dw && dh) {
+                var scale = Math.min(cw / dw, ch / dh);
+                display.scale(scale);
             }
         }
 
-        // Store last creds for re-auth and listen for iframe re-auth requests
-        this._lastRDPCreds = this._lastRDPCreds || {};
-        this._lastRDPCreds[instanceID] = { tabID, creds };
+        guac.getDisplay().onresize = function() { updateDisplay(); };
 
-        // Set up postMessage listener (once per instance)
-        if (!this._rdpReauthListener) {
-            this._rdpReauthListener = true;
-            window.addEventListener('message', (e) => {
-                if (e.data && e.data.type === 'rdp-reauth' && e.data.instanceId) {
-                    const saved = this._lastRDPCreds && this._lastRDPCreds[e.data.instanceId];
-                    if (saved) {
-                        this._startRDPSession(saved.tabID, e.data.instanceId, e.data.instanceName, saved.creds);
-                    }
-                }
-                if (e.data && e.data.type === 'rdp-clipboard' && e.data.text) {
-                    this._lastRDPClipboard = e.data.text;
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(e.data.text).catch(() => {});
-                    }
-                    if (!this._clipBridge) {
-                        this._clipBridge = document.createElement('textarea');
-                        this._clipBridge.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
-                        document.body.appendChild(this._clipBridge);
-                    }
-                    this._clipBridge.value = e.data.text;
-                }
-            });
+        var resizeObserver = new ResizeObserver(function() { updateDisplay(); });
+        resizeObserver.observe(viewport);
+
+        var mouseState = new Guacamole.Mouse.State(0, 0, false, false, false, false, false);
+        function getMousePos(e) {
+            var display = guac.getDisplay();
+            var rect = displayEl.getBoundingClientRect();
+            var scale = display.getScale();
+            return { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
         }
+        function sendMouseState() { if (guac && guacActive) guac.sendMouseState(mouseState); }
+
+        viewport.addEventListener('mousemove', function(e) {
+            var pos = getMousePos(e); mouseState.x = pos.x; mouseState.y = pos.y; sendMouseState();
+        });
+        viewport.addEventListener('mousedown', function(e) {
+            var pos = getMousePos(e); mouseState.x = pos.x; mouseState.y = pos.y;
+            if (e.button === 0) mouseState.left = true;
+            if (e.button === 1) mouseState.middle = true;
+            if (e.button === 2) mouseState.right = true;
+            sendMouseState(); e.preventDefault();
+        });
+        viewport.addEventListener('mouseup', function(e) {
+            var pos = getMousePos(e); mouseState.x = pos.x; mouseState.y = pos.y;
+            if (e.button === 0) mouseState.left = false;
+            if (e.button === 1) mouseState.middle = false;
+            if (e.button === 2) mouseState.right = false;
+            sendMouseState(); e.preventDefault();
+        });
+        viewport.addEventListener('wheel', function(e) {
+            var pos = getMousePos(e); mouseState.x = pos.x; mouseState.y = pos.y;
+            if (e.deltaY < 0) { mouseState.scrollUp = true; sendMouseState(); mouseState.scrollUp = false; }
+            else if (e.deltaY > 0) { mouseState.scrollDown = true; sendMouseState(); mouseState.scrollDown = false; }
+            sendMouseState(); e.preventDefault();
+        });
+        viewport.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
+        var keyboard = new Guacamole.Keyboard(viewport);
+        viewport.setAttribute('tabindex', '0');
+        viewport.addEventListener('click', function() { viewport.focus(); });
+
+        keyboard.onkeydown = function(keysym) {
+            if (!guac || !guacActive) return false;
+            if (isMac) {
+                if (keysym === 0xFFE7 || keysym === 0xFFE8) {
+                    metaHeld = true;
+                    guac.sendKeyEvent(1, 0xFFE3);
+                    return true;
+                }
+                if (metaHeld) {
+                    var kl = keysym | 0x20;
+                    if (kl === 0x6c || kl === 0x64) return true;
+                    if (kl === 0x76) return true;
+                    if (kl === 0x63) {
+                        guac.sendKeyEvent(1, 0x63);
+                        setTimeout(function() { guac.sendKeyEvent(0, 0x63); }, 50);
+                        setTimeout(function() {
+                            if (lastRemoteClipboard && navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+                                navigator.clipboard.writeText(lastRemoteClipboard).catch(function(){});
+                            }
+                        }, 500);
+                        return true;
+                    }
+                }
+            } else {
+                if (keysym === 0xFFE3 || keysym === 0xFFE4) {
+                    metaHeld = true;
+                }
+                if (metaHeld) {
+                    var kl = keysym | 0x20;
+                    if (kl === 0x76) return true;
+                    if (kl === 0x63) {
+                        guac.sendKeyEvent(1, 0x63);
+                        setTimeout(function() { guac.sendKeyEvent(0, 0x63); }, 50);
+                        setTimeout(function() {
+                            if (lastRemoteClipboard && navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+                                navigator.clipboard.writeText(lastRemoteClipboard).catch(function(){});
+                            }
+                        }, 500);
+                        return true;
+                    }
+                }
+            }
+            guac.sendKeyEvent(1, keysym);
+            return true;
+        };
+
+        keyboard.onkeyup = function(keysym) {
+            if (!guac || !guacActive) return;
+            if (isMac && (keysym === 0xFFE7 || keysym === 0xFFE8)) {
+                metaHeld = false;
+                guac.sendKeyEvent(0, 0xFFE3);
+                return;
+            }
+            if (!isMac && (keysym === 0xFFE3 || keysym === 0xFFE4)) {
+                metaHeld = false;
+            }
+            guac.sendKeyEvent(0, keysym);
+        };
+
+        viewport.addEventListener('focus', function() {
+            setTimeout(function() {
+                if (document.hasFocus() && navigator.clipboard && navigator.clipboard.readText) {
+                    navigator.clipboard.readText().then(pushClipToRemote).catch(function(){});
+                }
+            }, 100);
+        });
+
+        viewport.addEventListener('click', function() {
+            viewport.focus();
+            setTimeout(function() {
+                if (document.hasFocus() && navigator.clipboard && navigator.clipboard.readText) {
+                    navigator.clipboard.readText().then(pushClipToRemote).catch(function(){});
+                }
+            }, 100);
+        });
+
+        viewport.addEventListener('paste', function(e) {
+            e.preventDefault();
+            var text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+            if (text) {
+                pushClipToRemote(text);
+                setTimeout(function() {
+                    guac.sendKeyEvent(1, 0xFFE3);
+                    guac.sendKeyEvent(1, 0x76);
+                    setTimeout(function() {
+                        guac.sendKeyEvent(0, 0x76);
+                        guac.sendKeyEvent(0, 0xFFE3);
+                    }, 50);
+                }, 150);
+            } else if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(function(clipText) {
+                    if (!clipText) return;
+                    pushClipToRemote(clipText);
+                    setTimeout(function() {
+                        guac.sendKeyEvent(1, 0xFFE3);
+                        guac.sendKeyEvent(1, 0x76);
+                        setTimeout(function() {
+                            guac.sendKeyEvent(0, 0x76);
+                            guac.sendKeyEvent(0, 0xFFE3);
+                        }, 50);
+                    }, 150);
+                }).catch(function(){});
+            }
+        }, true);
+
+        document.addEventListener('paste', function(e) {
+            if (document.activeElement !== viewport && !viewport.contains(document.activeElement)) return;
+            e.preventDefault();
+            var text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+            if (text && guac && guacActive) {
+                pushClipToRemote(text);
+                setTimeout(function() {
+                    guac.sendKeyEvent(1, 0xFFE3);
+                    guac.sendKeyEvent(1, 0x76);
+                    setTimeout(function() {
+                        guac.sendKeyEvent(0, 0x76);
+                        guac.sendKeyEvent(0, 0xFFE3);
+                    }, 50);
+                }, 150);
+            }
+        });
+
+        // Keepalive: send periodic nop to prevent guacamole-lite from
+        // considering the connection inactive when the tab loses focus and
+        // mouse/keyboard events stop.  Uses a Web Worker so it isn't
+        // throttled by the browser in background tabs.
+        var keepaliveWorker = null;
+        try {
+            var workerBlob = new Blob([
+                'var iv=null;' +
+                'onmessage=function(e){' +
+                '  if(e.data==="start"){clearInterval(iv);iv=setInterval(function(){postMessage("ping")},5000);}' +
+                '  else if(e.data==="stop"){clearInterval(iv);}' +
+                '};'
+            ], { type: 'application/javascript' });
+            keepaliveWorker = new Worker(URL.createObjectURL(workerBlob));
+            keepaliveWorker.onmessage = function() {
+                if (tunnel && guacActive) {
+                    try { tunnel.sendMessage('nop'); } catch(e) {}
+                }
+            };
+            keepaliveWorker.postMessage('start');
+        } catch(e) {
+            // Fallback: plain setInterval (throttled in background tabs, but better than nothing)
+            var _keepaliveTimer = setInterval(function() {
+                if (tunnel && guacActive) {
+                    try { tunnel.sendMessage('nop'); } catch(e) {}
+                }
+            }, 5000);
+        }
+
+        guac.connect('');
+
+        this.tabManager.onCtrlAltDel = function(tid) {
+            if (tid !== tabID || !guac || !guacActive) return;
+            guac.sendKeyEvent(1, 0xFFE3);
+            guac.sendKeyEvent(1, 0xFFE9);
+            guac.sendKeyEvent(1, 0xFFFF);
+            guac.sendKeyEvent(0, 0xFFFF);
+            guac.sendKeyEvent(0, 0xFFE9);
+            guac.sendKeyEvent(0, 0xFFE3);
+        };
+
+        this.tabManager.onResChange = function(tid, val) {
+            if (tid !== tabID || !guac || !guacActive) return;
+            if (val === 'auto') {
+                guac.sendSize(viewport.clientWidth, viewport.clientHeight);
+            } else {
+                var parts = val.split('x');
+                guac.sendSize(parseInt(parts[0]), parseInt(parts[1]));
+            }
+        };
+
+        this._lastRDPCreds = this._lastRDPCreds || {};
+        this._lastRDPCreds[instanceID] = { tabID, creds, guac, pushClipToRemote, getLastRemoteClip: function() { return lastRemoteClipboard; } };
+
+        this._guacClients = this._guacClients || {};
+        this._guacClients[tabID] = { guac, tunnel, keyboard, resizeObserver, keepaliveWorker };
     }
 
     async _stopRDPSession(instanceID) {
@@ -2974,12 +3286,12 @@ class CloudTermApp {
                 } else if (text.includes('open rdp')) {
                     this.openSession(id, name, 'rdp');
                 } else if (text.includes('copy instance id')) {
-                    navigator.clipboard.writeText(id).then(() => showToast('Copied: ' + id));
+                    copyToClipboard(id);
                 } else if (text.includes('copy private ip')) {
                     const inst = this.sidebar.getInstance(id);
                     const ip = inst ? inst.private_ip : '';
                     if (ip) {
-                        navigator.clipboard.writeText(ip).then(() => showToast('Copied: ' + ip));
+                        copyToClipboard(ip);
                     } else {
                         showToast('No private IP available');
                     }
@@ -3773,6 +4085,7 @@ class CloudTermApp {
                 const pane = document.getElementById('settingsPane-' + tab.dataset.tab);
                 if (pane) pane.classList.add('active');
                 if (tab.dataset.tab === 'vault') this._loadVaultEntries();
+                if (tab.dataset.tab === 'database') this._loadDBViewer('suggest');
             });
         });
 
@@ -3835,6 +4148,20 @@ class CloudTermApp {
         document.getElementById('awsAcctAddBtn')?.addEventListener('click', () => this._addAWSAccount());
 
         document.getElementById('vaultRefreshBtn')?.addEventListener('click', () => this._loadVaultEntries());
+
+        document.querySelectorAll('.db-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.db-tab-btn').forEach(b => {
+                    b.classList.remove('active');
+                    b.style.background = 'none';
+                    b.style.color = 'var(--muted)';
+                });
+                btn.classList.add('active');
+                btn.style.background = 'var(--s2)';
+                btn.style.color = 'var(--text)';
+                this._loadDBViewer(btn.dataset.dbname);
+            });
+        });
     }
 
     _loadVaultEntries() {
@@ -3861,13 +4188,66 @@ class CloudTermApp {
                 html += '<div style="font-size:10px;color:var(--dim);font-family:\'JetBrains Mono\',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + e.rule.value + '</div>';
                 html += '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + e.credential.username + ' \u2022 Security: ' + e.credential.security + '</div>';
                 html += '</div>';
-                html += '<button onclick="window._deleteVaultEntry(\'' + e.rule.id + '\')" style="flex-shrink:0;background:none;border:1px solid rgba(248,113,113,.3);border-radius:7px;color:var(--red);padding:5px 10px;cursor:pointer;font-size:11px;font-family:\'Lato\',sans-serif;transition:all .15s;" onmouseover="this.style.background=\'rgba(248,113,113,.1)\'" onmouseout="this.style.background=\'none\'">Delete</button>';
+                html += '<button onclick="window._editVaultEntry(\'' + e.rule.id + '\')" title="Edit password" style="flex-shrink:0;width:32px;height:32px;background:linear-gradient(135deg,rgba(96,165,250,.15),rgba(108,92,231,.1));border:1px solid rgba(96,165,250,.3);border-radius:7px;color:#60a5fa;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;" onmouseover="this.style.background=\'linear-gradient(135deg,rgba(96,165,250,.25),rgba(108,92,231,.2))\'" onmouseout="this.style.background=\'linear-gradient(135deg,rgba(96,165,250,.15),rgba(108,92,231,.1))\'"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>';
+                html += '<button onclick="window._deleteVaultEntry(\'' + e.rule.id + '\')" title="Delete" style="flex-shrink:0;width:32px;height:32px;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);border-radius:7px;color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;" onmouseover="this.style.background=\'rgba(248,113,113,.2)\'" onmouseout="this.style.background=\'rgba(248,113,113,.1)\'"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>';
                 html += '</div>';
             }
             list.innerHTML = html;
         }).catch(() => {
             list.innerHTML = '<div style="color:var(--red);font-size:11px;padding:12px;text-align:center;">Failed to load vault entries.</div>';
         });
+    }
+
+    _loadDBViewer(dbName) {
+        var container = document.getElementById('dbViewerContent');
+        if (!container) return;
+        container.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:12px;text-align:center;">Loading ' + dbName + '.db...</div>';
+        fetch('/db-viewer?db=' + encodeURIComponent(dbName))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.buckets || data.buckets.length === 0) {
+                    container.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:16px;text-align:center;">Database is empty or does not exist yet.</div>';
+                    return;
+                }
+                var html = '<div style="font-size:10px;color:var(--dim);margin-bottom:12px;">File: <code style="color:var(--muted);">' + data.file + '</code></div>';
+                for (var b of data.buckets) {
+                    html += '<div style="margin-bottom:16px;">';
+                    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">';
+                    html += '<span style="font-size:13px;font-weight:600;color:var(--text);">' + b.name + '</span>';
+                    html += '<span style="font-size:10px;padding:2px 8px;background:var(--s3);border-radius:10px;color:var(--muted);">' + b.count + ' entries</span>';
+                    html += '</div>';
+                    if (b.entries && b.entries.length > 0) {
+                        for (var e of b.entries) {
+                            html += '<div style="margin-bottom:4px;background:var(--s2);border:1px solid var(--b1);border-radius:8px;overflow:hidden;">';
+                            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--s3);border-bottom:1px solid var(--b1);">';
+                            html += '<span style="font-size:11px;font-weight:600;color:var(--text);font-family:\'JetBrains Mono\',monospace;">' + e.key + '</span>';
+                            html += '<span style="font-size:9px;color:' + (e.encrypted ? 'var(--red)' : 'var(--ssh)') + ';">' + (e.encrypted ? 'encrypted' : 'decrypted') + '</span>';
+                            html += '</div>';
+                            var val = e.value;
+                            try { val = JSON.stringify(JSON.parse(e.value), null, 2); } catch(ex) {}
+                            html += '<pre style="margin:0;padding:8px 12px;font-size:10px;color:var(--muted);font-family:\'JetBrains Mono\',monospace;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;">' + val.replace(/</g, '&lt;') + '</pre>';
+                            html += '</div>';
+                        }
+                    } else {
+                        html += '<div style="font-size:11px;color:var(--dim);padding:4px 0;">Select bucket to view entries — <a href="#" onclick="event.preventDefault();window.cloudterm._loadDBViewerBucket(\'' + dbName + '\',\'' + b.name + '\')" style="color:var(--ssh);">Load entries</a></div>';
+                    }
+                    html += '</div>';
+                }
+                container.innerHTML = html;
+            })
+            .catch(function(err) {
+                container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:12px;">Failed to load: ' + err.message + '</div>';
+            });
+    }
+
+    _loadDBViewerBucket(dbName, bucket) {
+        var container = document.getElementById('dbViewerContent');
+        if (!container) return;
+        container.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:12px;text-align:center;">Loading ' + bucket + '...</div>';
+        fetch('/db-viewer?db=' + encodeURIComponent(dbName) + '&bucket=' + encodeURIComponent(bucket))
+            .then(function(r) { return r.json(); })
+            .then(function(data) { window.cloudterm._loadDBViewer(dbName); })
+            .catch(function() { window.cloudterm._loadDBViewer(dbName); });
     }
 
     _updateAIProviderFields(provider) {
@@ -3964,13 +4344,20 @@ class CloudTermApp {
                 return;
             }
             list.innerHTML = accounts.map(a => `
-                <div class="aws-acct-row" data-id="${a.id}">
-                    <div class="aws-acct-info">
-                        <div class="aws-acct-name">${this._esc(a.name)}</div>
-                        <div class="aws-acct-key">${this._esc(a.access_key_id)} &middot; ${this._esc(a.secret_access_key)}</div>
+                <div class="aws-acct-row" data-id="${a.id}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--s3);border:1px solid var(--b1);border-radius:7px;margin-bottom:6px;">
+                    <div style="flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--s2);border-radius:7px;font-size:14px;">&#x2601;</div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                            <span style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this._esc(a.name || 'Unnamed')}</span>
+                        </div>
+                        <div style="font-size:10px;color:var(--dim);font-family:'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this._esc(a.access_key_id)} &middot; ${this._esc(a.secret_access_key)}</div>
                     </div>
-                    <button class="aws-acct-btn scan" onclick="cloudterm._scanAWSAccount('${a.id}', this)">Scan</button>
-                    <button class="aws-acct-btn del" onclick="cloudterm._deleteAWSAccount('${a.id}')">Remove</button>
+                    <button class="aws-acct-btn scan" onclick="cloudterm._scanAWSAccount('${a.id}', this)" title="Scan instances">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    </button>
+                    <button class="aws-acct-btn del" onclick="cloudterm._deleteAWSAccount('${a.id}')" title="Remove account">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
                 </div>
             `).join('');
         } catch (e) {
@@ -4027,9 +4414,10 @@ class CloudTermApp {
     }
 
     async _scanAWSAccount(id, btn) {
+        var scanSvg = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
         if (btn) {
             btn.disabled = true;
-            btn.textContent = 'Scanning...';
+            btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
         }
         try {
             const res = await fetch('/aws-accounts/scan/' + id, { method: 'POST' });
@@ -4039,14 +4427,13 @@ class CloudTermApp {
                 return;
             }
             showToast(`Found ${data.instances_found} instances for ${data.account_name}`);
-            // Refresh instance tree
             this._loadInstances();
         } catch (e) {
             showToast('Scan failed');
         } finally {
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = 'Scan';
+                btn.innerHTML = scanSvg;
             }
         }
     }
@@ -4139,7 +4526,7 @@ class CloudTermApp {
                     if (snip) this._insertSnippetToTerminal(snip.command);
                 } else if (action === 'copy') {
                     const snip = this.snippets.getAll().find(s => s.id === btn.dataset.snipId);
-                    if (snip) navigator.clipboard.writeText(snip.command).then(() => showToast('Copied to clipboard'));
+                    if (snip) copyToClipboard(snip.command);
                 } else if (action === 'delete') {
                     this.snippets.remove(btn.dataset.id);
                     this._renderSnippetsList(body);
@@ -5545,6 +5932,16 @@ class CloudTermApp {
                 this.termManager.closeTerminal(id);
             } else if (info && info.type === 'rdp') {
                 this._stopRDPSession(info.instanceID || id);
+                if (this._guacClients && this._guacClients[id]) {
+                    var gc = this._guacClients[id];
+                    try { gc.guac.disconnect(); } catch(e) {}
+                    try { gc.keyboard.reset(); } catch(e) {}
+                    try { gc.resizeObserver.disconnect(); } catch(e) {}
+                    if (gc.keepaliveWorker) {
+                        try { gc.keepaliveWorker.postMessage('stop'); gc.keepaliveWorker.terminate(); } catch(e) {}
+                    }
+                    delete this._guacClients[id];
+                }
             }
 
             origClose(id);
@@ -5566,8 +5963,8 @@ class CloudTermApp {
                 requestAnimationFrame(() => {
                     const panel = document.getElementById('panel-' + id);
                     if (panel) {
-                        const iframe = panel.querySelector('iframe');
-                        if (iframe && iframe.contentWindow) iframe.contentWindow.focus();
+                        const vp = panel.querySelector('.rdp-viewport');
+                        if (vp) vp.focus();
                     }
                 });
             }
@@ -6154,4 +6551,741 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(() => { showToast('Credential deleted'); app._loadVaultEntries(); })
             .catch(() => showToast('Delete failed'));
     };
+    window._editVaultEntry = function(ruleId) {
+        fetch('/vault/credentials').then(function(r) { return r.json(); }).then(function(entries) {
+            var entry = entries.find(function(e) { return e.rule.id === ruleId; });
+            if (!entry) { showToast('Entry not found'); return; }
+            var row = document.querySelector('[onclick*="' + ruleId + '"][title="Edit password"]');
+            var container = row ? row.closest('div[style*="margin-bottom"]') || row.parentElement : null;
+            if (!container) return;
+            var editDiv = container.querySelector('.vault-edit-form');
+            if (editDiv) { editDiv.remove(); return; }
+            editDiv = document.createElement('div');
+            editDiv.className = 'vault-edit-form';
+            editDiv.style.cssText = 'display:flex;gap:8px;align-items:center;padding:8px 12px 4px 54px;';
+            editDiv.innerHTML =
+                '<input type="password" id="vaultEditPw_' + ruleId + '" placeholder="New password" style="flex:1;padding:6px 10px;background:var(--s2);border:1px solid var(--b1);border-radius:6px;color:var(--text);font-size:12px;font-family:\'JetBrains Mono\',monospace;outline:none;">' +
+                '<button onclick="window._saveVaultPassword(\'' + ruleId + '\')" style="padding:6px 14px;background:linear-gradient(135deg,rgba(61,220,132,.2),rgba(108,92,231,.15));border:1px solid rgba(61,220,132,.4);border-radius:6px;color:var(--ssh);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:\'Lato\',sans-serif;">Save</button>' +
+                '<button onclick="this.closest(\'.vault-edit-form\').remove()" style="padding:6px 10px;background:var(--s2);border:1px solid var(--b1);border-radius:6px;color:var(--muted);font-size:12px;cursor:pointer;font-family:\'Lato\',sans-serif;">Cancel</button>';
+            container.appendChild(editDiv);
+            document.getElementById('vaultEditPw_' + ruleId).focus();
+        });
+    };
+    window._saveVaultPassword = function(ruleId) {
+        var pwInput = document.getElementById('vaultEditPw_' + ruleId);
+        if (!pwInput || !pwInput.value.trim()) { showToast('Enter a password'); return; }
+        fetch('/vault/credentials').then(function(r) { return r.json(); }).then(function(entries) {
+            var entry = entries.find(function(e) { return e.rule.id === ruleId; });
+            if (!entry) { showToast('Entry not found'); return; }
+            entry.credential.password = pwInput.value.trim();
+            return fetch('/vault/credentials', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(entry)
+            });
+        }).then(function(r) {
+            if (r && r.ok) {
+                showToast('Password updated');
+                app._loadVaultEntries();
+            } else {
+                showToast('Update failed');
+            }
+        }).catch(function() { showToast('Update failed'); });
+    };
 });
+
+// ---------------------------------------------------------------------------
+// Spotlight Search (/ key)
+// ---------------------------------------------------------------------------
+
+(function() {
+    'use strict';
+
+    var bg = null;
+    var input = null;
+    var results = null;
+    var activeIdx = -1;
+    var items = [];
+
+    function getInstances() {
+        var app = window.cloudterm;
+        if (!app || !app.sidebar || !app.sidebar._allInstances) return [];
+        return app.sidebar._allInstances;
+    }
+
+    function open() {
+        if (!bg) return;
+        bg.classList.add('show');
+        input.value = '';
+        activeIdx = -1;
+        render(getInstances());
+        requestAnimationFrame(function() { input.focus(); });
+    }
+
+    function close() {
+        if (!bg) return;
+        bg.classList.remove('show');
+        input.value = '';
+        results.innerHTML = '';
+    }
+
+    function fuzzyMatch(query, text) {
+        var t = text.toLowerCase();
+        var terms = query.toLowerCase().split(/\s+/).filter(function(s) { return s.length > 0; });
+        for (var i = 0; i < terms.length; i++) {
+            if (t.indexOf(terms[i]) === -1) return false;
+        }
+        return true;
+    }
+
+    function render(filtered) {
+        items = filtered;
+        if (filtered.length === 0) {
+            results.innerHTML = '<div class="spotlight-empty">No instances found</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < Math.min(filtered.length, 50); i++) {
+            var inst = filtered[i];
+            var connType = inst.platform === 'windows' ? 'rdp' : 'ssh';
+            var stateClass = inst.state === 'running' ? 'running' : (inst.state === 'stopped' ? 'stopped' : 'other');
+            html += '<div class="spotlight-item' + (i === activeIdx ? ' active' : '') + '" data-idx="' + i + '">';
+            html += '<div class="sp-dot ' + stateClass + '"></div>';
+            html += '<div class="sp-info">';
+            html += '<div class="sp-name">' + esc(inst.name || inst.instance_id) + '</div>';
+            html += '<div class="sp-meta">' + esc(inst.instance_id) + (inst.private_ip ? ' \u2022 ' + esc(inst.private_ip) : '') + '</div>';
+            html += '</div>';
+            html += '<span class="sp-badge ' + connType + '">' + connType + '</span>';
+            html += '</div>';
+        }
+        results.innerHTML = html;
+
+        results.querySelectorAll('.spotlight-item').forEach(function(el) {
+            el.addEventListener('click', function() {
+                connectItem(parseInt(el.dataset.idx));
+            });
+            el.addEventListener('mouseenter', function() {
+                setActive(parseInt(el.dataset.idx), false);
+            });
+            el.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                var idx = parseInt(el.dataset.idx);
+                if (idx < 0 || idx >= items.length) return;
+                var inst = items[idx];
+                var app = window.cloudterm;
+                if (!app || !app.sidebar) return;
+                var connType = inst.platform === 'windows' ? 'rdp' : 'ssh';
+                app.sidebar._showContextMenu(e, inst.instance_id, inst.name || inst.instance_id, connType);
+            });
+        });
+    }
+
+    function setActive(idx, scroll) {
+        activeIdx = idx;
+        results.querySelectorAll('.spotlight-item').forEach(function(el, i) {
+            el.classList.toggle('active', i === idx);
+        });
+        if (scroll !== false) {
+            var active = results.querySelector('.spotlight-item.active');
+            if (active) active.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function connectItem(idx) {
+        if (idx < 0 || idx >= items.length) return;
+        var inst = items[idx];
+        var app = window.cloudterm;
+        if (!app) return;
+        var connType = inst.platform === 'windows' ? 'rdp' : 'ssh';
+        app.openSession(inst.instance_id, inst.name || inst.instance_id, connType);
+    }
+
+    function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s || '';
+        return d.innerHTML;
+    }
+
+    function init() {
+        bg = document.getElementById('spotlightBg');
+        input = document.getElementById('spotlightInput');
+        results = document.getElementById('spotlightResults');
+        if (!bg || !input || !results) return;
+
+        bg.addEventListener('click', function(e) {
+            if (e.target === bg) close();
+        });
+
+        input.addEventListener('input', function() {
+            var q = input.value.trim();
+            var all = getInstances();
+            if (!q) { activeIdx = -1; render(all); return; }
+            var filtered = all.filter(function(inst) {
+                var searchable = (inst.name || '') + ' ' + inst.instance_id + ' ' + (inst.private_ip || '') + ' ' + (inst.public_ip || '') + ' ' + (inst.platform || '');
+                return fuzzyMatch(q, searchable);
+            });
+            activeIdx = filtered.length > 0 ? 0 : -1;
+            render(filtered);
+        });
+
+        input.addEventListener('keydown', function(e) {
+            var count = Math.min(items.length, 50);
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setActive(activeIdx < count - 1 ? activeIdx + 1 : 0);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setActive(activeIdx > 0 ? activeIdx - 1 : count - 1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                connectItem(activeIdx);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                close();
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                var tag = (e.target.tagName || '').toLowerCase();
+                if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+                e.preventDefault();
+                open();
+            }
+            if (e.key === 'Escape' && bg && bg.classList.contains('show')) {
+                close();
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
+// ---------------------------------------------------------------------------
+// Cost Explorer
+// ---------------------------------------------------------------------------
+
+(function() {
+    'use strict';
+
+    var CE_COLORS = [
+        '#6C5CE7', '#00B894', '#FDCB6E', '#E17055', '#0984E3',
+        '#D63031', '#E84393', '#00CEC9', '#FAB1A0', '#74B9FF',
+        '#55EFC4', '#A29BFE', '#FF7675', '#FD79A8', '#636E72'
+    ];
+
+    var CE_COST_FIELDS = { last_month: true, this_month: true, last_7_days: true, yesterday: true };
+
+    var ceCharts = {};
+
+    var ceState = {
+        data: null,
+        svcSortCol: 'this_month',
+        svcSortDir: 'desc',
+        svcShowAll: false,
+        filterAccount: '',
+        filterService: '',
+        filterTag: ''
+    };
+
+    function ceFormatCost(amount) {
+        if (amount == null || isNaN(amount)) return '$0.00';
+        if (Math.abs(amount) >= 1000000) return '$' + (amount / 1000000).toFixed(2) + 'M';
+        return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function ceDestroyCharts() {
+        for (var k in ceCharts) { if (ceCharts[k]) ceCharts[k].destroy(); }
+        ceCharts = {};
+    }
+
+    function ceSetLoading(on) {
+        var el = document.getElementById('ceLoading');
+        if (el) el.classList.toggle('active', on);
+    }
+
+    function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s || '';
+        return d.innerHTML;
+    }
+
+    function ceSection(title, bodyHtml, sectionId) {
+        var chevron = '<svg class="ce-section-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
+        return '<div class="ce-section-card"' + (sectionId ? ' id="' + sectionId + '"' : '') + '>' +
+               '<div class="ce-section-header" data-ce-toggle>' +
+               '<span class="ce-section-title">' + title + '</span>' +
+               chevron +
+               '</div>' +
+               '<div class="ce-section-body">' + bodyHtml + '</div>' +
+               '</div>';
+    }
+
+    function ceTagTable(tagKey, items) {
+        var html = '<div class="ce-table-wrap" style="border:none;border-radius:0;"><table class="ce-table"><thead><tr>';
+        html += '<th>' + esc(tagKey) + '</th><th>Account</th>';
+        ['Last Month', 'This Month', 'Last 7 Days', 'Yesterday'].forEach(function(h) {
+            html += '<th style="text-align:right;">' + h + '</th>';
+        });
+        html += '</tr></thead><tbody>';
+        (items || []).forEach(function(row) {
+            html += '<tr>' +
+                '<td>' + esc(row.value || '') + '</td>' +
+                '<td>' + esc(row.account || '') + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.last_month) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.this_month) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.last_7_days) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.yesterday) + '</td>' +
+                '</tr>';
+        });
+        html += '</tbody></table></div>';
+        return html;
+    }
+
+    function ceRenderDashboard(data) {
+        var area = document.getElementById('ceDashArea');
+        if (!area) return;
+        ceDestroyCharts();
+        var html = '';
+
+        var tmChange = data.total_last_month ? ((data.total_this_month - data.total_last_month) / data.total_last_month * 100) : 0;
+        var ydChange = data.total_day_before ? ((data.total_yesterday - data.total_day_before) / data.total_day_before * 100) : 0;
+        var dailyAvg = (data.total_last_7_days || 0) / 7;
+
+        html += '<div class="ce-kpi-row">';
+        var tmArrow = tmChange < 0 ? '&#8595;' : '&#8593;';
+        var tmColor = tmChange < 0 ? 'var(--ssh)' : 'var(--red)';
+        html += '<div class="ce-kpi-card" style="--kpi-a:#6C5CE7;--kpi-b:#a29bfe;">' +
+                '<div class="ce-kpi-label">This Month</div>' +
+                '<div class="ce-kpi-value">' + ceFormatCost(data.total_this_month) + '</div>' +
+                '<div class="ce-kpi-trend" style="color:' + tmColor + ';">' + tmArrow + ' ' + Math.abs(tmChange).toFixed(1) + '% vs last month</div>' +
+                '</div>';
+        html += '<div class="ce-kpi-card" style="--kpi-a:#0984E3;--kpi-b:#74b9ff;">' +
+                '<div class="ce-kpi-label">Last Month</div>' +
+                '<div class="ce-kpi-value">' + ceFormatCost(data.total_last_month) + '</div>' +
+                '<div class="ce-kpi-trend" style="color:var(--dim);">Full month total</div>' +
+                '</div>';
+        html += '<div class="ce-kpi-card" style="--kpi-a:#00B894;--kpi-b:#55efc4;">' +
+                '<div class="ce-kpi-label">Last 7 Days</div>' +
+                '<div class="ce-kpi-value">' + ceFormatCost(data.total_last_7_days) + '</div>' +
+                '<div class="ce-kpi-trend" style="color:var(--dim);">' + ceFormatCost(dailyAvg) + '/day avg</div>' +
+                '</div>';
+        var ydArrow = ydChange < 0 ? '&#8595;' : '&#8593;';
+        var ydColor = ydChange < 0 ? 'var(--ssh)' : 'var(--red)';
+        html += '<div class="ce-kpi-card" style="--kpi-a:#FDCB6E;--kpi-b:#e17055;">' +
+                '<div class="ce-kpi-label">Yesterday</div>' +
+                '<div class="ce-kpi-value">' + ceFormatCost(data.total_yesterday) + '</div>' +
+                '<div class="ce-kpi-trend" style="color:' + ydColor + ';">' + ydArrow + ' ' + Math.abs(ydChange).toFixed(1) + '% vs prev day</div>' +
+                '</div>';
+        html += '</div>';
+
+        html += '<div class="ce-charts-row">';
+        html += '<div class="ce-chart-card">' +
+                '<div class="ce-chart-title">Daily Cost Trend</div>' +
+                '<div style="font-size:11px;color:var(--dim);margin-top:-2px;margin-bottom:6px;">Last 60 days spend</div>' +
+                '<div class="ce-chart-canvas-wrap" style="min-height:220px;"><canvas id="ceTrendCanvas"></canvas></div>' +
+                '</div>';
+        html += '<div class="ce-chart-card">' +
+                '<div class="ce-chart-title">Cost by Account</div>' +
+                '<div style="font-size:11px;color:var(--dim);margin-top:-2px;margin-bottom:6px;">This month distribution</div>' +
+                '<div class="ce-chart-canvas-wrap" style="min-height:220px;"><canvas id="ceAccountDonut"></canvas></div>' +
+                '</div>';
+        html += '</div>';
+
+        var drivers = (data.top_cost_drivers || []).slice(0, 10);
+        if (drivers.length) {
+            var driversHtml = '<div class="ce-drivers-list">';
+            drivers.forEach(function(d, i) {
+                var pct = d.percentage || 0;
+                var color = CE_COLORS[i % CE_COLORS.length];
+                var changeStr = '';
+                if (d.change != null) {
+                    var chgArrow = d.change < 0 ? '&#8595;' : '&#8593;';
+                    var chgColor = d.change < 0 ? 'var(--ssh)' : 'var(--red)';
+                    changeStr = '<span class="ce-driver-change" style="color:' + chgColor + ';">' + chgArrow + ' ' + Math.abs(d.change).toFixed(1) + '% vs LM</span>';
+                }
+                driversHtml += '<div class="ce-driver-item">' +
+                    '<div class="ce-driver-meta">' +
+                    '<span class="ce-driver-name">' + esc(d.service || '') + '</span>' +
+                    '<div class="ce-driver-right">' +
+                    '<span class="ce-driver-cost">' + ceFormatCost(d.this_month) + '</span>' +
+                    '<span class="ce-driver-pct">' + pct.toFixed(1) + '%</span>' +
+                    changeStr +
+                    '</div>' +
+                    '</div>' +
+                    '<div class="ce-driver-bar-track">' +
+                    '<div class="ce-driver-bar-fill" style="width:' + Math.min(pct, 100) + '%;background:' + color + ';"></div>' +
+                    '</div>' +
+                    '</div>';
+            });
+            driversHtml += '</div>';
+            html += '<div class="ce-section-card">' +
+                '<div class="ce-section-header" data-ce-toggle>' +
+                '<div><div class="ce-section-title">Core Cost Drivers</div>' +
+                '<div style="font-size:11px;color:var(--dim);margin-top:2px;">Leading service expenditures by monthly volume</div></div>' +
+                '<svg class="ce-section-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>' +
+                '</div>' +
+                '<div class="ce-section-body">' + driversHtml + '</div>' +
+                '</div>';
+        }
+
+        var accBody = '<div class="ce-table-wrap" style="border:none;border-radius:0;">' +
+            '<table class="ce-table"><thead><tr>' +
+            '<th>Account</th>' +
+            '<th style="text-align:right;">This Month</th>' +
+            '<th style="text-align:right;">Last Month</th>' +
+            '<th style="text-align:right;">Last 7 Days</th>' +
+            '<th style="text-align:right;">Yesterday</th>' +
+            '<th style="text-align:right;">Trend</th>' +
+            '</tr></thead><tbody>';
+        (data.accounts || []).forEach(function(a) {
+            var tm = a.this_month || 0;
+            var lm = a.last_month || 0;
+            var sparkColor = (lm > 0 && tm < lm) ? '#00B894' : '#E17055';
+            var sparkHgt = lm > 0 ? Math.min(100, Math.round(tm / lm * 80)) : 20;
+            var sparkBar = '<div class="ce-sparkline">' +
+                '<div class="ce-spark-bar" style="height:80%;background:#6C5CE7;opacity:0.6;"></div>' +
+                '<div class="ce-spark-bar" style="height:' + sparkHgt + '%;background:' + sparkColor + ';"></div>' +
+                '</div>';
+            accBody += '<tr>' +
+                '<td>' + esc(a.alias || a.account_id) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(tm) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(lm) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(a.last_7_days) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(a.yesterday) + '</td>' +
+                '<td style="text-align:right;">' + sparkBar + '</td>' +
+                '</tr>';
+        });
+        accBody += '<tr class="ce-totals-row">' +
+            '<td>Total</td>' +
+            '<td class="ce-cost-cell">' + ceFormatCost(data.total_this_month) + '</td>' +
+            '<td class="ce-cost-cell">' + ceFormatCost(data.total_last_month) + '</td>' +
+            '<td class="ce-cost-cell">' + ceFormatCost(data.total_last_7_days) + '</td>' +
+            '<td class="ce-cost-cell">' + ceFormatCost(data.total_yesterday) + '</td>' +
+            '<td></td>' +
+            '</tr>';
+        accBody += '</tbody></table></div>';
+        html += ceSection('Account Portfolio', accBody);
+
+        var accountNames = (data.accounts || []).map(function(a) { return a.alias || a.account_id; });
+        html += '<div class="ce-filter-bar">';
+        html += '<span class="ce-filter-label">Filters</span>';
+        html += '<select id="ceFilterAccount" class="ce-tag-select" style="width:auto;min-width:160px;max-width:220px;">';
+        html += '<option value="">All Accounts</option>';
+        accountNames.forEach(function(n) {
+            html += '<option value="' + esc(n) + '"' + (ceState.filterAccount === n ? ' selected' : '') + '>' + esc(n) + '</option>';
+        });
+        html += '</select>';
+        html += '<input type="text" id="ceFilterService" class="ce-tag-input" placeholder="Filter services..." value="' + esc(ceState.filterService) + '" style="width:auto;min-width:180px;max-width:260px;">';
+        html += '<input type="text" id="ceFilterTag" class="ce-tag-input" placeholder="Filter tags..." value="' + esc(ceState.filterTag) + '" style="width:auto;min-width:160px;max-width:220px;">';
+        if (ceState.filterAccount || ceState.filterService || ceState.filterTag) {
+            html += '<button id="ceClearFilters" class="ce-preset-btn" style="color:var(--red);border-color:rgba(214,48,49,.3);">Clear Filters</button>';
+        }
+        html += '</div>';
+
+        var fAccount = ceState.filterAccount.toLowerCase();
+        var fService = ceState.filterService.toLowerCase();
+        var fTag = ceState.filterTag.toLowerCase();
+
+        var svcData = (data.service_breakdown || []).slice().filter(function(r) {
+            if (fAccount && (r.account || '').toLowerCase().indexOf(fAccount) === -1) return false;
+            if (fService && (r.service || '').toLowerCase().indexOf(fService) === -1) return false;
+            return true;
+        });
+        var sc = ceState.svcSortCol, sd = ceState.svcSortDir;
+        svcData.sort(function(a, b) {
+            var av = CE_COST_FIELDS[sc] ? (a[sc] || 0) : (a[sc] || '').toLowerCase();
+            var bv = CE_COST_FIELDS[sc] ? (b[sc] || 0) : (b[sc] || '').toLowerCase();
+            if (av < bv) return sd === 'asc' ? -1 : 1;
+            if (av > bv) return sd === 'asc' ? 1 : -1;
+            return 0;
+        });
+        var svcVisible = ceState.svcShowAll ? svcData : svcData.slice(0, 50);
+        var svcBody = '<div class="ce-table-wrap" style="border:none;border-radius:0;">' +
+            '<table class="ce-table" id="ceSvcTable"><thead><tr>';
+        [
+            { key: 'service', label: 'Service', right: false },
+            { key: 'account', label: 'Account', right: false },
+            { key: 'last_month', label: 'Last Month', right: true },
+            { key: 'this_month', label: 'This Month', right: true },
+            { key: 'last_7_days', label: 'Last 7 Days', right: true },
+            { key: 'yesterday', label: 'Yesterday', right: true }
+        ].forEach(function(col) {
+            var sorted = sc === col.key;
+            var arrow = sorted ? (sd === 'asc' ? ' \u2191' : ' \u2193') : '';
+            svcBody += '<th data-svc-col="' + col.key + '"' +
+                (col.right ? ' style="text-align:right;"' : '') +
+                (sorted ? ' class="sort-' + sd + '"' : '') + '>' +
+                col.label + '<span class="sort-arrow">' + arrow + '</span></th>';
+        });
+        svcBody += '</tr></thead><tbody>';
+        svcVisible.forEach(function(row) {
+            svcBody += '<tr>' +
+                '<td>' + esc(row.service || '') + '</td>' +
+                '<td>' + esc(row.account || '') + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.last_month) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.this_month) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.last_7_days) + '</td>' +
+                '<td class="ce-cost-cell">' + ceFormatCost(row.yesterday) + '</td>' +
+                '</tr>';
+        });
+        svcBody += '</tbody></table></div>';
+        if (!ceState.svcShowAll && svcData.length > 50) {
+            svcBody += '<div style="padding:10px 14px;">' +
+                '<button class="ce-preset-btn" id="ceSvcShowAll">Show All (' + svcData.length + ' rows)</button>' +
+                '</div>';
+        }
+        html += ceSection('Service Breakdown', svcBody, 'ceSvcSection');
+
+        var regionData = (data.region_breakdown || []).filter(function(r) {
+            if (fAccount && (r.account || '').toLowerCase().indexOf(fAccount) === -1) return false;
+            return true;
+        });
+        if (regionData.length) {
+            var regionBody = '<div class="ce-table-wrap" style="border:none;border-radius:0;">' +
+                '<table class="ce-table"><thead><tr>' +
+                '<th>Region</th><th>Account</th>' +
+                '<th style="text-align:right;">This Month</th>' +
+                '<th style="text-align:right;">Last Month</th>' +
+                '</tr></thead><tbody>';
+            regionData.forEach(function(row) {
+                regionBody += '<tr>' +
+                    '<td>' + esc(row.region || '') + '</td>' +
+                    '<td>' + esc(row.account || '') + '</td>' +
+                    '<td class="ce-cost-cell">' + ceFormatCost(row.this_month) + '</td>' +
+                    '<td class="ce-cost-cell">' + ceFormatCost(row.last_month) + '</td>' +
+                    '</tr>';
+            });
+            regionBody += '</tbody></table></div>';
+            html += ceSection('Cost by Region', regionBody);
+        }
+
+        var tags = data.tag_breakdown || {};
+        if (tags.Customer && tags.Customer.length) {
+            var filteredCustomer = tags.Customer.filter(function(r) {
+                if (fAccount && (r.account || '').toLowerCase().indexOf(fAccount) === -1) return false;
+                if (fTag && (r.value || '').toLowerCase().indexOf(fTag) === -1) return false;
+                return true;
+            });
+            if (filteredCustomer.length) html += ceSection('Cost by Customer', ceTagTable('Customer', filteredCustomer));
+        }
+        if (tags.ProjectCode && tags.ProjectCode.length) {
+            var filteredProject = tags.ProjectCode.filter(function(r) {
+                if (fAccount && (r.account || '').toLowerCase().indexOf(fAccount) === -1) return false;
+                if (fTag && (r.value || '').toLowerCase().indexOf(fTag) === -1) return false;
+                return true;
+            });
+            if (filteredProject.length) html += ceSection('Cost by ProjectCode', ceTagTable('ProjectCode', filteredProject));
+        }
+
+        area.innerHTML = html;
+
+        area.querySelectorAll('.ce-section-header[data-ce-toggle]').forEach(function(header) {
+            header.addEventListener('click', function() {
+                header.closest('.ce-section-card').classList.toggle('collapsed');
+            });
+        });
+
+        area.querySelectorAll('#ceSvcTable th[data-svc-col]').forEach(function(th) {
+            th.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var col = th.dataset.svcCol;
+                if (ceState.svcSortCol === col) {
+                    ceState.svcSortDir = ceState.svcSortDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    ceState.svcSortCol = col;
+                    ceState.svcSortDir = CE_COST_FIELDS[col] ? 'desc' : 'asc';
+                }
+                ceRenderDashboard(ceState.data);
+            });
+        });
+
+        var showAllBtn = document.getElementById('ceSvcShowAll');
+        if (showAllBtn) {
+            showAllBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                ceState.svcShowAll = true;
+                ceRenderDashboard(ceState.data);
+            });
+        }
+
+        var filterAccount = document.getElementById('ceFilterAccount');
+        if (filterAccount) {
+            filterAccount.addEventListener('change', function() {
+                ceState.filterAccount = this.value;
+                ceRenderDashboard(ceState.data);
+            });
+        }
+        var filterService = document.getElementById('ceFilterService');
+        if (filterService) {
+            var debounce = null;
+            filterService.addEventListener('input', function() {
+                var val = this.value;
+                clearTimeout(debounce);
+                debounce = setTimeout(function() {
+                    ceState.filterService = val;
+                    ceRenderDashboard(ceState.data);
+                }, 300);
+            });
+        }
+        var filterTag = document.getElementById('ceFilterTag');
+        if (filterTag) {
+            var debounceTag = null;
+            filterTag.addEventListener('input', function() {
+                var val = this.value;
+                clearTimeout(debounceTag);
+                debounceTag = setTimeout(function() {
+                    ceState.filterTag = val;
+                    ceRenderDashboard(ceState.data);
+                }, 300);
+            });
+        }
+        var clearBtn = document.getElementById('ceClearFilters');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function() {
+                ceState.filterAccount = '';
+                ceState.filterService = '';
+                ceState.filterTag = '';
+                ceRenderDashboard(ceState.data);
+            });
+        }
+
+        setTimeout(function() { ceInitCharts(data); }, 0);
+    }
+
+    function ceInitCharts(data) {
+        var trendCanvas = document.getElementById('ceTrendCanvas');
+        if (trendCanvas && data.daily_trend && data.daily_trend.length && window.Chart) {
+            var trendLabels = data.daily_trend.map(function(d) {
+                var parts = d.date.split('-');
+                return parts[1] + '/' + parts[2];
+            });
+            var trendCosts = data.daily_trend.map(function(d) { return d.cost || 0; });
+            ceCharts.trend = new Chart(trendCanvas, {
+                type: 'line',
+                data: {
+                    labels: trendLabels,
+                    datasets: [{
+                        data: trendCosts,
+                        borderColor: '#6C5CE7',
+                        backgroundColor: 'rgba(108,92,231,0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: {
+                            ticks: { color: '#6b82a8', maxTicksLimit: 8, font: { size: 10 } },
+                            grid: { color: 'rgba(255,255,255,0.04)' }
+                        },
+                        y: {
+                            ticks: {
+                                color: '#6b82a8',
+                                font: { size: 10 },
+                                callback: function(v) { return '$' + (v / 1000).toFixed(0) + 'K'; }
+                            },
+                            grid: { color: 'rgba(255,255,255,0.04)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        var donutCanvas = document.getElementById('ceAccountDonut');
+        if (donutCanvas && data.accounts && data.accounts.length && window.Chart) {
+            var accNames = data.accounts.map(function(a) { return a.alias || a.account_id; });
+            var accCosts = data.accounts.map(function(a) { return a.this_month || 0; });
+            ceCharts.donut = new Chart(donutCanvas, {
+                type: 'doughnut',
+                data: {
+                    labels: accNames,
+                    datasets: [{
+                        data: accCosts,
+                        backgroundColor: CE_COLORS.slice(0, accNames.length),
+                        borderColor: 'transparent',
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                color: '#6b82a8',
+                                font: { size: 11 },
+                                padding: 8,
+                                boxWidth: 12
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    async function ceLoadAll() {
+        ceSetLoading(true);
+        var area = document.getElementById('ceDashArea');
+        if (area) area.innerHTML = '';
+        try {
+            var resp = await fetch('/cost-explorer/comprehensive');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            ceState.data = await resp.json();
+            ceRenderDashboard(ceState.data);
+        } catch (e) {
+            if (area) {
+                area.innerHTML = '<div style="padding:40px;text-align:center;color:var(--dim);">Failed to load cost data. ' + esc(String(e.message || '')) + '</div>';
+            }
+        } finally {
+            ceSetLoading(false);
+        }
+    }
+
+    function ceExportCSV() {
+        if (!ceState.data || !ceState.data.service_breakdown || !ceState.data.service_breakdown.length) {
+            showToast('No data to export');
+            return;
+        }
+        var rows = ceState.data.service_breakdown;
+        var header = 'Service,Account,Last Month,This Month,Last 7 Days,Yesterday\n';
+        var body = rows.map(function(r) {
+            return [r.service || '', r.account || '', r.last_month || 0, r.this_month || 0, r.last_7_days || 0, r.yesterday || 0]
+                .map(function(v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
+        }).join('\n');
+        var blob = new Blob([header + body], { type: 'text/csv' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'cost-explorer.csv';
+        a.click();
+        setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    function ceInit() {
+        var btn = document.getElementById('costExplorerBtn');
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+            var dashHost = location.hostname;
+            window.open('http://' + dashHost + ':5173', '_blank');
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', ceInit);
+    } else {
+        ceInit();
+    }
+})();

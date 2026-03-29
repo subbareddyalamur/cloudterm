@@ -12,12 +12,12 @@ import (
 
 // ManualAccount represents an AWS account added via the UI with explicit credentials.
 type ManualAccount struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	AccessKeyID    string `json:"access_key_id"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
-	SessionToken   string `json:"session_token,omitempty"`
-	AddedAt        string `json:"added_at"`
+	SessionToken    string `json:"session_token,omitempty"`
+	AddedAt         string `json:"added_at"`
 }
 
 // AccountStore manages manually-added AWS accounts, persisted to a JSON file.
@@ -32,6 +32,15 @@ func NewAccountStore(path string) *AccountStore {
 	s := &AccountStore{path: path}
 	s.load()
 	return s
+}
+
+// ListRaw returns all stored accounts with full credentials (for internal use).
+func (s *AccountStore) ListRaw() []ManualAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]ManualAccount, len(s.accounts))
+	copy(out, s.accounts)
+	return out
 }
 
 // List returns all stored accounts with secret keys masked.
@@ -76,12 +85,12 @@ func (s *AccountStore) Add(name, accessKey, secretKey, sessionToken string) (Man
 	}
 
 	acct := ManualAccount{
-		ID:             id,
-		Name:           name,
-		AccessKeyID:    accessKey,
+		ID:              id,
+		Name:            name,
+		AccessKeyID:     accessKey,
 		SecretAccessKey: secretKey,
-		SessionToken:   sessionToken,
-		AddedAt:        time.Now().UTC().Format(time.RFC3339),
+		SessionToken:    sessionToken,
+		AddedAt:         time.Now().UTC().Format(time.RFC3339),
 	}
 	s.accounts = append(s.accounts, acct)
 	return acct, s.save()

@@ -97,9 +97,9 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.RLock()
 	resp := map[string]any{
-		"status":           "healthy",
-		"active_sessions":  len(activeSessions),
-		"allocated_ports":  len(allocatedPorts),
+		"status":          "healthy",
+		"active_sessions": len(activeSessions),
+		"allocated_ports": len(allocatedPorts),
 	}
 	mu.RUnlock()
 	writeJSON(w, http.StatusOK, resp)
@@ -218,7 +218,7 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 
 	// Wait for SSM tunnel to actually be ready (probe the internal port).
 	ready := false
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 30; i++ {
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", internalPort), 500*time.Millisecond)
 		if err == nil {
 			conn.Close()
@@ -228,10 +228,15 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !ready {
-		logger.Printf("Warning: SSM tunnel for %s not confirmed ready after ~7.5s, proceeding anyway", req.InstanceID)
-	} else {
-		logger.Printf("SSM tunnel ready for %s on internal port %d", req.InstanceID, internalPort)
+		logger.Printf("Error: SSM tunnel for %s not ready after ~15s, aborting", req.InstanceID)
+		_ = ssmCmd.Process.Kill()
+		mu.Lock()
+		delete(allocatedPorts, allocatedPort)
+		mu.Unlock()
+		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "SSM tunnel did not become ready in time — the instance may be unreachable or SSM agent is not running"})
+		return
 	}
+	logger.Printf("SSM tunnel ready for %s on internal port %d", req.InstanceID, internalPort)
 
 	// Start socat relay.
 	socatCmd := exec.Command("socat",

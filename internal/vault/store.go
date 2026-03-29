@@ -198,6 +198,63 @@ func (s *Store) FindMatch(instanceID, instanceName, env, accountID string) (*Vau
 	return nil, fmt.Errorf("no match")
 }
 
+// BrowseEntry holds a key-value pair from browsing the DB.
+type BrowseEntry struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	Encrypted bool   `json:"encrypted"`
+}
+
+// BrowseBucket holds bucket metadata and entries.
+type BrowseBucket struct {
+	Name    string        `json:"name"`
+	Count   int           `json:"count"`
+	Entries []BrowseEntry `json:"entries,omitempty"`
+}
+
+// Browse returns all buckets and decrypted entries (passwords redacted).
+func (s *Store) Browse() []BrowseBucket {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	var buckets []BrowseBucket
+	s.db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(name []byte, b *bolt.Bucket) error {
+			bi := BrowseBucket{Name: string(name)}
+			b.ForEach(func(k, v []byte) error {
+				bi.Count++
+				e := BrowseEntry{Key: string(k), Encrypted: true}
+				dec, err := s.decrypt(v)
+				if err == nil {
+					e.Value = redactPwd(string(dec))
+					e.Encrypted = false
+				} else {
+					e.Value = fmt.Sprintf("[encrypted, %d bytes]", len(v))
+				}
+				bi.Entries = append(bi.Entries, e)
+				return nil
+			})
+			buckets = append(buckets, bi)
+			return nil
+		})
+	})
+	return buckets
+}
+
+func redactPwd(s string) string {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(s), &m) != nil {
+		return s
+	}
+	if cred, ok := m["credential"].(map[string]interface{}); ok {
+		if _, has := cred["password"]; has {
+			cred["password"] = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+		}
+	}
+	out, _ := json.Marshal(m)
+	return string(out)
+}
+
 func (s *Store) listUnredacted() []VaultEntry {
 	var entries []VaultEntry
 	s.db.View(func(tx *bolt.Tx) error {

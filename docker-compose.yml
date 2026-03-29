@@ -16,6 +16,8 @@ services:
       - TAG2=${TAG2:-Environment}
       - RDP_MODE=guacamole
       - GUAC_WS_URL=ws://localhost:8080
+      - GUAC_LITE_HOST=guac-lite
+      - GUAC_LITE_PORT=8080
       - GUAC_CRYPT_SECRET=${GUAC_CRYPT_SECRET:-cloudterm-guac-secret-key-32byte}
       - SSM_FORWARDER_HOST=ssm-forwarder
       - SSM_FORWARDER_PORT=5001
@@ -140,6 +142,17 @@ services:
         limits:
           memory: 512M
           cpus: '0.5'
+    networks:
+      - cloudterm-network
+    restart: unless-stopped
+
+  cost-dashboard:
+    build: docker/cost-dashboard
+    container_name: cost-dashboard
+    ports:
+      - "5173:80"
+    depends_on:
+      - cloudterm
     networks:
       - cloudterm-network
     restart: unless-stopped

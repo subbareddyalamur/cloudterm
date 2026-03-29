@@ -11,6 +11,8 @@ type Config struct {
 	Tag2                string
 	RDPMode             string // "native" or "guacamole"
 	GuacWSURL           string
+	GuacLiteHost        string
+	GuacLitePort        int
 	GuacCryptSecret     string
 	SSMForwarderHost    string
 	SSMForwarderPort    int
@@ -50,6 +52,8 @@ func Load() *Config {
 		Tag2:                 envStr("TAG2", "Environment"),
 		RDPMode:              envStr("RDP_MODE", "native"),
 		GuacWSURL:            envStr("GUAC_WS_URL", "ws://localhost:8080"),
+		GuacLiteHost:         envStr("GUAC_LITE_HOST", "guac-lite"),
+		GuacLitePort:         envInt("GUAC_LITE_PORT", 8080),
 		GuacCryptSecret:      envStr("GUAC_CRYPT_SECRET", "cloudterm-guac-secret-key-32byte"),
 		SSMForwarderHost:     envStr("SSM_FORWARDER_HOST", "ssm-forwarder"),
 		SSMForwarderPort:     envInt("SSM_FORWARDER_PORT", 5001),

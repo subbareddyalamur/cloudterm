@@ -242,6 +242,14 @@ func (e *Engine) isEnabled(sessionID string) bool {
 	return true
 }
 
+// BrowseStore returns all buckets and entries from the suggest database.
+func (e *Engine) BrowseStore() []BrowseBucket {
+	if e.store == nil {
+		return nil
+	}
+	return e.store.Browse()
+}
+
 // Stats returns engine statistics.
 func (e *Engine) Stats() map[string]interface{} {
 	return map[string]interface{}{

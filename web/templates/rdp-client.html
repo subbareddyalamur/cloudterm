@@ -776,71 +776,34 @@
                     }
                 };
 
-                // ── Remote clipboard -> local ──
+                // ── Clipboard Sync ──
+                // Ctrl+C/V/X go directly to Windows via Guacamole (no interception).
+                // Cmd+C/V/X on Mac are remapped to Ctrl+C/V/X via the keyboard handler.
+                // Clipboard data is synced via Guacamole protocol, not browser Clipboard API.
+
                 guac.onclipboard = function(stream, mimetype) {
                     if (mimetype === 'text/plain') {
                         var data = '';
-                        stream.onblob = function(blob) {
-                            data += atob(blob);
-                        };
+                        stream.onblob = function(blob) { data += atob(blob); };
                         stream.onend = function() {
                             lastRemoteClipboard = data;
-                            if (window.parent && window.parent !== window) {
-                                window.parent.postMessage({ type: 'rdp-clipboard', text: data }, '*');
+                            if (window.parent !== window) {
+                                window.parent.postMessage({type: 'rdp-clipboard', text: data}, '*');
                             }
                         };
                     }
                 };
 
-                // ── Clipboard events (reliable, browser-native) ──
                 function pushClipToRemote(text) {
                     if (!text || !guac) return;
                     try {
-                        var stream = guac.createClipboardStream('text/plain');
-                        var writer = new Guacamole.StringWriter(stream);
-                        writer.sendText(text);
-                        writer.sendEnd();
-                    } catch (err) {}
+                        var s = guac.createClipboardStream('text/plain');
+                        var w = new Guacamole.StringWriter(s);
+                        w.sendText(text);
+                        w.sendEnd();
+                    } catch(e) {}
                 }
 
-                // copy/cut: put remote clipboard data into the system clipboard
-                document.addEventListener('copy', function(e) {
-                    if (lastRemoteClipboard) {
-                        e.clipboardData.setData('text/plain', lastRemoteClipboard);
-                        e.preventDefault();
-                    }
-                });
-                document.addEventListener('cut', function(e) {
-                    if (lastRemoteClipboard) {
-                        e.clipboardData.setData('text/plain', lastRemoteClipboard);
-                        e.preventDefault();
-                    }
-                });
-
-                // paste: push local clipboard to remote, then send Ctrl+V
-                document.addEventListener('paste', function(e) {
-                    var text = e.clipboardData.getData('text/plain');
-                    if (text && guac) {
-                        pushClipToRemote(text);
-                        setTimeout(function() {
-                            guac.sendKeyEvent(1, 0xFFE3);
-                            guac.sendKeyEvent(1, 0x76);
-                            guac.sendKeyEvent(0, 0x76);
-                            guac.sendKeyEvent(0, 0xFFE3);
-                        }, 30);
-                    }
-                    e.preventDefault();
-                });
-
-                // On focus: push local clipboard to remote proactively
-                window.addEventListener('focus', function() {
-                    if (!navigator.clipboard || !navigator.clipboard.readText || !guac) return;
-                    navigator.clipboard.readText().then(function(text) {
-                        pushClipToRemote(text);
-                    }).catch(function() {});
-                });
-
-                // Listen for clipboard push from parent frame
                 window.addEventListener('message', function(e) {
                     if (e.data && e.data.type === 'rdp-clipboard-push' && e.data.text) {
                         pushClipToRemote(e.data.text);
@@ -902,13 +865,11 @@
                 });
 
                 // ── Keyboard ──
-                // Mac: Cmd+key → Ctrl+key remapped for remote Windows.
-                // Clipboard (copy/paste/cut) is handled by DOM events above, NOT here.
-                // This handler just sends raw keys to Guacamole.
+                // All keys go straight to Windows via Guacamole. No clipboard interception.
+                // On Mac: Cmd remapped to Ctrl so Cmd+C/V/X = Ctrl+C/V/X in Windows.
+                // For Cmd+V (paste): also sync local clipboard to remote before sending.
                 keyboard = new Guacamole.Keyboard(document);
 
-                var KEY_LMETA = 0xFFE7, KEY_RMETA = 0xFFE8;
-                var KEY_LCTRL = 0xFFE3, KEY_RCTRL = 0xFFE4;
                 var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
                 var metaHeld = false;
 
@@ -916,15 +877,22 @@
                     if (!guac) return false;
 
                     if (isMac) {
-                        if (keysym === KEY_LMETA || keysym === KEY_RMETA) {
+                        if (keysym === 0xFFE7 || keysym === 0xFFE8) {
                             metaHeld = true;
-                            guac.sendKeyEvent(1, KEY_LCTRL);
+                            guac.sendKeyEvent(1, 0xFFE3);
                             return true;
                         }
-                        // Block Win+L (lock), Win+D (desktop)
                         if (metaHeld) {
                             var kl = keysym | 0x20;
                             if (kl === 0x6c || kl === 0x64) return true;
+
+                            if (kl === 0x76) {
+                                pushClipFromParent();
+                                setTimeout(function() {
+                                    guac.sendKeyEvent(1, keysym);
+                                }, 100);
+                                return true;
+                            }
                         }
                     }
 
@@ -934,13 +902,19 @@
 
                 keyboard.onkeyup = function(keysym) {
                     if (!guac) return;
-                    if (isMac && (keysym === KEY_LMETA || keysym === KEY_RMETA)) {
+                    if (isMac && (keysym === 0xFFE7 || keysym === 0xFFE8)) {
                         metaHeld = false;
-                        guac.sendKeyEvent(0, KEY_LCTRL);
+                        guac.sendKeyEvent(0, 0xFFE3);
                         return;
                     }
                     guac.sendKeyEvent(0, keysym);
                 };
+
+                function pushClipFromParent() {
+                    if (window.parent !== window) {
+                        window.parent.postMessage({type: 'rdp-clipboard-request'}, '*');
+                    }
+                }
 
                 // Prevent Tab key from moving focus out of RDP session
                 document.addEventListener('keydown', function(e) {
