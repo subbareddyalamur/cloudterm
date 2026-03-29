@@ -79,6 +79,37 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
       return
     }
 
+    // Build the exact tsh command to run locally
+    const args = (cluster.exec_args || []).join(' ')
+    const tshCommand = `${cluster.exec_cmd} ${args}`
+
+    // Show dialog with instructions
+    const instructionText = `Run this command on your LOCAL MACHINE (where tsh is installed):
+
+${tshCommand}
+
+Then PASTE the entire JSON output below:`
+
+    const jsonOutput = prompt(instructionText)
+    if (!jsonOutput) return
+
+    // Parse the JSON to get cert and key
+    let execCred
+    try {
+      execCred = JSON.parse(jsonOutput)
+    } catch (e) {
+      alert('Invalid JSON: ' + e.message)
+      return
+    }
+
+    const certData = execCred.status?.clientCertificateData
+    const keyData = execCred.status?.clientKeyData
+    
+    if (!certData || !keyData) {
+      alert('Missing clientCertificateData or clientKeyData in output')
+      return
+    }
+
     // Create a fake cluster object
     const clusterObj = {
       name: cluster.name,
@@ -86,7 +117,7 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
       endpoint: cluster.server
     }
     
-    // Connect via kubeconfig API - will execute tsh automatically
+    // Connect via kubeconfig API with the credentials from tsh output
     fetch('/api/k8s/kubeconfig/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -94,8 +125,8 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
         server: cluster.server,
         ca_data: cluster.certificateAuthority,
         cluster_name: cluster.name,
-        exec_cmd: cluster.exec_cmd,
-        exec_args: cluster.exec_args || []
+        client_cert_data: certData,
+        client_key_data: keyData
       })
     })
       .then(r => r.json())

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -98,56 +97,31 @@ func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	
 	var req struct {
-		Server      string   `json:"server"`
-		CAData      string   `json:"ca_data"`
-		ClusterName string   `json:"cluster_name"`
-		ExecCmd     string   `json:"exec_cmd"`
-		ExecArgs    []string `json:"exec_args"`
+		Server            string `json:"server"`
+		CAData            string `json:"ca_data"`
+		ClusterName       string `json:"cluster_name"`
+		ClientCertData    string `json:"client_cert_data"`
+		ClientKeyData     string `json:"client_key_data"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if req.ExecCmd == "" {
-		json.NewEncoder(w).Encode(map[string]string{"error": "exec command required"})
-		return
-	}
-
-	// Execute the tsh command to get credentials
-	cmd := exec.Command(req.ExecCmd, req.ExecArgs...)
-	output, err := cmd.Output()
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("exec failed: %v", err)})
-		return
-	}
-
-	// Parse the ExecCredential output
-	var execCred struct {
-		Status struct {
-			ClientCertificateData string `json:"clientCertificateData"`
-			ClientKeyData         string `json:"clientKeyData"`
-		} `json:"status"`
-	}
-	if err := json.Unmarshal(output, &execCred); err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse exec output: %v", err)})
-		return
-	}
-
-	if execCred.Status.ClientCertificateData == "" || execCred.Status.ClientKeyData == "" {
-		json.NewEncoder(w).Encode(map[string]string{"error": "no client credentials in exec output"})
+	if req.ClientCertData == "" || req.ClientKeyData == "" {
+		json.NewEncoder(w).Encode(map[string]string{"error": "client certificate and key data required"})
 		return
 	}
 
 	// Connect using certificate-based auth
 	poolConn, err := h.k8sPool.ConnectWithCerts(req.Server, req.CAData, 
-		execCred.Status.ClientCertificateData, execCred.Status.ClientKeyData)
+		req.ClientCertData, req.ClientKeyData)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("connect: %v", err)})
 		return
 	}
 
-	h.logger.Printf("K8s: connected to cluster via kubeconfig exec: %s", req.ClusterName)
+	h.logger.Printf("K8s: connected to cluster via kubeconfig certificates: %s", req.ClusterName)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"cluster_id": fmt.Sprintf("kubeconfig:%s:certs", req.ClusterName),
