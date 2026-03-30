@@ -3,9 +3,11 @@ package handlers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -114,23 +116,48 @@ func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Requ
 
 	// Try to execute tsh if this is a Teleport cluster
 	if req.ExecCmd != "" && (strings.Contains(req.ExecCmd, "tsh") || strings.Contains(req.ExecCmd, "teleport")) {
-		// Try to execute tsh in the container (with mounted ~/.tsh config)
+		// Run tsh with HOME set so it finds ~/.tsh, and no keychain/agent
 		cmd := exec.Command(req.ExecCmd, req.ExecArgs...)
+		cmd.Env = append(os.Environ(),
+			"HOME=/home/cloudterm",
+			"TELEPORT_ADD_KEYS_TO_AGENT=no",
+			"SSH_AUTH_SOCK=", // disable SSH agent - use files only
+		)
 		output, err := cmd.Output()
-		if err == nil {
-			// tsh executed successfully, parse output
-			var execCred struct {
-				Status struct {
-					ClientCertificateData string `json:"clientCertificateData"`
-					ClientKeyData         string `json:"clientKeyData"`
-				} `json:"status"`
+		if err != nil {
+			// Capture stderr for a useful error
+			var exitErr *exec.ExitError
+			errMsg := err.Error()
+			if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+				errMsg = string(exitErr.Stderr)
 			}
-			if err := json.Unmarshal(output, &execCred); err == nil {
-				clientCertData = execCred.Status.ClientCertificateData
-				clientKeyData = execCred.Status.ClientKeyData
+			// Key is in macOS Keychain - give specific instructions
+			if strings.Contains(errMsg, "SSH auth") || strings.Contains(errMsg, "logged in") || strings.Contains(errMsg, "key") {
+				proxy := req.Server
+				for _, arg := range req.ExecArgs {
+					if strings.HasPrefix(arg, "--proxy=") {
+						proxy = strings.TrimPrefix(arg, "--proxy=")
+					}
+				}
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": fmt.Sprintf("Teleport private key is in macOS Keychain, not accessible from container.\n\nOne-time fix — run this on your local machine:\n\n  tsh logout\n  tsh login --proxy=%s --add-keys-to-agent=no\n\nThis stores the key on disk so CloudTerm can use it.\nAfter that, connecting will be automatic.", proxy),
+				})
+				return
 			}
+			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("tsh failed: %s", errMsg)})
+			return
 		}
-		// If tsh failed, fall through to let frontend handle it
+		// tsh executed successfully, parse output
+		var execCred struct {
+			Status struct {
+				ClientCertificateData string `json:"clientCertificateData"`
+				ClientKeyData         string `json:"clientKeyData"`
+			} `json:"status"`
+		}
+		if err := json.Unmarshal(output, &execCred); err == nil {
+			clientCertData = execCred.Status.ClientCertificateData
+			clientKeyData = execCred.Status.ClientKeyData
+		}
 	}
 
 	if clientCertData == "" || clientKeyData == "" {
