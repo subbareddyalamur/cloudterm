@@ -74,41 +74,13 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
 
     // Get exec info from the selected cluster
     const cluster = kubeconfigClusters.find(c => c.name === selectedKubecluster.name)
-    if (!cluster || !cluster.exec_cmd) {
-      alert('No exec command found in kubeconfig for this cluster')
+    if (!cluster) {
+      alert('No cluster info available')
       return
     }
 
-    // Build the exact tsh command to run locally
-    const args = (cluster.exec_args || []).join(' ')
-    const tshCommand = `${cluster.exec_cmd} ${args}`
-
-    // Show dialog with instructions
-    const instructionText = `Run this command on your LOCAL MACHINE (where tsh is installed):
-
-${tshCommand}
-
-Then PASTE the entire JSON output below:`
-
-    const jsonOutput = prompt(instructionText)
-    if (!jsonOutput) return
-
-    // Parse the JSON to get cert and key
-    let execCred
-    try {
-      execCred = JSON.parse(jsonOutput)
-    } catch (e) {
-      alert('Invalid JSON: ' + e.message)
-      return
-    }
-
-    const certData = execCred.status?.clientCertificateData
-    const keyData = execCred.status?.clientKeyData
-    
-    if (!certData || !keyData) {
-      alert('Missing clientCertificateData or clientKeyData in output')
-      return
-    }
+    // If this cluster uses tsh, backend will try to execute it automatically
+    const isTeleportCluster = cluster.exec_cmd?.includes('tsh') || cluster.exec_cmd?.includes('teleport')
 
     // Create a fake cluster object
     const clusterObj = {
@@ -117,7 +89,7 @@ Then PASTE the entire JSON output below:`
       endpoint: cluster.server
     }
     
-    // Connect via kubeconfig API with the credentials from tsh output
+    // Connect via kubeconfig API - backend will execute tsh if needed
     fetch('/api/k8s/kubeconfig/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -125,14 +97,23 @@ Then PASTE the entire JSON output below:`
         server: cluster.server,
         ca_data: cluster.certificateAuthority,
         cluster_name: cluster.name,
-        client_cert_data: certData,
-        client_key_data: keyData
+        exec_cmd: cluster.exec_cmd || '',
+        exec_args: cluster.exec_args || []
       })
     })
       .then(r => r.json())
       .then(data => {
         if (data.error) {
-          alert('Connect failed: ' + data.error)
+          const errorMsg = data.error
+          let message = data.error
+          
+          // Add helpful context for Teleport clusters
+          if (isTeleportCluster) {
+            message += '\n\nTo connect to Teleport clusters, you need to run:\n' +
+              'tsh login --proxy=<your-teleport-proxy>\n\n' +
+              'This saves your Teleport session in ~/.tsh which is mounted to the container.'
+          }
+          alert(message)
           return
         }
         // Simulate cluster connection

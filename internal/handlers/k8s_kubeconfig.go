@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
+	"strings"
 
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -97,34 +99,57 @@ func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	
 	var req struct {
-		Server            string `json:"server"`
-		CAData            string `json:"ca_data"`
-		ClusterName       string `json:"cluster_name"`
-		ClientCertData    string `json:"client_cert_data"`
-		ClientKeyData     string `json:"client_key_data"`
+		Server      string   `json:"server"`
+		CAData      string   `json:"ca_data"`
+		ClusterName string   `json:"cluster_name"`
+		ExecCmd     string   `json:"exec_cmd"`
+		ExecArgs    []string `json:"exec_args"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if req.ClientCertData == "" || req.ClientKeyData == "" {
-		json.NewEncoder(w).Encode(map[string]string{"error": "client certificate and key data required"})
+	var clientCertData, clientKeyData string
+
+	// Try to execute tsh if this is a Teleport cluster
+	if req.ExecCmd != "" && (strings.Contains(req.ExecCmd, "tsh") || strings.Contains(req.ExecCmd, "teleport")) {
+		// Try to execute tsh in the container (with mounted ~/.tsh config)
+		cmd := exec.Command(req.ExecCmd, req.ExecArgs...)
+		output, err := cmd.Output()
+		if err == nil {
+			// tsh executed successfully, parse output
+			var execCred struct {
+				Status struct {
+					ClientCertificateData string `json:"clientCertificateData"`
+					ClientKeyData         string `json:"clientKeyData"`
+				} `json:"status"`
+			}
+			if err := json.Unmarshal(output, &execCred); err == nil {
+				clientCertData = execCred.Status.ClientCertificateData
+				clientKeyData = execCred.Status.ClientKeyData
+			}
+		}
+		// If tsh failed, fall through to let frontend handle it
+	}
+
+	if clientCertData == "" || clientKeyData == "" {
+		json.NewEncoder(w).Encode(map[string]string{"error": "tsh execution failed - no valid Teleport session. Please run 'tsh login --proxy=<your-teleport-proxy>' on your local machine to authenticate first, then use the connection mode."})
 		return
 	}
 
 	// Connect using certificate-based auth
 	poolConn, err := h.k8sPool.ConnectWithCerts(req.Server, req.CAData, 
-		req.ClientCertData, req.ClientKeyData)
+		clientCertData, clientKeyData)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("connect: %v", err)})
 		return
 	}
 
-	h.logger.Printf("K8s: connected to cluster via kubeconfig certificates: %s", req.ClusterName)
+	h.logger.Printf("K8s: connected to cluster via tsh credentials: %s", req.ClusterName)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"cluster_id": fmt.Sprintf("kubeconfig:%s:certs", req.ClusterName),
+		"cluster_id": fmt.Sprintf("kubeconfig:%s:tsh", req.ClusterName),
 		"status":     "connected",
 		"version":    poolConn.Client.Discovery().RESTClient().Get().URL().String(),
 	})

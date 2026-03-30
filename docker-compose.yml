@@ -6,6 +6,7 @@ services:
       - "5000:5000"
     volumes:
       - ~/.aws:/home/cloudterm/.aws:ro
+      - ~/.tsh:/home/cloudterm/.tsh:ro
       - ./.cache:/app/cache
       - ./.sessionrecordings:/app/recordings
       - ./.terminalexport:/app/exports

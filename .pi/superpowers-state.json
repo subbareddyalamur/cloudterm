@@ -31,7 +31,8 @@
     "testFiles": [],
     "sourceFiles": [
       "internal/handlers/k8s_kubeconfig.go",
-      "/Users/subbareddyalamuru/work/my-git/cloudterm-go/web/k8s-dashboard/src/TopBar.jsx"
+      "/Users/subbareddyalamuru/work/my-git/cloudterm-go/web/k8s-dashboard/src/TopBar.jsx",
+      "/Users/subbareddyalamuru/work/my-git/cloudterm-go/internal/handlers/k8s_kubeconfig.go"
     ],
     "redVerificationPending": false
   },
