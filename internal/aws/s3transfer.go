@@ -50,10 +50,7 @@ func deleteAllVersions(ctx context.Context, client *s3.Client, bucket, key strin
 
 // newS3Client creates an S3 client using the given profile and region.
 func (d *Discovery) newS3Client(ctx context.Context, profile, region string) (*s3.Client, error) {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(region),
-		awsconfig.WithSharedConfigProfile(profile),
-	)
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, d.awsConfigOpts(profile, region)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}

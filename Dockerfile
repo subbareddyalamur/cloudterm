@@ -18,7 +18,8 @@ RUN dnf install -y unzip shadow-utils less groff && \
     rm -rf /tmp/aws /tmp/awscli.zip
 
 # SSM session-manager-plugin (required for aws ssm start-session)
-RUN ARCH=$(uname -m) && \
+RUN dnf install -y tar gzip && \
+    ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
       curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm" -o /tmp/ssm-plugin.rpm; \
     else \
@@ -27,6 +28,19 @@ RUN ARCH=$(uname -m) && \
     dnf install -y /tmp/ssm-plugin.rpm && \
     rm -f /tmp/ssm-plugin.rpm && \
     dnf clean all
+
+# Teleport tsh (for K8s Visualizer - Teleport-proxied clusters)
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+      ARCH_NAME="amd64"; \
+    else \
+      ARCH_NAME="arm64"; \
+    fi && \
+    curl -L "https://cdn.teleport.dev/teleport-v17.5.3-linux-${ARCH_NAME}-bin.tar.gz" -o /tmp/teleport.tar.gz && \
+    tar -xzf /tmp/teleport.tar.gz -C /tmp && \
+    mv /tmp/teleport/tsh /usr/local/bin/tsh && \
+    chmod +x /usr/local/bin/tsh && \
+    rm -rf /tmp/teleport /tmp/teleport.tar.gz
 
 RUN useradd -m cloudterm
 WORKDIR /app

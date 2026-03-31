@@ -7283,9 +7283,19 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function k8sInit() {
+        var k8sBtn = document.getElementById('k8sBtn');
+        if (!k8sBtn) return;
+        k8sBtn.addEventListener('click', function() {
+            window.open(window.location.origin + '/k8s/', '_blank');
+        });
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', ceInit);
+        document.addEventListener('DOMContentLoaded', k8sInit);
     } else {
         ceInit();
+        k8sInit();
     }
 })();

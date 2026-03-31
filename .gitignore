@@ -32,4 +32,6 @@ tests/test-results/
 .claude/
 .sisyphus/
 .suggestdata/
+.pi
+docs/
 
