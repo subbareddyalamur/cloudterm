@@ -98,17 +98,74 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
         ca_data: cluster.certificateAuthority,
         cluster_name: cluster.name,
         exec_cmd: cluster.exec_cmd || '',
-        exec_args: cluster.exec_args || []
+        exec_args: cluster.exec_args || [],
+        is_teleport: cluster.is_teleport || false
       })
     })
       .then(r => r.json())
       .then(data => {
+        if (data.auth_required === 'teleport') {
+          return fetch(`/api/teleport/request-credentials?proxy=${encodeURIComponent(data.proxy)}&auth_type=${encodeURIComponent(data.auth_type)}`)
+            .then(res => res.json())
+            .then(creds => {
+              if (creds.error) {
+                alert('Teleport Login Failed: ' + creds.error)
+                setConnecting(false)
+                return
+              }
+              const authWindow = window.open(creds.auth_url, 'TeleportSSO', 'width=800,height=600')
+              if (!authWindow) {
+                alert('Popup blocked. Please allow popups for the Teleport login window.')
+                setConnecting(false)
+                return
+              }
+              const pollId = setInterval(() => {
+                fetch(`/api/teleport/status?callback_id=${creds.callback_id}`)
+                  .then(r => r.json())
+                  .then(st => {
+                    if (st.status === 'connected') {
+                      clearInterval(pollId)
+                      if (!authWindow.closed) authWindow.close()
+                      // Second pass with credentials
+                      fetch('/api/k8s/kubeconfig/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          server: cluster.server,
+                          ca_data: cluster.certificateAuthority,
+                          cluster_name: cluster.name,
+                          exec_cmd: cluster.exec_cmd || '',
+                          exec_args: cluster.exec_args || [],
+                          is_teleport: true,
+                          teleport_session_id: creds.callback_id
+                        })
+                      })
+                      .then(r2 => r2.json())
+                      .then(final => {
+                        if (final.error) {
+                          alert(final.error)
+                          setConnecting(false)
+                          return
+                        }
+                        onConnect('kubeconfig', cluster.name, clusterObj)
+                      })
+                    } else if (st.status === 'failed') {
+                      clearInterval(pollId)
+                      alert('Teleport SSO failed: ' + st.error)
+                      setConnecting(false)
+                    } else if (authWindow.closed && st.status === 'pending') {
+                      clearInterval(pollId)
+                      alert('Teleport login cancelled (window closed).')
+                      setConnecting(false)
+                    }
+                  })
+              }, 2000)
+            })
+        }
+
         if (data.error) {
-          const errorMsg = data.error
           let message = data.error
-          
-          // Add helpful context for Teleport clusters
-          if (isTeleportCluster) {
+          if (cluster.is_teleport) {
             message += '\n\nTo connect to Teleport clusters, you need to run:\n' +
               'tsh login --proxy=<your-teleport-proxy>\n\n' +
               'This saves your Teleport session in ~/.tsh which is mounted to the container.'
@@ -124,13 +181,15 @@ export default function TopBar({ clusterId, clusterInfo, onConnect, onDisconnect
 
   return (
     <div className="topbar">
-      <div className="topbar-left">
-        <svg className="topbar-logo" viewBox="0 0 32 32" width="22" height="22">
-          <path fill="#326ce5" d="M16 2l12.66 7.34v14.64L16 31.32 3.34 23.98V9.34z"/>
-          <path fill="#fff" d="M16 7.5l-7 4.04v8.08l7 4.04 7-4.04v-8.08z" opacity=".3"/>
-          <circle cx="16" cy="16" r="3" fill="#fff"/>
-        </svg>
-        <span className="topbar-title">K8s Visualizer</span>
+      <div className="brand">
+        <div className="brand-icon">
+          <svg className="cloud-ico" viewBox="0 0 640 512"><path d="M537.6 226.6c4.1-10.7 6.4-22.4 6.4-34.6 0-53-43-96-96-96-19.7 0-38.1 6-53.3 16.2C367 64.2 315.3 32 256 32c-88.4 0-160 71.6-160 160 0 2.7.1 5.4.2 8.1C40.2 219.8 0 273.2 0 336c0 79.5 64.5 144 144 144h368c70.7 0 128-57.3 128-128 0-61.9-44-113.6-102.4-125.4z"/></svg>
+          <svg className="term-ico" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </div>
+        <div className="brand-text">
+          <span className="brand-name">CloudTerm</span>
+          <span className="brand-sub">Manage Kubernetes Clusters</span>
+        </div>
       </div>
 
       <div className="topbar-center">

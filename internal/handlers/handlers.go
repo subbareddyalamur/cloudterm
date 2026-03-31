@@ -28,6 +28,7 @@ import (
 	"cloudterm-go/internal/llm"
 	"cloudterm-go/internal/session"
 	"cloudterm-go/internal/suggest"
+	"cloudterm-go/internal/teleport"
 	"cloudterm-go/internal/types"
 	"cloudterm-go/internal/vault"
 
@@ -49,6 +50,7 @@ type Handler struct {
 	costExplorer *aws.CostExplorerService
 	eksService   *aws.EKSService
 	k8sPool      *k8s.ClientPool
+	teleport     *teleport.Service
 	observers    map[string]*suggest.Observer
 	obsMu        sync.Mutex
 	upgrader     websocket.Upgrader
@@ -81,6 +83,7 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 		costExplorer: costSvc,
 		eksService:   eksSvc,
 		k8sPool:      k8sPool,
+		teleport:     teleport.NewService(logger),
 		observers:    make(map[string]*suggest.Observer),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -196,6 +199,13 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("GET /api/k8s/crds/{name}/resources", h.handleK8sCRDResources)
 	mux.HandleFunc("POST /api/k8s/kubeconfig/upload", h.handleK8sKubeconfigUpload)
 	mux.HandleFunc("POST /api/k8s/kubeconfig/connect", h.handleK8sKubeconfigConnect)
+
+	// Teleport Web SSO routes
+	mux.HandleFunc("POST /api/teleport/request-credentials", h.handleTeleportRequestCredentials)
+	mux.HandleFunc("GET /api/teleport/status", h.handleTeleportStatus)
+	// Catch-all for the reverse proxy callback route
+	mux.Handle("/api/teleport/proxy/", http.StripPrefix("", http.HandlerFunc(h.handleTeleportProxy)))
+
 	mux.Handle("GET /k8s/", http.StripPrefix("/k8s/", http.FileServer(http.Dir(filepath.Join("web", "k8s-dashboard", "dist")))))
 	mux.HandleFunc("GET /k8s", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/k8s/", http.StatusMovedPermanently)
@@ -333,6 +343,19 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var fwdErr struct {
+			Error string `json:"error"`
+		}
+		json.NewDecoder(resp.Body).Decode(&fwdErr)
+		msg := fwdErr.Error
+		if msg == "" {
+			msg = fmt.Sprintf("forwarder returned HTTP %d", resp.StatusCode)
+		}
+		jsonError(w, msg, http.StatusBadGateway)
+		return
+	}
 
 	var fwdResp types.ForwarderStartResponse
 	if err := json.NewDecoder(resp.Body).Decode(&fwdResp); err != nil {

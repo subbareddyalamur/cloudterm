@@ -30,6 +30,7 @@ import (
 type Discovery struct {
 	cfg        *config.Config
 	logger     *log.Logger
+	accounts   *AccountStore
 	cache      *types.ScanResult
 	scanning   bool
 	scanStatus types.ScanStatus
@@ -45,6 +46,32 @@ func NewDiscovery(cfg *config.Config, logger *log.Logger) *Discovery {
 		logger:   logger,
 		cloneOps: make(map[string]*CloneStatus),
 	}
+}
+
+func (d *Discovery) SetAccountStore(accounts *AccountStore) {
+	d.accounts = accounts
+}
+
+func (d *Discovery) awsConfigOpts(profile, region string) []func(*awsconfig.LoadOptions) error {
+	opts := []func(*awsconfig.LoadOptions) error{
+		awsconfig.WithRegion(region),
+	}
+	if strings.HasPrefix(profile, "manual:") {
+		if d.accounts != nil {
+			acctID := strings.TrimPrefix(profile, "manual:")
+			if acct, ok := d.accounts.Get(acctID); ok {
+				opts = append(opts, awsconfig.WithCredentialsProvider(
+					credentials.NewStaticCredentialsProvider(
+						acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken,
+					),
+				))
+				return opts
+			}
+		}
+		return opts
+	}
+	opts = append(opts, awsconfig.WithSharedConfigProfile(profile))
+	return opts
 }
 
 // IsScanning returns whether a scan is currently in progress.
@@ -887,9 +914,9 @@ func buildInstanceTree(instances []types.EC2Instance) *types.InstanceTree {
 
 // yamlAccountEntry matches the YAML file format for backward compatibility with Python code.
 type yamlAccountEntry struct {
-	AWSProfile string                       `yaml:"aws_profile"`
-	AccountID  string                       `yaml:"account_id"`
-	Regions    map[string]yamlRegionEntry   `yaml:"regions,omitempty"`
+	AWSProfile string                     `yaml:"aws_profile"`
+	AccountID  string                     `yaml:"account_id"`
+	Regions    map[string]yamlRegionEntry `yaml:"regions,omitempty"`
 }
 
 type yamlRegionEntry struct {
@@ -1030,7 +1057,7 @@ func (d *Discovery) loadFromYAML() (*types.ScanResult, error) {
 							InstanceID:     yi.InstanceID,
 							Name:           yi.Name,
 							PrivateIP:      yi.PrivateIP,
-							PublicIP:        yi.PublicIP,
+							PublicIP:       yi.PublicIP,
 							State:          yi.State,
 							Platform:       yi.Platform,
 							InstanceType:   yi.InstanceType,

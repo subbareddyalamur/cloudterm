@@ -60,11 +60,12 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 
 	// Extract clusters with exec info
 	type ClusterWithExec struct {
-		Name       string `json:"name"`
-		Server     string `json:"server"`
-		CertAuth   string `json:"certificateAuthority,omitempty"`
-		ExecCmd    string `json:"exec_cmd,omitempty"`
+		Name       string   `json:"name"`
+		Server     string   `json:"server"`
+		CertAuth   string   `json:"certificateAuthority,omitempty"`
+		ExecCmd    string   `json:"exec_cmd,omitempty"`
 		ExecArgs   []string `json:"exec_args,omitempty"`
+		IsTeleport bool     `json:"is_teleport,omitempty"`
 	}
 	
 	var clusters []ClusterWithExec
@@ -80,9 +81,18 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 		// Find the user for this cluster and extract exec command
 		for _, ctx := range rawConfig.Contexts {
 			if ctx.Cluster == name {
-				if user, ok := rawConfig.AuthInfos[ctx.AuthInfo]; ok && user.Exec != nil {
-					kc.ExecCmd = user.Exec.Command
-					kc.ExecArgs = user.Exec.Args
+				if user, ok := rawConfig.AuthInfos[ctx.AuthInfo]; ok {
+					if user.Exec != nil {
+						kc.ExecCmd = user.Exec.Command
+						kc.ExecArgs = user.Exec.Args
+					}
+					// Teleport uses tsh/teleport in exec command, OR client certs in .tsh/keys
+					if strings.Contains(kc.ExecCmd, "tsh") || strings.Contains(kc.ExecCmd, "teleport") {
+						kc.IsTeleport = true
+					}
+					if strings.Contains(user.ClientCertificate, ".tsh/keys") || strings.Contains(user.ClientKey, ".tsh/keys") {
+						kc.IsTeleport = true
+					}
 				}
 				break
 			}
@@ -96,88 +106,169 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleK8sKubeconfigConnect establishes connection using kubeconfig data
+// handleK8sKubeconfigConnect establishes connection using kubeconfig data.
+// Like OpenLens, it first tries to execute the kubeconfig's exec command locally.
+// If that fails and the cluster is Teleport-managed, it falls back to Web SSO.
 func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
 	var req struct {
-		Server      string   `json:"server"`
-		CAData      string   `json:"ca_data"`
-		ClusterName string   `json:"cluster_name"`
-		ExecCmd     string   `json:"exec_cmd"`
-		ExecArgs    []string `json:"exec_args"`
+		Server            string   `json:"server"`
+		CAData            string   `json:"ca_data"`
+		ClusterName       string   `json:"cluster_name"`
+		ExecCmd           string   `json:"exec_cmd"`
+		ExecArgs          []string `json:"exec_args"`
+		IsTeleport        bool     `json:"is_teleport"`
+		TeleportSessionID string   `json:"teleport_session_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	var clientCertData, clientKeyData string
+	// ── Phase 1: If we already have cached Teleport SSO credentials, use them ──
+	if req.TeleportSessionID != "" {
+		certData, keyData, ok := h.teleport.FetchCredentials(req.TeleportSessionID)
+		if !ok {
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Teleport session expired. Please re-authenticate.",
+			})
+			return
+		}
+		clientCertB64 := base64.StdEncoding.EncodeToString(certData)
+		clientKeyB64 := base64.StdEncoding.EncodeToString(keyData)
 
-	// Try to execute tsh if this is a Teleport cluster
-	if req.ExecCmd != "" && (strings.Contains(req.ExecCmd, "tsh") || strings.Contains(req.ExecCmd, "teleport")) {
-		// Run tsh with HOME set so it finds ~/.tsh, and no keychain/agent
+		poolConn, err := h.k8sPool.ConnectWithCerts(req.Server, req.CAData, clientCertB64, clientKeyB64)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("connect: %v", err)})
+			return
+		}
+		h.logger.Printf("K8s: connected to %s via Teleport SSO certs", req.ClusterName)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"cluster_id": fmt.Sprintf("kubeconfig:%s", req.ClusterName),
+			"status":     "connected",
+			"version":    poolConn.Client.Discovery().RESTClient().Get().URL().String(),
+		})
+		return
+	}
+
+	// ── Phase 2: Try executing the kubeconfig exec command locally (like OpenLens) ──
+	if req.ExecCmd != "" {
+		h.logger.Printf("K8s: executing kubeconfig exec: %s %v", req.ExecCmd, req.ExecArgs)
 		cmd := exec.Command(req.ExecCmd, req.ExecArgs...)
 		cmd.Env = append(os.Environ(),
 			"HOME=/home/cloudterm",
 			"TELEPORT_ADD_KEYS_TO_AGENT=no",
-			"SSH_AUTH_SOCK=", // disable SSH agent - use files only
+			"SSH_AUTH_SOCK=",
 		)
+
 		output, err := cmd.Output()
 		if err != nil {
-			// Capture stderr for a useful error
+			// Exec failed — capture details
 			var exitErr *exec.ExitError
 			errMsg := err.Error()
 			if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
 				errMsg = string(exitErr.Stderr)
 			}
-			// Key is in macOS Keychain - give specific instructions
-			if strings.Contains(errMsg, "SSH auth") || strings.Contains(errMsg, "logged in") || strings.Contains(errMsg, "key") {
+			h.logger.Printf("K8s: exec failed for %s: %s", req.ClusterName, errMsg)
+
+			// If this is a Teleport cluster, fall back to Web SSO
+			isTeleport := req.IsTeleport ||
+				strings.Contains(req.ExecCmd, "tsh") ||
+				strings.Contains(req.ExecCmd, "teleport")
+
+			if isTeleport {
 				proxy := req.Server
+				if strings.HasPrefix(proxy, "https://") {
+					proxy = strings.TrimPrefix(proxy, "https://")
+				}
+				auth := "default"
 				for _, arg := range req.ExecArgs {
 					if strings.HasPrefix(arg, "--proxy=") {
 						proxy = strings.TrimPrefix(arg, "--proxy=")
 					}
+					if strings.HasPrefix(arg, "--auth=") {
+						auth = strings.TrimPrefix(arg, "--auth=")
+					}
 				}
 				json.NewEncoder(w).Encode(map[string]string{
-					"error": fmt.Sprintf("Teleport private key is in macOS Keychain, not accessible from container.\n\nOne-time fix — run this on your local machine:\n\n  tsh logout\n  tsh login --proxy=%s --add-keys-to-agent=no\n\nThis stores the key on disk so CloudTerm can use it.\nAfter that, connecting will be automatic.", proxy),
+					"auth_required": "teleport",
+					"proxy":         proxy,
+					"auth_type":     auth,
+					"message":       "Teleport session not found locally. Initiating Web SSO flow.",
 				})
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("tsh failed: %s", errMsg)})
+
+			// Not teleport — return the error directly
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("exec failed: %s", errMsg),
+			})
 			return
 		}
-		// tsh executed successfully, parse output
+
+		// Parse the ExecCredential response (K8s client-go exec credential API)
 		var execCred struct {
 			Status struct {
+				Token                 string `json:"token"`
 				ClientCertificateData string `json:"clientCertificateData"`
 				ClientKeyData         string `json:"clientKeyData"`
 			} `json:"status"`
 		}
-		if err := json.Unmarshal(output, &execCred); err == nil {
-			clientCertData = execCred.Status.ClientCertificateData
-			clientKeyData = execCred.Status.ClientKeyData
+		if err := json.Unmarshal(output, &execCred); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("failed to parse exec credential output: %v", err),
+			})
+			return
 		}
-	}
 
-	if clientCertData == "" || clientKeyData == "" {
-		json.NewEncoder(w).Encode(map[string]string{"error": "tsh execution failed - no valid Teleport session. Please run 'tsh login --proxy=<your-teleport-proxy>' on your local machine to authenticate first, then use the connection mode."})
+		// Token-based auth (EKS-style)
+		if execCred.Status.Token != "" {
+			poolConn, err := h.k8sPool.Connect(
+				"kubeconfig", "exec", req.ClusterName,
+				req.Server, execCred.Status.Token, req.CAData,
+			)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("connect: %v", err)})
+				return
+			}
+			h.logger.Printf("K8s: connected to %s via exec token", req.ClusterName)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"cluster_id": fmt.Sprintf("kubeconfig:%s", req.ClusterName),
+				"status":     "connected",
+				"version":    poolConn.Client.Discovery().RESTClient().Get().URL().String(),
+			})
+			return
+		}
+
+		// Cert-based auth (Teleport-style)
+		if execCred.Status.ClientCertificateData != "" && execCred.Status.ClientKeyData != "" {
+			poolConn, err := h.k8sPool.ConnectWithCerts(
+				req.Server, req.CAData,
+				execCred.Status.ClientCertificateData,
+				execCred.Status.ClientKeyData,
+			)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("connect: %v", err)})
+				return
+			}
+			h.logger.Printf("K8s: connected to %s via exec certs", req.ClusterName)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"cluster_id": fmt.Sprintf("kubeconfig:%s", req.ClusterName),
+				"status":     "connected",
+				"version":    poolConn.Client.Discovery().RESTClient().Get().URL().String(),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "exec command succeeded but returned no token or certificates",
+		})
 		return
 	}
 
-	// Connect using certificate-based auth
-	poolConn, err := h.k8sPool.ConnectWithCerts(req.Server, req.CAData, 
-		clientCertData, clientKeyData)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("connect: %v", err)})
-		return
-	}
-
-	h.logger.Printf("K8s: connected to cluster via tsh credentials: %s", req.ClusterName)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"cluster_id": fmt.Sprintf("kubeconfig:%s:tsh", req.ClusterName),
-		"status":     "connected",
-		"version":    poolConn.Client.Discovery().RESTClient().Get().URL().String(),
+	// ── Phase 3: No exec command — no way to authenticate ──
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": "This kubeconfig has no exec command and no credentials. Cannot connect.",
 	})
 }

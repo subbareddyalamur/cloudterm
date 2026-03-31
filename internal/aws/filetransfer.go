@@ -15,7 +15,7 @@ import (
 
 const (
 	uploadChunkSize   = 80000 // base64 chars per SSM command (~60KB raw); SSM limit is 97KB for doc+params
-	downloadChunkSize = 17000  // raw bytes per download chunk (~22KB base64)
+	downloadChunkSize = 17000 // raw bytes per download chunk (~22KB base64)
 	ssmPollInterval   = 1500 * time.Millisecond
 )
 
@@ -216,10 +216,7 @@ func (d *Discovery) DownloadFile(profile, region, instanceID, remotePath, platfo
 // ---------------------------------------------------------------------------
 
 func (d *Discovery) newSSMClient(ctx context.Context, profile, region string) (*ssm.Client, error) {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(region),
-		awsconfig.WithSharedConfigProfile(profile),
-	)
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, d.awsConfigOpts(profile, region)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}

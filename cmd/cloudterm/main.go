@@ -42,6 +42,7 @@ func main() {
 
 	// Initialize AWS account store
 	accountStore := aws.NewAccountStore(cfg.AWSAccountsFile)
+	discovery.SetAccountStore(accountStore)
 
 	var encKey []byte
 	if cfg.SuggestEncryptionKey != "" {
