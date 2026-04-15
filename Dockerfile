@@ -1,13 +1,23 @@
-# Stage 1: Build Go binary
+# Stage 1: Build React frontend
+FROM node:20-alpine AS frontend-builder
+WORKDIR /build/web/frontend
+COPY web/frontend/package.json web/frontend/package-lock.json ./
+RUN npm ci --legacy-peer-deps
+COPY web/frontend/ ./
+RUN npm run build
+
+# Stage 2: Build Go binary
 FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Copy built frontend into the Go build context
+COPY --from=frontend-builder /build/web/frontend/dist ./web/frontend/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -o cloudterm ./cmd/cloudterm
 
-# Stage 2: Runtime
+# Stage 3: Runtime
 FROM amazonlinux:2023
 
 # AWS CLI v2

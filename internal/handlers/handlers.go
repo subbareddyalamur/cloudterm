@@ -100,6 +100,9 @@ func (h *Handler) Router() http.Handler {
 	// Static files
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join("web", "static")))))
 
+	// React frontend assets
+	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join("web", "frontend", "dist", "assets")))))
+
 	// Template pages
 	mux.HandleFunc("GET /{$}", h.serveIndex)
 	mux.HandleFunc("GET /rdp-client", h.serveRDPClient)
@@ -204,12 +207,10 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /api/teleport/request-credentials", h.handleTeleportRequestCredentials)
 	mux.HandleFunc("GET /api/teleport/status", h.handleTeleportStatus)
 	// Catch-all for the reverse proxy callback route
-	mux.Handle("/api/teleport/proxy/", http.StripPrefix("", http.HandlerFunc(h.handleTeleportProxy)))
+	mux.HandleFunc("GET /api/teleport/proxy/", h.handleTeleportProxy)
+	mux.HandleFunc("POST /api/teleport/proxy/", h.handleTeleportProxy)
 
-	mux.Handle("GET /k8s/", http.StripPrefix("/k8s/", http.FileServer(http.Dir(filepath.Join("web", "k8s-dashboard", "dist")))))
-	mux.HandleFunc("GET /k8s", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/k8s/", http.StatusMovedPermanently)
-	})
+	// k8s routes handled by React SPA catch-all
 	mux.HandleFunc("GET /ws/k8s/logs", h.handleK8sLogs)
 	mux.HandleFunc("GET /ws/k8s/exec", h.handleK8sExec)
 
@@ -219,6 +220,9 @@ func (h *Handler) Router() http.Handler {
 
 	// WebSocket
 	mux.HandleFunc("GET /ws", h.handleWebSocket)
+
+	// SPA catch-all: serve React index.html for unmatched GET routes
+	mux.HandleFunc("GET /", h.serveSPA)
 
 	return mux
 }
@@ -237,6 +241,11 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		h.logger.Printf("template index.html: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
+}
+
+// serveSPA serves the React frontend's index.html for client-side routing.
+func (h *Handler) serveSPA(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, filepath.Join("web", "frontend", "dist", "index.html"))
 }
 
 func (h *Handler) serveRDPClient(w http.ResponseWriter, r *http.Request) {

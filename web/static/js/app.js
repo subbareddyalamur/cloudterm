@@ -406,10 +406,13 @@ class GhostText {
         this._suggestion = fullSuggestion.substring(currentLine.length);
         if (!this._suggestion) { this.hide(); return; }
         this._wordIndex = 0;
-        this._el.textContent = this._suggestion;
-        this._el.style.display = '';
-        this._visible = true;
-        this._reposition();
+        // Use requestAnimationFrame for smoother rendering
+        requestAnimationFrame(() => {
+            this._el.textContent = this._suggestion;
+            this._el.style.display = '';
+            this._visible = true;
+            this._reposition();
+        });
     }
 
     hide() {
@@ -479,6 +482,42 @@ class TerminalManager {
             term.loadAddon(searchAddon);
         }
 
+        // WebGL renderer — GPU-accelerated (2-5x perf), canvas fallback
+        if (typeof WebglAddon !== 'undefined') {
+            try {
+                const webgl = new WebglAddon.WebglAddon();
+                webgl.onContextLoss(() => { webgl.dispose(); });
+                term.loadAddon(webgl);
+                console.log('[xterm] WebGL renderer active');
+            } catch (e) {
+                console.warn('[xterm] WebGL not available, using canvas fallback:', e.message);
+            }
+        }
+
+        // Inline image rendering (sixel, iTerm2 image protocol)
+        if (typeof ImageAddon !== 'undefined') {
+            try {
+                term.loadAddon(new ImageAddon.ImageAddon());
+            } catch (e) { console.warn('[xterm] ImageAddon failed:', e.message); }
+        }
+
+        // Unicode 11 — proper emoji and CJK character support
+        if (typeof Unicode11Addon !== 'undefined') {
+            try {
+                term.loadAddon(new Unicode11Addon.Unicode11Addon());
+                term.unicode.activeVersion = '11';
+            } catch (e) { console.warn('[xterm] Unicode11Addon failed:', e.message); }
+        }
+
+        // Serialize — terminal buffer save/restore
+        let serializeAddon = null;
+        if (typeof SerializeAddon !== 'undefined') {
+            try {
+                serializeAddon = new SerializeAddon.SerializeAddon();
+                term.loadAddon(serializeAddon);
+            } catch (e) { console.warn('[xterm] SerializeAddon failed:', e.message); }
+        }
+
         term.onResize(({ cols, rows }) => {
             this.wsManager.send('terminal_resize', {
                 session_id: sessionID,
@@ -522,7 +561,7 @@ class TerminalManager {
                         line: currentLineBuffer,
                         env: ''
                     });
-                }, 150);
+                }, 50);
             }
 
             if (this.inputSyncEnabled) {
@@ -6004,6 +6043,22 @@ class CloudTermApp {
                         }
                     }
                 }
+            }
+
+            // Ctrl+1-9 / Cmd+1-9: switch to tab N
+            if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+                e.preventDefault();
+                const idx = parseInt(e.key) - 1;
+                const tabIds = Array.from(this.tabManager.tabs.keys());
+                if (idx < tabIds.length) {
+                    this.tabManager.activateTab(tabIds[idx]);
+                }
+            }
+
+            // Ctrl+, / Cmd+,: open settings
+            if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+                e.preventDefault();
+                if (typeof this._openSettings === 'function') this._openSettings();
             }
         });
 

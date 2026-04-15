@@ -1,3 +1,7 @@
+.*          → ignore all hidden files/folders
+!.gitignore → keep .gitignore tracked
+!.git/      → keep git internals (important)
+
 # Compiled binaries (root-level only)
 /cloudterm
 /forwarder
@@ -35,3 +39,15 @@ tests/test-results/
 .pi
 docs/
 
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+AGENTS.md
+CLAUDE.md
+.beads/
+.remember/
+taskplane-tasks/
+node_modules/
+node_modules/

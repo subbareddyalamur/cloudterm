@@ -22,6 +22,7 @@ type Observer struct {
 	onCommand     func(cmd string, output string)
 	onError       func(output string)
 	commandActive bool
+	tabPending    bool
 	idleTimer     *time.Timer
 	done          chan struct{}
 }
@@ -62,6 +63,9 @@ func (o *Observer) FeedInput(data []byte) {
 				o.lastOutput.Reset()
 			}
 			o.currentInput.Reset()
+			o.tabPending = false
+		} else if b == 0x09 {
+			o.tabPending = true
 		} else if b == 0x7f || b == 0x08 {
 			s := o.currentInput.String()
 			if len(s) > 0 {
@@ -123,6 +127,15 @@ func (o *Observer) processLoop() {
 func (o *Observer) processOutput(raw []byte) {
 	cleaned := string(StripANSI(raw))
 	o.mu.Lock()
+
+	// Tab completion: shell echoed the completed text, append to current input.
+	if o.tabPending && !o.commandActive {
+		completion := strings.TrimRight(cleaned, "\r\n")
+		if completion != "" && !strings.Contains(completion, "\n") {
+			o.currentInput.WriteString(completion)
+		}
+		o.tabPending = false
+	}
 
 	if o.commandActive {
 		o.lastOutput.WriteString(cleaned)
