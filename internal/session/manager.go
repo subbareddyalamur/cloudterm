@@ -27,7 +27,7 @@ func stripANSI(data []byte) []byte {
 	return cleaned
 }
 
-const maxOutputBuf = 5 * 1024 * 1024 // 5 MB output buffer per session
+const maxOutputBuf = 512 * 1024 // 512 KB output buffer per session (for reconnect replay)
 
 // ssmKeepaliveInterval is how often we check whether an SSM session has been
 // idle. If no user input has been received for this duration, a null byte is
@@ -40,14 +40,14 @@ type SSMSession struct {
 	InstanceID   string
 	InstanceName string
 	SessionID    string
-	cmd        *exec.Cmd
-	ptmx       *os.File
-	done       chan struct{}
-	onOutput   func([]byte)
-	outputBuf  bytes.Buffer
-	recorder   *Recorder
-	lastInput  time.Time // last time user sent input
-	mu         sync.Mutex
+	cmd          *exec.Cmd
+	ptmx         *os.File
+	done         chan struct{}
+	onOutput     func([]byte)
+	outputBuf    bytes.Buffer
+	recorder     *Recorder
+	lastInput    time.Time // last time user sent input
+	mu           sync.Mutex
 }
 
 // Manager tracks all active SSM sessions.
@@ -73,8 +73,8 @@ func NewManager(logger *log.Logger, recordingDir string, autoRecord bool) *Manag
 // When nil, the session uses --profile instead.
 type AWSCreds struct {
 	AccessKeyID     string
-	SecretAccessKey  string
-	SessionToken     string
+	SecretAccessKey string
+	SessionToken    string
 }
 
 // StartSession launches an aws ssm start-session process inside a PTY and
@@ -82,9 +82,40 @@ type AWSCreds struct {
 // If creds is non-nil, the credentials are passed via environment variables
 // instead of --profile (used for manually-added AWS accounts).
 func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion string, creds *AWSCreds, onOutput func([]byte)) error {
+	// Atomic check-and-reserve under a full write lock to prevent a TOCTOU
+	// race where two concurrent start_session messages both pass the check.
+	m.mu.Lock()
+	existing, exists := m.sessions[sessionID]
+	if exists && existing != nil {
+		m.mu.Unlock()
+		// Session already running — rebind its output to the new connection
+		// (the old WebSocket may have been closed and reconnected).
+		existing.mu.Lock()
+		existing.onOutput = onOutput
+		existing.mu.Unlock()
+		m.logger.Printf("session %s already active, rebound output to new connection", sessionID)
+		// Replay the buffered output so the reconnected client can catch up.
+		existing.mu.Lock()
+		replay := make([]byte, existing.outputBuf.Len())
+		copy(replay, existing.outputBuf.Bytes())
+		existing.mu.Unlock()
+		if len(replay) > 0 {
+			onOutput(replay)
+		}
+		return nil
+	}
+	if exists && existing == nil {
+		// Slot reserved by a concurrent StartSession in progress — treat as duplicate.
+		m.mu.Unlock()
+		m.logger.Printf("session %s start already in progress, ignoring duplicate", sessionID)
+		return nil
+	}
+	// Reserve the slot immediately so no second goroutine can race past this point.
+	m.sessions[sessionID] = nil
+	m.mu.Unlock()
+
 	var cmd *exec.Cmd
 	if creds != nil {
-		// Manual account: use env vars instead of --profile.
 		cmd = exec.Command("aws", "ssm", "start-session",
 			"--target", instanceID,
 			"--region", awsRegion,
@@ -93,6 +124,8 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 			"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 			"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 			"AWS_DEFAULT_REGION="+awsRegion,
+			"TERM=xterm-256color",
+			"COLORTERM=truecolor",
 		)
 		if creds.SessionToken != "" {
 			cmd.Env = append(cmd.Env, "AWS_SESSION_TOKEN="+creds.SessionToken)
@@ -104,11 +137,19 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 			"--region", awsRegion,
 		)
 	}
-	// Create a new session so we can signal the whole group later.
+
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "COLORTERM=truecolor")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
+		// Release the reserved slot so the session ID can be retried.
+		m.mu.Lock()
+		delete(m.sessions, sessionID)
+		m.mu.Unlock()
 		return fmt.Errorf("failed to start pty: %w", err)
 	}
 
@@ -209,7 +250,7 @@ func (m *Manager) ResizeTerminal(sessionID string, rows, cols uint16) error {
 func (m *Manager) CloseSession(sessionID string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[sessionID]
-	if !ok {
+	if !ok || s == nil {
 		m.mu.Unlock()
 		return fmt.Errorf("session %s not found", sessionID)
 	}
@@ -232,17 +273,20 @@ func (m *Manager) CloseAll() {
 	m.mu.Unlock()
 
 	for id, s := range sessions {
+		if s == nil {
+			continue
+		}
 		s.Close()
 		m.logger.Printf("session %s closed (shutdown)", id)
 	}
 }
 
-// GetSession returns the session for the given ID, if it exists.
+// GetSession returns the session for the given ID, if it exists and is fully initialised.
 func (m *Manager) GetSession(sessionID string) (*SSMSession, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	s, ok := m.sessions[sessionID]
-	return s, ok
+	return s, ok && s != nil
 }
 
 // ExportSession writes the output buffer of a session to a file and returns the filename.
@@ -353,22 +397,23 @@ func (s *SSMSession) readLoop(logger *log.Logger) {
 			// Copy so the callback owns the slice.
 			out := make([]byte, n)
 			copy(out, buf[:n])
-			s.onOutput(out)
 
-			// Record output if recording is active.
-			if s.recorder != nil {
-				s.recorder.Write(out)
-			}
-
-			// Buffer output for export (capped at maxOutputBuf).
+			// Grab onOutput and recorder under the lock so concurrent rebinds
+			// (from WS reconnection) are always seen.
 			s.mu.Lock()
+			cb := s.onOutput
+			rec := s.recorder
 			if s.outputBuf.Len()+n > maxOutputBuf {
-				// Trim oldest bytes to make room.
 				excess := s.outputBuf.Len() + n - maxOutputBuf
 				s.outputBuf.Next(excess)
 			}
 			s.outputBuf.Write(out)
 			s.mu.Unlock()
+
+			cb(out)
+			if rec != nil {
+				rec.Write(out)
+			}
 		}
 		if err != nil {
 			// EOF or read-after-close — both are normal shutdown paths.

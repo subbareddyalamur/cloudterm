@@ -25,6 +25,11 @@ func NewOllamaProvider(baseURL, model string, temperature float64) (*OllamaProvi
 }
 
 func (o *OllamaProvider) ChatStream(ctx context.Context, system string, messages []Message, tools []ToolDef, maxTokens int) (<-chan StreamChunk, error) {
+	// Ensure num_predict is at least 1
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
 	ollamaMsgs := []map[string]interface{}{
 		{"role": "system", "content": system},
 	}

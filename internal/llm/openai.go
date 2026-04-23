@@ -26,6 +26,11 @@ func NewOpenAIProvider(apiKey, model string, temperature float64) (*OpenAIProvid
 }
 
 func (o *OpenAIProvider) ChatStream(ctx context.Context, system string, messages []Message, tools []ToolDef, maxTokens int) (<-chan StreamChunk, error) {
+	// Ensure max_tokens is at least 1
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
 	oaiMsgs := []map[string]interface{}{
 		{"role": "system", "content": system},
 	}

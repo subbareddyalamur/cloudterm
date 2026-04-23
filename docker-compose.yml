@@ -38,6 +38,14 @@ services:
       - AI_MODEL=${AI_MODEL:-}
       - AI_BEDROCK_REGION=${AI_BEDROCK_REGION:-us-east-1}
       - AI_BEDROCK_PROFILE=${AI_BEDROCK_PROFILE:-dev}
+      - GOMEMLIMIT=900MiB
+      - GOGC=50
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       guacd:
         condition: service_started
@@ -48,8 +56,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
-          cpus: '0.5'
+          memory: 1024M
+          cpus: '1.0'
     networks:
       - cloudterm-network
     restart: unless-stopped

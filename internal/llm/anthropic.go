@@ -26,6 +26,11 @@ func NewAnthropicProvider(apiKey, model string, temperature float64) (*Anthropic
 }
 
 func (a *AnthropicProvider) ChatStream(ctx context.Context, system string, messages []Message, tools []ToolDef, maxTokens int) (<-chan StreamChunk, error) {
+	// Ensure max_tokens is at least 1
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
 	// Build request body
 	body := map[string]interface{}{
 		"model":      a.model,

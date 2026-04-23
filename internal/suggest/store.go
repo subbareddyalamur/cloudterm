@@ -246,3 +246,42 @@ func (s *Store) LoadBlob(bucket, key string) ([]byte, error) {
 	})
 	return result, err
 }
+
+func (s *Store) DeleteKey(bucket, key string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("bucket %q not found", bucket)
+		}
+		return b.Delete([]byte(key))
+	})
+}
+
+func (s *Store) UpdateKey(bucket, key, value string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte(bucket))
+		if err != nil {
+			return err
+		}
+		enc, err := s.encrypt([]byte(value))
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(key), enc)
+	})
+}
+
+func (s *Store) DeleteBucketAll(bucket string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.DeleteBucket([]byte(bucket))
+	})
+}

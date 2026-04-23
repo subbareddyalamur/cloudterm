@@ -28,6 +28,11 @@ func NewGeminiProvider(apiKey, model string, temperature float64) (*GeminiProvid
 func (g *GeminiProvider) ChatStream(ctx context.Context, system string, messages []Message, tools []ToolDef, maxTokens int) (<-chan StreamChunk, error) {
 	contents := convertContentsGemini(messages)
 
+	// Ensure maxOutputTokens is at least 1
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
 	body := map[string]interface{}{
 		"contents": contents,
 		"systemInstruction": map[string]interface{}{

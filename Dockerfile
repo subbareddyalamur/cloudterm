@@ -1,20 +1,23 @@
-# Stage 1: Build React frontend
+# Stage 1: Build React v2 frontend (pnpm + Vite, embed_v2)
 FROM node:20-alpine AS frontend-builder
-WORKDIR /build/web/frontend
-COPY web/frontend/package.json web/frontend/package-lock.json ./
-RUN npm ci --legacy-peer-deps
-COPY web/frontend/ ./
-RUN npm run build
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10 --activate
+WORKDIR /build/web/frontend-v2
+COPY web/frontend-v2/package.json web/frontend-v2/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/frontend-v2/ ./
+RUN pnpm build
 
-# Stage 2: Build Go binary
+# Stage 2: Build Go binary with embed_v2 tag
 FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# Copy built frontend into the Go build context
-COPY --from=frontend-builder /build/web/frontend/dist ./web/frontend/dist
+# Inject the built v2 assets into the Go embed
+COPY --from=frontend-builder /build/web/frontend-v2/dist ./web/frontend-v2/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -o cloudterm ./cmd/cloudterm
 
 # Stage 3: Runtime
@@ -55,6 +58,8 @@ RUN ARCH=$(uname -m) && \
 RUN useradd -m cloudterm
 WORKDIR /app
 COPY --from=builder /build/cloudterm .
+# v2 frontend is embedded in the binary via embed_v2 build tag.
+# Legacy web/ assets (templates, static) still served at / for backward-compat.
 COPY web/ ./web/
 RUN mkdir -p /app/cache && chown -R cloudterm:cloudterm /app
 USER cloudterm

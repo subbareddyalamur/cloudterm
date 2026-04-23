@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -243,6 +244,7 @@ func ssmExecOutputLines(ctx context.Context, client *ssm.Client, instanceID stri
 	}
 
 	commandID := aws.ToString(resp.Command.CommandId)
+	log.Printf("[ssmExec] sent commandID=%s instance=%s doc=%s", commandID, instanceID, docName)
 
 	for {
 		select {
@@ -256,8 +258,10 @@ func ssmExecOutputLines(ctx context.Context, client *ssm.Client, instanceID stri
 			InstanceId: aws.String(instanceID),
 		})
 		if err != nil {
+			log.Printf("[ssmExec] GetCommandInvocation error (will retry): %v", err)
 			continue // invocation may not be registered yet
 		}
+		log.Printf("[ssmExec] poll status=%s rc=%d details=%q", out.Status, out.ResponseCode, aws.ToString(out.StatusDetails))
 
 		switch out.Status {
 		case ssmtypes.CommandInvocationStatusSuccess:
@@ -265,7 +269,25 @@ func ssmExecOutputLines(ctx context.Context, client *ssm.Client, instanceID stri
 		case ssmtypes.CommandInvocationStatusFailed,
 			ssmtypes.CommandInvocationStatusCancelled,
 			ssmtypes.CommandInvocationStatusTimedOut:
-			return "", fmt.Errorf("SSM command %s: %s", out.Status, aws.ToString(out.StandardErrorContent))
+			stderr := aws.ToString(out.StandardErrorContent)
+			stdout := aws.ToString(out.StandardOutputContent)
+			rc := out.ResponseCode
+			details := aws.ToString(out.StatusDetails)
+			log.Printf("[ssmExec] FAILED status=%s rc=%d details=%q stderr=%q stdout=%q", out.Status, rc, details, stderr, stdout)
+
+			// rc=-1 with empty output means the SSM agent couldn't execute
+			// the command at all (agent offline, not registered, etc.).
+			if rc == -1 && stderr == "" && stdout == "" {
+				return "", fmt.Errorf("SSM agent on %s did not respond (rc=-1). "+
+					"Verify the SSM agent is running and the instance IAM role includes AmazonSSMManagedInstanceCore. "+
+					"Details: %s", instanceID, details)
+			}
+
+			errMsg := stderr
+			if errMsg == "" {
+				errMsg = details
+			}
+			return "", fmt.Errorf("SSM command %s (rc=%d): %s", out.Status, rc, errMsg)
 		}
 	}
 }

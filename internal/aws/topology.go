@@ -1,15 +1,21 @@
 package aws
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 // VPCTopology is the complete topology data for a VPC.
@@ -26,11 +32,25 @@ type VPCTopology struct {
 	VPCPeerings      []VPCPeeringInfo     `json:"vpcPeerings"`
 	VPCEndpoints     []VPCEndpointInfo    `json:"vpcEndpoints"`
 	LoadBalancers    []TopologyLBInfo     `json:"loadBalancers"`
+	PeerVPCDetails   []PeerVPCDetails     `json:"peerVpcDetails,omitempty"`
 	ElasticIPs       []ElasticIPInfo      `json:"elasticIps,omitempty"`
 	DHCPOptions      *DHCPOptionsInfo     `json:"dhcpOptions,omitempty"`
 	FlowLogs         []FlowLogInfo        `json:"flowLogs,omitempty"`
 	PrefixLists      []PrefixListInfo     `json:"prefixLists,omitempty"`
 	FetchedAt        string               `json:"fetchedAt"`
+}
+
+// PeerVPCDetails holds the resources fetched for a peer or connected VPC.
+type PeerVPCDetails struct {
+	VPCID          string             `json:"vpcId"`
+	Name           string             `json:"name"`
+	CIDR           string             `json:"cidr"`
+	AccountID      string             `json:"accountId,omitempty"`
+	Region         string             `json:"region,omitempty"`
+	ConnectionType string             `json:"connectionType,omitempty"` // "peering", "tgw", "privatelink"
+	Subnets        []SubnetInfo       `json:"subnets"`
+	Instances      []TopologyInstance `json:"instances"`
+	NatGateways    []NATGWInfo        `json:"natGateways,omitempty"`
 }
 
 type VPCInfo struct {
@@ -794,6 +814,219 @@ func (d *Discovery) FetchVPCTopology(ctx context.Context, instanceID string) (*V
 		}
 	}
 
+	// Fetch resources for all connected VPCs: peerings, TGW, and PrivateLink.
+	// Build a credential resolver that covers both ~/.aws/credentials profiles
+	// and manually-added accounts from the UI.
+	credResolver := d.buildCredentialResolver(ctx, inst.AWSRegion)
+
+	// Collect peer VPCs: track (vpcID, accountID, region, connectionType, name, cidr).
+	type peerVPCEntry struct {
+		vpcID          string
+		accountID      string
+		region         string
+		connectionType string
+		name           string
+		cidr           string
+	}
+	peerVPCMap := make(map[string]*peerVPCEntry) // keyed by vpcID
+
+	upsertPeer := func(vpcID, accountID, region, connType, name, cidr string) {
+		if vpcID == "" || vpcID == inst.VpcID {
+			return
+		}
+		if e, ok := peerVPCMap[vpcID]; ok {
+			if e.name == "" && name != "" {
+				e.name = name
+			}
+			if e.cidr == "" && cidr != "" {
+				e.cidr = cidr
+			}
+			return
+		}
+		peerVPCMap[vpcID] = &peerVPCEntry{
+			vpcID:          vpcID,
+			accountID:      accountID,
+			region:         region,
+			connectionType: connType,
+			name:           name,
+			cidr:           cidr,
+		}
+	}
+
+	for _, pcx := range topology.VPCPeerings {
+		peerVPC := pcx.AccepterVPC
+		peerCIDR := pcx.AccepterCIDR
+		peerAcct := pcx.PeerAccountID
+		peerRegion := pcx.PeerRegion
+		name := pcx.PeerVPCName
+		if peerVPC == inst.VpcID {
+			peerVPC = pcx.RequesterVPC
+			peerCIDR = pcx.RequesterCIDR
+		}
+		upsertPeer(peerVPC, peerAcct, peerRegion, "peering", name, peerCIDR)
+	}
+
+	for _, att := range topology.TGWAttachments {
+		for _, pa := range att.PeerAttachments {
+			if pa.ResourceType == "vpc" {
+				upsertPeer(pa.ResourceID, pa.AccountID, "", "tgw", pa.ResourceName, pa.ResourceCIDR)
+			}
+		}
+	}
+
+	// PrivateLink: for Interface-type endpoints, resolve the service's provider VPC.
+	for _, ep := range topology.VPCEndpoints {
+		if ep.Type != "Interface" {
+			continue
+		}
+		svcOut, err := ec2Client.DescribeVpcEndpointServices(ctx, &ec2.DescribeVpcEndpointServicesInput{
+			ServiceNames: []string{ep.ServiceName},
+		})
+		if err != nil || len(svcOut.ServiceDetails) == 0 {
+			continue
+		}
+		svc := svcOut.ServiceDetails[0]
+		ownerAccountID := aws.ToString(svc.Owner)
+		// Each service can be backed by multiple AZ-specific DescribeVpcEndpointServiceConfigurations
+		// to find the actual service VPC. We need DescribeVpcEndpointServiceConfigurations (owner's API).
+		// Skip AWS-managed services (owner == "amazon").
+		if ownerAccountID == "amazon" || ownerAccountID == "" {
+			continue
+		}
+		// Resolve service VPC via the owner's credentials.
+		ownerClient, _, ownerRegion := credResolver(ownerAccountID, inst.AWSRegion)
+		if ownerClient == nil {
+			continue
+		}
+		svcConfOut, err := ownerClient.DescribeVpcEndpointServiceConfigurations(ctx,
+			&ec2.DescribeVpcEndpointServiceConfigurationsInput{
+				Filters: []ec2types.Filter{
+					{Name: aws.String("service-name"), Values: []string{ep.ServiceName}},
+				},
+			})
+		if err != nil || len(svcConfOut.ServiceConfigurations) == 0 {
+			continue
+		}
+		svcConf := svcConfOut.ServiceConfigurations[0]
+		// Get the NLB ARNs and resolve their VPC IDs using the owner's credentials.
+		_, ownerCfgOpts, _ := credResolver(ownerAccountID, ownerRegion)
+		for _, nlbARN := range svcConf.NetworkLoadBalancerArns {
+			elbFullCfg, err := awsconfig.LoadDefaultConfig(ctx, ownerCfgOpts...)
+			if err != nil {
+				continue
+			}
+			elbCl := elasticloadbalancingv2.NewFromConfig(elbFullCfg)
+			lbOut, err := elbCl.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{
+				LoadBalancerArns: []string{nlbARN},
+			})
+			if err != nil || len(lbOut.LoadBalancers) == 0 {
+				continue
+			}
+			lb := lbOut.LoadBalancers[0]
+			if lb.VpcId == nil {
+				continue
+			}
+			svcVPCID := *lb.VpcId
+			vpcNameOut, err := ownerClient.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
+				VpcIds: []string{svcVPCID},
+			})
+			vpcName := ""
+			vpcCIDR := ""
+			if err == nil && len(vpcNameOut.Vpcs) > 0 {
+				vpcName = extractName(vpcNameOut.Vpcs[0].Tags)
+				vpcCIDR = aws.ToString(vpcNameOut.Vpcs[0].CidrBlock)
+			}
+			upsertPeer(svcVPCID, ownerAccountID, ownerRegion, "privatelink", vpcName, vpcCIDR)
+		}
+	}
+
+	// Fetch resources for each connected VPC using the right credentials.
+	for _, entry := range peerVPCMap {
+		// Use the known region for the peer VPC if available, else fall back to primary region.
+		targetRegion := inst.AWSRegion
+		if entry.region != "" {
+			targetRegion = entry.region
+		}
+
+		peerEC2, _, peerRegion := credResolver(entry.accountID, targetRegion)
+		if peerRegion == "" {
+			peerRegion = targetRegion
+		}
+
+		// Fallback: use primary account client (covers same-account peers where accountID is empty).
+		if peerEC2 == nil {
+			peerEC2 = ec2Client
+		}
+
+		details := PeerVPCDetails{
+			VPCID:          entry.vpcID,
+			Name:           entry.name,
+			CIDR:           entry.cidr,
+			AccountID:      entry.accountID,
+			Region:         peerRegion,
+			ConnectionType: entry.connectionType,
+		}
+
+		peerFilter := []ec2types.Filter{
+			{Name: aws.String("vpc-id"), Values: []string{entry.vpcID}},
+		}
+
+		if subnetsOut, err := peerEC2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{Filters: peerFilter}); err == nil {
+			for _, s := range subnetsOut.Subnets {
+				details.Subnets = append(details.Subnets, SubnetInfo{
+					ID:           aws.ToString(s.SubnetId),
+					CIDR:         aws.ToString(s.CidrBlock),
+					Name:         extractName(s.Tags),
+					AZ:           aws.ToString(s.AvailabilityZone),
+					IsPublic:     aws.ToBool(s.MapPublicIpOnLaunch),
+					AvailableIPs: aws.ToInt32(s.AvailableIpAddressCount),
+				})
+			}
+		}
+
+		if instsOut, err := peerEC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: peerFilter}); err == nil {
+			for _, res := range instsOut.Reservations {
+				for _, i := range res.Instances {
+					var sgIDs []string
+					for _, sg := range i.SecurityGroups {
+						if sg.GroupId != nil {
+							sgIDs = append(sgIDs, *sg.GroupId)
+						}
+					}
+					details.Instances = append(details.Instances, TopologyInstance{
+						ID:             aws.ToString(i.InstanceId),
+						Name:           extractName(i.Tags),
+						PrivateIP:      aws.ToString(i.PrivateIpAddress),
+						PublicIP:       aws.ToString(i.PublicIpAddress),
+						State:          string(i.State.Name),
+						Platform:       string(i.Platform),
+						InstanceType:   string(i.InstanceType),
+						SubnetID:       aws.ToString(i.SubnetId),
+						SecurityGroups: sgIDs,
+					})
+				}
+			}
+		}
+
+		if natOut, err := peerEC2.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{Filter: peerFilter}); err == nil {
+			for _, n := range natOut.NatGateways {
+				publicIP := ""
+				if len(n.NatGatewayAddresses) > 0 {
+					publicIP = aws.ToString(n.NatGatewayAddresses[0].PublicIp)
+				}
+				details.NatGateways = append(details.NatGateways, NATGWInfo{
+					ID:       aws.ToString(n.NatGatewayId),
+					Name:     extractName(n.Tags),
+					SubnetID: aws.ToString(n.SubnetId),
+					PublicIP: publicIP,
+					State:    string(n.State),
+				})
+			}
+		}
+
+		topology.PeerVPCDetails = append(topology.PeerVPCDetails, details)
+	}
+
 	endpointsOut, err := ec2Client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
 		Filters: vpcFilter,
 	})
@@ -1006,4 +1239,111 @@ func (d *Discovery) FetchVPCTopology(ctx context.Context, instanceID string) (*V
 	}
 
 	return topology, nil
+}
+
+// credResolverFunc returns (ec2Client, configOpts, region) for a given accountID.
+// Returns nil client if no matching credentials are found.
+type credResolverFunc func(accountID, fallbackRegion string) (*ec2.Client, []func(*awsconfig.LoadOptions) error, string)
+
+// buildCredentialResolver builds a lookup function that, given an AWS account ID,
+// returns an EC2 client and config options for that account.
+//
+// Priority order:
+//  1. ~/.aws/credentials profiles (checked via STS GetCallerIdentity)
+//  2. Manually-added accounts from the UI (d.accounts)
+func (d *Discovery) buildCredentialResolver(ctx context.Context, fallbackRegion string) credResolverFunc {
+	// Map accountID -> config opts (region will be overridden per-call)
+	type entry struct {
+		opts   []func(*awsconfig.LoadOptions) error
+		region string
+	}
+	cache := make(map[string]*entry)
+
+	// 1. Scan ~/.aws/credentials profiles — this is the primary source.
+	home, _ := os.UserHomeDir()
+	credsPath := filepath.Join(home, ".aws", "credentials")
+	if f, err := os.Open(credsPath); err == nil {
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		var profiles []string
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+				p := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+				if p != "" {
+					profiles = append(profiles, p)
+				}
+			}
+		}
+		for _, profile := range profiles {
+			opts := []func(*awsconfig.LoadOptions) error{
+				awsconfig.WithRegion(fallbackRegion),
+				awsconfig.WithSharedConfigProfile(profile),
+			}
+			cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+			if err != nil {
+				continue
+			}
+			stsClient := sts.NewFromConfig(cfg)
+			identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			if err != nil {
+				continue
+			}
+			accountID := aws.ToString(identity.Account)
+			if accountID != "" {
+				if _, exists := cache[accountID]; !exists {
+					cache[accountID] = &entry{opts: opts, region: fallbackRegion}
+				}
+			}
+		}
+	}
+
+	// 2. Manually-added accounts (UI-added) — used if not already covered by a profile.
+	if d.accounts != nil {
+		for _, acct := range d.accounts.ListRaw() {
+			// The ManualAccount.ID is an internal random UUID, not the AWS account ID.
+			// We need to call GetCallerIdentity to find the actual AWS account ID.
+			opts := []func(*awsconfig.LoadOptions) error{
+				awsconfig.WithRegion(fallbackRegion),
+				awsconfig.WithCredentialsProvider(
+					credentials.NewStaticCredentialsProvider(
+						acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken,
+					),
+				),
+			}
+			cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+			if err != nil {
+				continue
+			}
+			stsClient := sts.NewFromConfig(cfg)
+			identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			if err != nil {
+				continue
+			}
+			accountID := aws.ToString(identity.Account)
+			if accountID != "" {
+				if _, exists := cache[accountID]; !exists {
+					cache[accountID] = &entry{opts: opts, region: fallbackRegion}
+				}
+			}
+		}
+	}
+
+	return func(accountID, region string) (*ec2.Client, []func(*awsconfig.LoadOptions) error, string) {
+		if region == "" {
+			region = fallbackRegion
+		}
+		e, ok := cache[accountID]
+		if !ok {
+			return nil, nil, region
+		}
+		// Rebuild opts with the correct region.
+		opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
+		opts = append(opts, e.opts[1:]...) // skip the first (region) opt from cached entry
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+		if err != nil {
+			return nil, nil, region
+		}
+		return ec2.NewFromConfig(cfg), opts, region
+	}
 }

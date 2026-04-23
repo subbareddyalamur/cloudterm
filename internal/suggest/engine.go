@@ -267,3 +267,15 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+func (e *Engine) StoreDeleteKey(bucket, key string) error {
+	return e.store.DeleteKey(bucket, key)
+}
+
+func (e *Engine) StoreUpdateKey(bucket, key, value string) error {
+	return e.store.UpdateKey(bucket, key, value)
+}
+
+func (e *Engine) StoreDeleteBucket(bucket string) error {
+	return e.store.DeleteBucketAll(bucket)
+}

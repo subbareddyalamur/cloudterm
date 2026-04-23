@@ -11,41 +11,43 @@ import (
 
 // ConnectionParams holds RDP connection parameters for Guacamole.
 type ConnectionParams struct {
-	Hostname          string
-	Port              string
-	Username          string
-	Password          string
-	Domain            string
-	Security          string
-	IgnoreCert        string
-	ResizeMethod      string
-	Width             string
-	Height            string
-	DPI               string
-	RecordingPath     string
-	RecordingName     string
-	DisableCopy       string
-	DisablePaste      string
-	ClipboardEncoding string
+	Hostname               string
+	Port                   string
+	Username               string
+	Password               string
+	Domain                 string
+	Security               string
+	IgnoreCert             string
+	ResizeMethod           string
+	Width                  string
+	Height                 string
+	DPI                    string
+	RecordingPath          string
+	RecordingName          string
+	CreateRecordingPath    string
+	DisableCopy            string
+	DisablePaste           string
+	ClipboardEncoding      string
 }
 
 type connectionSettings struct {
-	Hostname          string `json:"hostname"`
-	Port              string `json:"port"`
-	Username          string `json:"username"`
-	Password          string `json:"password"`
-	Domain            string `json:"domain,omitempty"`
-	Security          string `json:"security"`
-	IgnoreCert        string `json:"ignore-cert"`
-	ResizeMethod      string `json:"resize-method"`
-	Width             string `json:"width,omitempty"`
-	Height            string `json:"height,omitempty"`
-	DPI               string `json:"dpi,omitempty"`
-	RecordingPath     string `json:"recording-path,omitempty"`
-	RecordingName     string `json:"recording-name,omitempty"`
-	DisableCopy       string `json:"disable-copy"`
-	DisablePaste      string `json:"disable-paste"`
-	ClipboardEncoding string `json:"clipboard-encoding,omitempty"`
+	Hostname            string `json:"hostname"`
+	Port                string `json:"port"`
+	Username            string `json:"username"`
+	Password            string `json:"password"`
+	Domain              string `json:"domain,omitempty"`
+	Security            string `json:"security"`
+	IgnoreCert          string `json:"ignore-cert"`
+	ResizeMethod        string `json:"resize-method"`
+	Width               string `json:"width,omitempty"`
+	Height              string `json:"height,omitempty"`
+	DPI                 string `json:"dpi,omitempty"`
+	RecordingPath       string `json:"recording-path,omitempty"`
+	RecordingName       string `json:"recording-name,omitempty"`
+	CreateRecordingPath string `json:"create-recording-path,omitempty"`
+	DisableCopy         string `json:"disable-copy"`
+	DisablePaste        string `json:"disable-paste"`
+	ClipboardEncoding   string `json:"clipboard-encoding,omitempty"`
 }
 
 type connectionInfo struct {
@@ -86,9 +88,10 @@ func GenerateToken(secret string, params ConnectionParams) (string, error) {
 				Width:             params.Width,
 				Height:            params.Height,
 				DPI:               params.DPI,
-				RecordingPath:     params.RecordingPath,
-				RecordingName:     params.RecordingName,
-				DisableCopy:       params.DisableCopy,
+				RecordingPath:       params.RecordingPath,
+				RecordingName:       params.RecordingName,
+				CreateRecordingPath: params.CreateRecordingPath,
+				DisableCopy:         params.DisableCopy,
 				DisablePaste:      params.DisablePaste,
 				ClipboardEncoding: params.ClipboardEncoding,
 			},

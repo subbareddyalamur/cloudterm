@@ -210,6 +210,7 @@ type GuacamoleTokenRequest struct {
 	AWSRegion    string `json:"aws_region"`
 	Username     string `json:"username"`
 	Password     string `json:"password"`
+	VaultEntryID string `json:"vault_entry_id"`
 	Record       bool   `json:"record"`
 	Security     string `json:"security"`
 }

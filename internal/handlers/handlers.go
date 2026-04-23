@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -34,6 +35,12 @@ import (
 
 	"cloudterm-go/internal/k8s"
 
+	cloudtermweb "cloudterm-go/web"
+
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
+	bedrockapi "github.com/aws/aws-sdk-go-v2/service/bedrock"
 	"github.com/gorilla/websocket"
 )
 
@@ -100,12 +107,12 @@ func (h *Handler) Router() http.Handler {
 	// Static files
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join("web", "static")))))
 
-	// React frontend assets
-	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join("web", "frontend", "dist", "assets")))))
-
-	// Template pages
-	mux.HandleFunc("GET /{$}", h.serveIndex)
+	mux.HandleFunc("GET /legacy", h.serveIndex)
 	mux.HandleFunc("GET /rdp-client", h.serveRDPClient)
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 
 	// API — read
 	mux.HandleFunc("GET /instances", h.handleInstances)
@@ -128,8 +135,7 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /upload-file", h.handleUploadFile)
 	mux.HandleFunc("POST /download-file", h.handleDownloadFile)
 	mux.HandleFunc("POST /browse-directory", h.handleBrowseDirectory)
-	mux.HandleFunc("POST /broadcast-command", h.handleBroadcastCommand)
-	mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
+mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
 	mux.HandleFunc("POST /express-download", h.handleExpressDownload)
 	mux.HandleFunc("POST /export-session", h.handleExportSession)
 	mux.Handle("GET /exports/", http.StripPrefix("/exports/", http.FileServer(http.Dir(h.cfg.TerminalExportDir))))
@@ -163,10 +169,13 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("DELETE /vault/credentials", h.handleVaultDelete)
 	mux.HandleFunc("GET /vault/match", h.handleVaultMatch)
 	mux.HandleFunc("GET /db-viewer", h.handleDBViewer)
+	mux.HandleFunc("DELETE /db-viewer", h.handleDBViewerDelete)
+	mux.HandleFunc("PUT /db-viewer", h.handleDBViewerUpdate)
 
 	// AI Agent
 	mux.HandleFunc("POST /ai-agent/chat", h.handleAIChat)
 	mux.HandleFunc("GET /ai-agent/context", h.handleAIContext)
+	mux.HandleFunc("GET /ai-agent/models", h.handleAIModels)
 
 	// Clone instance
 	mux.HandleFunc("POST /clone/start", h.handleCloneStart)
@@ -221,7 +230,6 @@ func (h *Handler) Router() http.Handler {
 	// WebSocket
 	mux.HandleFunc("GET /ws", h.handleWebSocket)
 
-	// SPA catch-all: serve React index.html for unmatched GET routes
 	mux.HandleFunc("GET /", h.serveSPA)
 
 	return mux
@@ -243,9 +251,27 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// serveSPA serves the React frontend's index.html for client-side routing.
 func (h *Handler) serveSPA(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join("web", "frontend", "dist", "index.html"))
+	sub, err := fs.Sub(cloudtermweb.FrontendV2, "frontend-v2/dist")
+	if err != nil {
+		http.Error(w, "frontend not available", http.StatusInternalServerError)
+		return
+	}
+	path := r.URL.Path
+	if path == "/" {
+		path = "index.html"
+	} else {
+		path = strings.TrimPrefix(path, "/")
+	}
+	if f, err := fs.Stat(sub, path); err == nil && !f.IsDir() {
+		if strings.HasSuffix(path, ".html") {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		}
+		http.ServeFileFS(w, r, sub, path)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	http.ServeFileFS(w, r, sub, "index.html")
 }
 
 func (h *Handler) serveRDPClient(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +398,23 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// If a vault entry ID was provided, resolve the stored credentials.
+	if req.VaultEntryID != "" && h.vault != nil {
+		if entry, err := h.vault.Get(req.VaultEntryID); err == nil {
+			if req.Username == "" {
+				req.Username = entry.Credential.Username
+			}
+			if req.Password == "" {
+				req.Password = entry.Credential.Password
+			}
+			if req.Security == "" || req.Security == "any" {
+				req.Security = entry.Credential.Security
+			}
+		} else {
+			h.logger.Printf("vault entry %s not found: %v", req.VaultEntryID, err)
+		}
+	}
+
 	// Split ".\username" or "DOMAIN\username" into separate domain + username
 	// FreeRDP needs these as separate parameters for proper NLA/CredSSP auth.
 	rdpUsername := req.Username
@@ -399,6 +442,7 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 	if (h.cfg.AutoRecord || req.Record) && h.cfg.SessionRecordingDir != "" {
 		connParams.RecordingPath = h.cfg.SessionRecordingDir
 		connParams.RecordingName = session.RecordingFilename(req.InstanceID, req.InstanceName, "guac")
+		connParams.CreateRecordingPath = "true"
 		recording = true
 	}
 	token, err := guacamole.GenerateToken(h.cfg.GuacCryptSecret, connParams)
@@ -1751,6 +1795,9 @@ func (h *Handler) handleBrowseDirectory(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		InstanceID string `json:"instance_id"`
 		Path       string `json:"path"`
+		AWSProfile string `json:"aws_profile"`
+		AWSRegion  string `json:"aws_region"`
+		Platform   string `json:"platform"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -1761,13 +1808,32 @@ func (h *Handler) handleBrowseDirectory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	profile, region, err := h.discovery.GetInstanceConfig(req.InstanceID)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
+	log.Printf("[handleBrowseDirectory] received: instanceID=%q path=%q profile=%q region=%q platform=%q",
+		req.InstanceID, req.Path, req.AWSProfile, req.AWSRegion, req.Platform)
+
+	profile := req.AWSProfile
+	region := req.AWSRegion
+	if profile == "" || region == "" {
+		p, rg, err := h.discovery.GetInstanceConfig(req.InstanceID)
+		if err != nil {
+			log.Printf("[handleBrowseDirectory] GetInstanceConfig error: %v", err)
+			jsonError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if profile == "" {
+			profile = p
+		}
+		if region == "" {
+			region = rg
+		}
 	}
 
-	platform := h.findPlatform(req.InstanceID)
+	platform := req.Platform
+	if platform == "" {
+		platform = h.findPlatform(req.InstanceID)
+	}
+
+	log.Printf("[handleBrowseDirectory] resolved: profile=%q region=%q platform=%q", profile, region, platform)
 
 	entries, err := h.discovery.BrowseDirectory(profile, region, req.InstanceID, req.Path, platform)
 	if err != nil {
@@ -1778,56 +1844,6 @@ func (h *Handler) handleBrowseDirectory(w http.ResponseWriter, r *http.Request) 
 		entries = []aws.FileEntry{}
 	}
 	jsonResponse(w, entries)
-}
-
-func (h *Handler) handleBroadcastCommand(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		InstanceIDs []string `json:"instance_ids"`
-		Command     string   `json:"command"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if len(req.InstanceIDs) == 0 || req.Command == "" {
-		jsonError(w, "instance_ids and command are required", http.StatusBadRequest)
-		return
-	}
-
-	var targets []aws.BroadcastTarget
-	for _, id := range req.InstanceIDs {
-		profile, region, err := h.discovery.GetInstanceConfig(id)
-		if err != nil {
-			continue
-		}
-		inst := h.discovery.GetInstance(id)
-		name := id
-		platform := "linux"
-		if inst != nil {
-			name = inst.Name
-			platform = inst.Platform
-		}
-		targets = append(targets, aws.BroadcastTarget{
-			InstanceID: id,
-			Name:       name,
-			Profile:    profile,
-			Region:     region,
-			Platform:   platform,
-		})
-	}
-
-	if len(targets) == 0 {
-		jsonError(w, "no valid instances found", http.StatusBadRequest)
-		return
-	}
-
-	h.audit.Log(audit.AuditEvent{
-		Action:  "broadcast_command",
-		Details: fmt.Sprintf("targets=%d cmd=%s", len(targets), req.Command),
-	})
-
-	results := h.discovery.BroadcastCommand(targets, req.Command)
-	jsonResponse(w, results)
 }
 
 // ---------------------------------------------------------------------------
@@ -1862,6 +1878,8 @@ func (h *Handler) getAIProvider() (llm.Provider, error) {
 	model := h.cfg.AIModel
 	region := h.cfg.AIBedrockRegion
 	profile := h.cfg.AIBedrockProfile
+	authMode := "profile"
+	inferenceProfileArn := ""
 	anthropicKey := h.cfg.AIAnthropicKey
 	openaiKey := h.cfg.AIOpenAIKey
 	geminiKey := h.cfg.AIGeminiKey
@@ -1876,25 +1894,37 @@ func (h *Handler) getAIProvider() (llm.Provider, error) {
 			if v, ok := prefs["aiModel"].(string); ok && v != "" {
 				model = v
 			}
-			if v, ok := prefs["aiBedrockRegion"].(string); ok && v != "" {
+			if v, ok := prefs["bedrockRegion"].(string); ok && v != "" {
 				region = v
 			}
-			if v, ok := prefs["aiBedrockProfile"].(string); ok && v != "" {
+			if v, ok := prefs["bedrockProfile"].(string); ok && v != "" {
 				profile = v
 			}
-			if v, ok := prefs["aiAnthropicKey"].(string); ok && v != "" {
-				anthropicKey = v
+			if v, ok := prefs["bedrockAuthMode"].(string); ok && v != "" {
+				authMode = v
 			}
-			if v, ok := prefs["aiOpenAIKey"].(string); ok && v != "" {
-				openaiKey = v
+			if v, ok := prefs["bedrockInferenceProfileArn"].(string); ok && v != "" {
+				inferenceProfileArn = v
 			}
-			if v, ok := prefs["aiGeminiKey"].(string); ok && v != "" {
-				geminiKey = v
+			if v, ok := prefs["aiApiKey"].(string); ok && v != "" {
+				switch provider {
+				case "anthropic":
+					anthropicKey = v
+				case "openai":
+					openaiKey = v
+				case "gemini":
+					geminiKey = v
+				}
 			}
-			if v, ok := prefs["aiOllamaUrl"].(string); ok && v != "" {
+			if v, ok := prefs["ollamaUrl"].(string); ok && v != "" {
 				ollamaURL = v
 			}
 		}
+	}
+
+	// For inference_profile auth, use the ARN as the model ID
+	if provider == "bedrock" && authMode == "inference_profile" && inferenceProfileArn != "" {
+		model = inferenceProfileArn
 	}
 
 	if model == "" {
@@ -1915,6 +1945,341 @@ func (h *Handler) getAIProvider() (llm.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown AI provider: %s", provider)
 	}
+}
+
+func (h *Handler) handleAIModels(w http.ResponseWriter, r *http.Request) {
+	provider := r.URL.Query().Get("provider")
+	region := r.URL.Query().Get("region")
+	profile := r.URL.Query().Get("profile")
+	authMode := r.URL.Query().Get("auth_mode")
+	accessKeyID := r.URL.Query().Get("access_key_id")
+	secretKey := r.URL.Query().Get("secret_key")
+	sessionToken := r.URL.Query().Get("session_token")
+	ollamaURL := r.URL.Query().Get("ollama_url")
+	apiKey := r.URL.Query().Get("api_key")
+
+	type modelEntry struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+
+	switch provider {
+	case "bedrock":
+		if region == "" {
+			region = h.cfg.AIBedrockRegion
+		}
+		if region == "" {
+			region = "us-east-1"
+		}
+		if authMode == "" {
+			authMode = "profile"
+		}
+		models, err := h.listBedrockModels(r.Context(), region, authMode, profile, accessKeyID, secretKey, sessionToken)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, models)
+
+	case "ollama":
+		if ollamaURL == "" {
+			ollamaURL = h.cfg.AIOllamaURL
+		}
+		if ollamaURL == "" {
+			ollamaURL = "http://localhost:11434"
+		}
+		models, err := listOllamaModels(ollamaURL)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, models)
+
+	case "anthropic":
+		key := apiKey
+		if key == "" {
+			key = h.cfg.AIAnthropicKey
+		}
+		models, err := listAnthropicModels(key)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, models)
+
+	case "openai":
+		key := apiKey
+		if key == "" {
+			key = h.cfg.AIOpenAIKey
+		}
+		models, err := listOpenAIModels(key)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, models)
+
+	case "gemini":
+		key := apiKey
+		if key == "" {
+			key = h.cfg.AIGeminiKey
+		}
+		models, err := listGeminiModels(key)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, models)
+
+	default:
+		jsonError(w, "unknown provider", http.StatusBadRequest)
+	}
+}
+
+func (h *Handler) listBedrockModels(ctx context.Context, region, authMode, profile, accessKeyID, secretKey, sessionToken string) ([]struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}, error) {
+	opts := []func(*awsconfig.LoadOptions) error{
+		awsconfig.WithRegion(region),
+	}
+
+	switch authMode {
+	case "api_key":
+		if accessKeyID == "" || secretKey == "" {
+			return nil, fmt.Errorf("bedrock api_key auth requires access_key_id and secret_key")
+		}
+		opts = append(opts, awsconfig.WithCredentialsProvider(
+			awscreds.NewStaticCredentialsProvider(accessKeyID, secretKey, sessionToken),
+		))
+	case "inference_profile", "profile":
+		if profile != "" && profile != "default" {
+			opts = append(opts, awsconfig.WithSharedConfigProfile(profile))
+		}
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	type m = struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var models []m
+
+	client := bedrockapi.NewFromConfig(cfg)
+
+	if authMode == "inference_profile" {
+		profResp, err := client.ListInferenceProfiles(ctx, &bedrockapi.ListInferenceProfilesInput{
+			MaxResults: awssdk.Int32(100),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("bedrock ListInferenceProfiles: %w", err)
+		}
+		for _, p := range profResp.InferenceProfileSummaries {
+			if p.InferenceProfileId != nil {
+				name := awssdk.ToString(p.InferenceProfileName)
+				models = append(models, m{ID: *p.InferenceProfileId, Name: name})
+			}
+		}
+		return models, nil
+	}
+
+	profResp, profErr := client.ListInferenceProfiles(ctx, &bedrockapi.ListInferenceProfilesInput{
+		MaxResults: awssdk.Int32(100),
+	})
+	if profErr == nil {
+		for _, p := range profResp.InferenceProfileSummaries {
+			if p.InferenceProfileId != nil {
+				name := awssdk.ToString(p.InferenceProfileName)
+				models = append(models, m{ID: *p.InferenceProfileId, Name: name})
+			}
+		}
+	}
+
+	fmResp, fmErr := client.ListFoundationModels(ctx, &bedrockapi.ListFoundationModelsInput{})
+	if fmErr == nil {
+		for _, fm := range fmResp.ModelSummaries {
+			if fm.ModelId != nil {
+				name := awssdk.ToString(fm.ModelName)
+				models = append(models, m{ID: *fm.ModelId, Name: name})
+			}
+		}
+	}
+
+	if len(models) == 0 && profErr != nil && fmErr != nil {
+		return nil, fmt.Errorf("bedrock: %v; %v", profErr, fmErr)
+	}
+	return models, nil
+}
+
+func listOllamaModels(baseURL string) ([]struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(baseURL + "/api/tags")
+	if err != nil {
+		return nil, fmt.Errorf("ollama unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("ollama: invalid response: %w", err)
+	}
+	type m = struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var models []m
+	for _, model := range result.Models {
+		models = append(models, m{ID: model.Name, Name: model.Name})
+	}
+	return models, nil
+}
+
+func listAnthropicModels(apiKey string) ([]struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}, error) {
+	type m = struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if apiKey == "" {
+		return []m{
+			{ID: "claude-opus-4-6-20250414", Name: "Claude Opus 4 (set API key to fetch all)"},
+			{ID: "claude-sonnet-4-6-20250414", Name: "Claude Sonnet 4"},
+			{ID: "claude-sonnet-4-5-20250414", Name: "Claude Sonnet 4.5"},
+			{ID: "claude-haiku-4-5-20250414", Name: "Claude Haiku 4.5"},
+		}, nil
+	}
+	req, _ := http.NewRequest("GET", "https://api.anthropic.com/v1/models?limit=50", nil)
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("anthropic: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
+	var models []m
+	for _, entry := range result.Data {
+		name := entry.DisplayName
+		if name == "" {
+			name = entry.ID
+		}
+		models = append(models, m{ID: entry.ID, Name: name})
+	}
+	return models, nil
+}
+
+func listOpenAIModels(apiKey string) ([]struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}, error) {
+	type m = struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if apiKey == "" {
+		return []m{
+			{ID: "gpt-4.1", Name: "GPT-4.1 (set API key to fetch all)"},
+			{ID: "gpt-4o", Name: "GPT-4o"},
+			{ID: "gpt-4o-mini", Name: "GPT-4o Mini"},
+			{ID: "o3", Name: "o3"},
+			{ID: "o4-mini", Name: "o4-mini"},
+		}, nil
+	}
+	req, _ := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("openai: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("openai: %w", err)
+	}
+	var models []m
+	for _, entry := range result.Data {
+		if strings.HasPrefix(entry.ID, "gpt-") || strings.HasPrefix(entry.ID, "o1") || strings.HasPrefix(entry.ID, "o3") || strings.HasPrefix(entry.ID, "o4") {
+			models = append(models, m{ID: entry.ID, Name: entry.ID})
+		}
+	}
+	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
+	return models, nil
+}
+
+func listGeminiModels(apiKey string) ([]struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}, error) {
+	type m = struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if apiKey == "" {
+		return []m{
+			{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro (set API key to fetch all)"},
+			{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+			{ID: "gemini-2.0-flash", Name: "Gemini 2.0 Flash"},
+		}, nil
+	}
+	url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("gemini: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Models []struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("gemini: %w", err)
+	}
+	var models []m
+	for _, entry := range result.Models {
+		id := strings.TrimPrefix(entry.Name, "models/")
+		if strings.Contains(id, "gemini") {
+			models = append(models, m{ID: id, Name: entry.DisplayName})
+		}
+	}
+	return models, nil
 }
 
 // handleAIChat streams an AI assistant response via SSE. Server-side networking
@@ -2321,4 +2686,66 @@ func (h *Handler) handleDBViewer(w http.ResponseWriter, r *http.Request) {
 	}
 	buckets := h.vault.Browse()
 	jsonResponse(w, map[string]interface{}{"db": "vault", "file": "vault.db", "buckets": buckets})
+}
+
+func (h *Handler) handleDBViewerDelete(w http.ResponseWriter, r *http.Request) {
+	dbName := r.URL.Query().Get("db")
+	bucket := r.URL.Query().Get("bucket")
+	key := r.URL.Query().Get("key")
+
+	if dbName != "suggest" {
+		jsonError(w, "delete only supported for suggest.db", http.StatusBadRequest)
+		return
+	}
+	if h.suggest == nil {
+		jsonError(w, "suggest engine not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	if bucket == "" {
+		jsonError(w, "bucket is required", http.StatusBadRequest)
+		return
+	}
+	if key == "" {
+		if err := h.suggest.StoreDeleteBucket(bucket); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"status": "bucket_deleted", "bucket": bucket})
+		return
+	}
+	if err := h.suggest.StoreDeleteKey(bucket, key); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "key_deleted", "bucket": bucket, "key": key})
+}
+
+func (h *Handler) handleDBViewerUpdate(w http.ResponseWriter, r *http.Request) {
+	dbName := r.URL.Query().Get("db")
+	if dbName != "suggest" {
+		jsonError(w, "update only supported for suggest.db", http.StatusBadRequest)
+		return
+	}
+	if h.suggest == nil {
+		jsonError(w, "suggest engine not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Bucket string `json:"bucket"`
+		Key    string `json:"key"`
+		Value  string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Bucket == "" || req.Key == "" {
+		jsonError(w, "bucket and key are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.suggest.StoreUpdateKey(req.Bucket, req.Key, req.Value); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "updated", "bucket": req.Bucket, "key": req.Key})
 }

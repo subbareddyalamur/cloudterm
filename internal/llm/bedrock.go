@@ -38,6 +38,11 @@ func NewBedrockProvider(region, profile, model string, temperature float64) (*Be
 }
 
 func (b *BedrockProvider) ChatStream(ctx context.Context, system string, messages []Message, tools []ToolDef, maxTokens int) (<-chan StreamChunk, error) {
+	// Ensure MaxTokens is at least 1
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
 	// Build system prompt
 	sysBlocks := []brtypes.SystemContentBlock{
 		&brtypes.SystemContentBlockMemberText{Value: system},

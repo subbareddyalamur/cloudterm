@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,25 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"gopkg.in/yaml.v3"
 )
+
+// leanHTTPClient is shared across all scan goroutines to cap the total number
+// of idle TCP connections kept alive. Each goroutine gets its own SDK config
+// but they all share this transport, preventing per-goroutine connection pool
+// growth that would exhaust the container's memory limit.
+var leanHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 10 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   2,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+	Timeout: 60 * time.Second,
+}
 
 // Discovery handles AWS EC2 instance discovery, caching, and persistence.
 type Discovery struct {
@@ -228,6 +249,9 @@ func (d *Discovery) GetFleetSummary() types.FleetSummary {
 			acctMap[key] = acct
 			acctOrder = append(acctOrder, key)
 		}
+		if acct.AccountAlias == "" && inst.AccountAlias != "" {
+			acct.AccountAlias = inst.AccountAlias
+		}
 		acct.Total++
 		switch inst.State {
 		case "running":
@@ -321,7 +345,7 @@ func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
 	var accountResolved bool
 	var accountMu sync.Mutex
 
-	sem := make(chan struct{}, 10)
+	sem := make(chan struct{}, 5)
 	var wg sync.WaitGroup
 	var instancesMu sync.Mutex
 
@@ -338,6 +362,7 @@ func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
 			awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
 				awsconfig.WithRegion(region),
 				awsconfig.WithCredentialsProvider(credProvider),
+				awsconfig.WithHTTPClient(leanHTTPClient),
 			)
 			if err != nil {
 				return
@@ -545,13 +570,14 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 		accountAlias string
 	}
 	accountCache := make(map[string]*accountMeta)
-	// scannedAccountIDs tracks accountID → first profile, so duplicate profiles for
-	// the same AWS account are skipped rather than producing duplicate instances.
-	scannedAccountIDs := make(map[string]string)
+	// succeededRegions tracks (accountID, region) pairs that have already been
+	// successfully scanned. We deduplicate at this granularity so that if profile A
+	// fails a region silently, profile B (same account) still gets to scan it.
+	succeededRegions := make(map[string]bool) // key: accountID+"/"+region
 	var accountMu sync.Mutex
 
-	// Use a semaphore to limit concurrency.
-	sem := make(chan struct{}, 10)
+	// Use a semaphore to limit concurrency and memory usage from AWS SDK connection pools.
+	sem := make(chan struct{}, 5)
 	var wg sync.WaitGroup
 	var instancesMu sync.Mutex
 
@@ -566,12 +592,13 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 				awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
 					awsconfig.WithRegion(region),
 					awsconfig.WithSharedConfigProfile(profile),
+					awsconfig.WithHTTPClient(leanHTTPClient),
 				)
 				if err != nil {
 					return
 				}
 
-				// Resolve account info (cached per profile)
+				// Resolve account info (cached per profile).
 				accountMu.Lock()
 				meta, haveMeta := accountCache[profile]
 				accountMu.Unlock()
@@ -592,22 +619,19 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 
 					accountMu.Lock()
 					accountCache[profile] = meta
-					// Register this account ID as owned by this profile.
-					if meta.accountID != "" {
-						if _, seen := scannedAccountIDs[meta.accountID]; !seen {
-							scannedAccountIDs[meta.accountID] = profile
-						}
-					}
 					accountMu.Unlock()
 				}
 
-				// Skip if another profile already covers this account.
+				// Skip this (account, region) only if it was already successfully scanned
+				// by another profile. This lets a second profile cover regions that the
+				// first profile may have silently failed.
 				if meta.accountID != "" {
+					key := meta.accountID + "/" + region
 					accountMu.Lock()
-					owner := scannedAccountIDs[meta.accountID]
+					alreadyDone := succeededRegions[key]
 					accountMu.Unlock()
-					if owner != profile {
-						d.logger.Printf("Skipping %s/%s: account %s already scanned via profile %s", profile, region, meta.accountID, owner)
+					if alreadyDone {
+						d.logger.Printf("Skipping %s/%s: account %s already scanned", profile, region, meta.accountID)
 						return
 					}
 				}
@@ -615,7 +639,7 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 				ec2Client := ec2.NewFromConfig(awsCfg)
 				instances, ownerID, err := discoverInstances(ctx, ec2Client, profile, region, meta.accountID, meta.accountAlias, d.cfg)
 				if err != nil {
-					// Silently skip regions that fail (e.g., opt-in regions not enabled)
+					// Silently skip regions that fail (e.g., opt-in regions not enabled).
 					return
 				}
 
@@ -627,6 +651,14 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 					for i := range instances {
 						instances[i].AccountID = ownerID
 					}
+				}
+
+				// Mark this (account, region) as successfully scanned so other profiles skip it.
+				if meta.accountID != "" {
+					key := meta.accountID + "/" + region
+					accountMu.Lock()
+					succeededRegions[key] = true
+					accountMu.Unlock()
 				}
 
 				instancesMu.Lock()
@@ -650,11 +682,14 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 
 	wg.Wait()
 
-	// Backfill instances whose profile got an account ID resolved after they were created.
+	// Backfill instances whose profile got an account ID or alias resolved after they were created.
 	for i := range allInstances {
-		if allInstances[i].AccountID == "" {
-			if m, ok := accountCache[allInstances[i].AWSProfile]; ok && m.accountID != "" {
+		if m, ok := accountCache[allInstances[i].AWSProfile]; ok {
+			if allInstances[i].AccountID == "" && m.accountID != "" {
 				allInstances[i].AccountID = m.accountID
+			}
+			if allInstances[i].AccountAlias == "" && m.accountAlias != "" {
+				allInstances[i].AccountAlias = m.accountAlias
 			}
 		}
 	}
@@ -793,13 +828,24 @@ func parseInstance(inst ec2types.Instance, profile, region, accountID, accountAl
 	}
 }
 
-// detectOS tries to determine the OS from the instance image description or platform details.
+// detectOS tries to determine the OS from PlatformDetails, instance name, and tags.
 func detectOS(inst ec2types.Instance, platform string) string {
 	if platform == "windows" {
 		return "windows"
 	}
-	// Check PlatformDetails for hints
+
 	details := strings.ToLower(aws.ToString(inst.PlatformDetails))
+
+	// Also gather the instance name and tag values for fallback detection.
+	var name string
+	for _, t := range inst.Tags {
+		if aws.ToString(t.Key) == "Name" {
+			name = strings.ToLower(aws.ToString(t.Value))
+			break
+		}
+	}
+
+	// Check PlatformDetails first (most reliable).
 	switch {
 	case strings.Contains(details, "red hat"):
 		return "rhel"
@@ -807,11 +853,35 @@ func detectOS(inst ec2types.Instance, platform string) string {
 		return "suse"
 	case strings.Contains(details, "ubuntu"):
 		return "ubuntu"
+	case strings.Contains(details, "debian"):
+		return "debian"
+	case strings.Contains(details, "centos"):
+		return "centos"
+	case strings.Contains(details, "fedora"):
+		return "fedora"
 	case strings.Contains(details, "amazon"):
 		return "amazon-linux"
-	default:
-		return "linux"
 	}
+
+	// Fallback: check instance name for OS hints.
+	switch {
+	case strings.Contains(name, "rhel") || strings.Contains(name, "redhat") || strings.Contains(name, "red-hat"):
+		return "rhel"
+	case strings.Contains(name, "ubuntu"):
+		return "ubuntu"
+	case strings.Contains(name, "debian"):
+		return "debian"
+	case strings.Contains(name, "centos"):
+		return "centos"
+	case strings.Contains(name, "fedora"):
+		return "fedora"
+	case strings.Contains(name, "suse") || strings.Contains(name, "sles"):
+		return "suse"
+	case strings.Contains(name, "amzn") || strings.Contains(name, "amazon-linux") || strings.Contains(name, "al2"):
+		return "amazon-linux"
+	}
+
+	return "linux"
 }
 
 // buildInstanceTree organizes a flat list of instances into the 4-level hierarchy.
@@ -852,6 +922,9 @@ func buildInstanceTree(instances []types.EC2Instance) *types.InstanceTree {
 				regions:      make(map[string]*regionGroup),
 			}
 			accounts[accountKey] = acct
+		}
+		if acct.accountAlias == "" && inst.AccountAlias != "" {
+			acct.accountAlias = inst.AccountAlias
 		}
 
 		rg, ok := acct.regions[inst.AWSRegion]
@@ -938,6 +1011,7 @@ type yamlInstanceEntry struct {
 	AWSProfile     string   `yaml:"aws_profile"`
 	State          string   `yaml:"state"`
 	Platform       string   `yaml:"platform"`
+	OS             string   `yaml:"os,omitempty"`
 	InstanceType   string   `yaml:"instance_type,omitempty"`
 	PrivateIP      string   `yaml:"private_ip,omitempty"`
 	PublicIP       string   `yaml:"public_ip,omitempty"`
@@ -994,6 +1068,7 @@ func (d *Discovery) saveToYAML(instances []types.EC2Instance) error {
 			AWSProfile:     inst.AWSProfile,
 			State:          inst.State,
 			Platform:       inst.Platform,
+			OS:             inst.OS,
 			InstanceType:   inst.InstanceType,
 			PrivateIP:      inst.PrivateIP,
 			PublicIP:       inst.PublicIP,
@@ -1060,6 +1135,7 @@ func (d *Discovery) loadFromYAML() (*types.ScanResult, error) {
 							PublicIP:       yi.PublicIP,
 							State:          yi.State,
 							Platform:       yi.Platform,
+							OS:             yi.OS,
 							InstanceType:   yi.InstanceType,
 							AWSProfile:     yi.AWSProfile,
 							AWSRegion:      yi.Region,

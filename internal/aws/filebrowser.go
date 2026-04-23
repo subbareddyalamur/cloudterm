@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,11 +19,14 @@ type FileEntry struct {
 }
 
 func (d *Discovery) BrowseDirectory(profile, region, instanceID, path, platform string) ([]FileEntry, error) {
+	log.Printf("[BrowseDirectory] instanceID=%q path=%q profile=%q region=%q platform=%q", instanceID, path, profile, region, platform)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	client, err := d.newSSMClient(ctx, profile, region)
 	if err != nil {
+		log.Printf("[BrowseDirectory] newSSMClient error: %v", err)
 		return nil, err
 	}
 
@@ -34,20 +38,37 @@ func (d *Discovery) BrowseDirectory(profile, region, instanceID, path, platform 
 
 	var cmd string
 	if isWin {
+		// Normalise any forward-slash paths to Windows backslashes.
+		winPath := strings.ReplaceAll(path, "/", "\\")
+		if winPath == "\\" {
+			winPath = "C:\\"
+		}
 		cmd = fmt.Sprintf(
-			`Get-ChildItem -Path %s -Force -ErrorAction Stop | ForEach-Object { $t=if($_.PSIsContainer){"D"}else{"F"}; $s=if($_.PSIsContainer){0}else{$_.Length}; $m=$_.LastWriteTime.ToString("yyyy-MM-dd HH:mm"); "$t|$s|$m|$($_.Name)" }`,
-			psQuote(path))
+			`Get-ChildItem -Path %s -Force -ErrorAction SilentlyContinue | ForEach-Object { $t=$(if($_.PSIsContainer){"D"}else{"F"}); $s=$(if($_.PSIsContainer){0}else{$_.Length}); $m=$_.LastWriteTime.ToString("yyyy-MM-dd HH:mm"); "$t|$s|$m|$($_.Name)" }`,
+			psQuote(winPath))
 	} else {
 		qPath := shellQuote(path)
+		// Use plain `ls -la` (no --time-style, works on GNU, busybox, Alpine).
+		// awk extracts fields; name is everything from field 9 onward to handle spaces.
+		// Uses POSIX awk (no ternary, explicit concat) to work with mawk/nawk/gawk.
+		// head -n 500 caps output to stay within SSM's 24KB stdout limit.
 		cmd = fmt.Sprintf(
-			`ls -la --time-style=long-iso %s 2>/dev/null | tail -n +2 | while IFS= read -r line; do t="F"; if [ "$(echo "$line" | cut -c1)" = "d" ]; then t="D"; fi; perm=$(echo "$line" | awk '{print $1}'); size=$(echo "$line" | awk '{print $5}'); mod=$(echo "$line" | awk '{print $6" "$7}'); name=$(echo "$line" | awk '{print $NF}'); if [ -n "$name" ] && [ "$name" != "." ] && [ "$name" != ".." ]; then echo "$t|$size|$mod|$perm|$name"; fi; done`,
+			`ls -la %s 2>/dev/null | tail -n +2 | head -n 500 | awk 'NF>=9 {if($1~/^d/) t="D"; else t="F"; perm=$1; size=$5; mod=$6" "$7" "$8; n=""; for(i=9;i<=NF;i++){if(n!="") n=n" "; n=n$i}; if(n!="." && n!=".." && n!="") print t"|"size"|"mod"|"perm"|"n}'`,
 			qPath)
 	}
 
+	log.Printf("[BrowseDirectory] cmd=%q", cmd)
 	out, err := ssmExecOutput(ctx, client, instanceID, cmd, docName)
 	if err != nil {
+		log.Printf("[BrowseDirectory] ssmExecOutput error: %v", err)
 		return nil, fmt.Errorf("browse failed: %w", err)
 	}
+	log.Printf("[BrowseDirectory] output (first 500): %q", func() string {
+		if len(out) > 500 {
+			return out[:500]
+		}
+		return out
+	}())
 
 	return parseFileEntries(strings.TrimSpace(out), isWin), nil
 }
@@ -56,6 +77,9 @@ func parseFileEntries(raw string, isWin bool) []FileEntry {
 	if raw == "" {
 		return nil
 	}
+	// Normalise Windows CRLF
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
 	lines := strings.Split(raw, "\n")
 	var entries []FileEntry
 

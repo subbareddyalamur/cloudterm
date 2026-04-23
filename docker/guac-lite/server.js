@@ -92,7 +92,10 @@ const callbacks = {
             password: conn.password ? '***(' + conn.password.length + ' chars)' : 'MISSING',
             domain: conn.domain || '(not set)',
             security: conn.security || '(not set)',
-            'ignore-cert': conn['ignore-cert']
+            'ignore-cert': conn['ignore-cert'],
+            'recording-path': conn['recording-path'] || '(not set)',
+            'recording-name': conn['recording-name'] || '(not set)',
+            'create-recording-path': conn['create-recording-path'] || '(not set)',
         }, null, 2));
 
         callback(null, settings);
