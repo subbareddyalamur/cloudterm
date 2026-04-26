@@ -9,7 +9,6 @@ import {
   Info,
   Globe,
   Star,
-  X,
   Copy,
 } from 'lucide-react';
 import type { EC2Instance } from '@/lib/types';
@@ -228,14 +227,6 @@ export const CTX_ITEMS: CtxEntry[] = [
     icon: Zap as unknown as CtxIconComponent,
     visible: (_inst, s) => !!s.s3Bucket,
     action: (inst) => dispatchCtxEvent('ct:express-download', inst),
-  },
-  { separator: true },
-  {
-    id: 'close-all',
-    label: 'Close All Sessions',
-    icon: X as unknown as CtxIconComponent,
-    danger: true,
-    action: (inst) => dispatchCtxEvent('ct:close-all', inst),
   },
 ];
 
