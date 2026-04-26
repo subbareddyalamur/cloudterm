@@ -27,8 +27,10 @@ type Config struct {
 	TerminalExportDir   string
 	AutoRecord          bool
 	AWSAccountsFile     string
-	ConverterHost       string
-	ConverterPort       int
+	ConverterHost          string
+	ConverterPort          int
+	CostDashboardHost      string
+	CostDashboardPort      int
 	// AI Agent
 	AIProvider           string // "bedrock", "anthropic", "openai", "gemini", "ollama"
 	AIModel              string
@@ -70,6 +72,8 @@ func Load() *Config {
 		AWSAccountsFile:      envStr("AWS_ACCOUNTS_FILE", "aws_accounts.json"),
 		ConverterHost:        envStr("CONVERTER_HOST", "converter"),
 		ConverterPort:        envInt("CONVERTER_PORT", 5002),
+		CostDashboardHost:    envStr("COST_DASHBOARD_HOST", "cost-dashboard"),
+		CostDashboardPort:    envInt("COST_DASHBOARD_PORT", 80),
 		AIProvider:           envStr("AI_PROVIDER", "bedrock"),
 		AIModel:              envStr("AI_MODEL", ""),
 		AIBedrockRegion:      envStr("AI_BEDROCK_REGION", "us-east-1"),

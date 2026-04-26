@@ -15,16 +15,23 @@ import (
 )
 
 const (
-	uploadChunkSize   = 80000 // base64 chars per SSM command (~60KB raw); SSM limit is 97KB for doc+params
-	downloadChunkSize = 17000 // raw bytes per download chunk (~22KB base64)
+	// SSM SendCommand: each "commands" StringList element is limited to 4096 bytes.
+	// "printf '%s' 'CHUNK' >> FILE" overhead ~40 chars → safe limit is 2048 base64 chars (~1.5 KB raw).
+	uploadChunkSize   = 2048
+	downloadChunkSize = 16998 // raw bytes per download chunk (~22KB base64). MUST be divisible by 3 to prevent intermediate base64 padding!
 	ssmPollInterval   = 1500 * time.Millisecond
 )
 
 // TransferProgress is emitted as NDJSON during file transfers.
 type TransferProgress struct {
-	Progress int    `json:"progress"`
-	Message  string `json:"message"`
-	Status   string `json:"status"` // "progress", "complete", "error"
+	Progress   int    `json:"progress"`
+	Message    string `json:"message"`
+	Status     string `json:"status"` // "progress", "complete", "error"
+	Error      string `json:"error,omitempty"`
+	Done       bool   `json:"done,omitempty"`
+	TotalBytes int64  `json:"total"`
+	SpeedBps   int64  `json:"speed"`
+	ETASec     int64  `json:"eta"`
 }
 
 // UploadFile transfers a file to an EC2 instance via SSM.
@@ -65,21 +72,39 @@ func (d *Discovery) UploadFile(profile, region, instanceID, remotePath, platform
 		}
 	}
 
+	startTime := time.Now()
 	for i, chunk := range chunks {
 		pct := (i * 95) / totalSteps
+		
+		elapsed := time.Since(startTime).Seconds()
+		bytesDone := int64(i * uploadChunkSize)
+		var speed int64
+		var eta int64
+		if elapsed > 0 {
+			speed = int64(float64(bytesDone) / elapsed)
+			if speed > 0 {
+				eta = (int64(len(encoded)) - bytesDone) / speed
+			}
+		}
+
 		onProgress(TransferProgress{
-			Progress: pct,
-			Message:  fmt.Sprintf("Transferring chunk %d/%d", i+1, len(chunks)),
-			Status:   "progress",
+			Progress:   pct,
+			Message:    fmt.Sprintf("Transferring chunk %d/%d", i+1, len(chunks)),
+			Status:     "progress",
+			TotalBytes: int64(len(data)),
+			SpeedBps:   speed,
+			ETASec:     eta,
 		})
 
 		var cmd string
 		if isWin {
 			cmd = fmt.Sprintf("[IO.File]::AppendAllText(%s,'%s')", psQuote(tempFile), chunk)
 		} else {
+			// printf '%s' avoids POSIX 'echo -n' ambiguity; base64 chars never contain single quotes.
 			cmd = fmt.Sprintf("printf '%%s' '%s' >> %s", chunk, tempFile)
 		}
 
+		log.Printf("[UploadFile] chunk %d/%d cmdlen=%d", i+1, len(chunks), len(cmd))
 		if err := ssmExec(ctx, client, instanceID, cmd, docName); err != nil {
 			cleanupTemp()
 			return fmt.Errorf("chunk %d/%d failed: %w", i+1, len(chunks), err)
@@ -98,14 +123,25 @@ func (d *Discovery) UploadFile(profile, region, instanceID, remotePath, platform
 			psQuote(remotePath), psQuote(tempFile), psQuote(remotePath), psQuote(tempFile))
 	} else {
 		qPath := shellQuote(remotePath)
-		finalCmd = fmt.Sprintf("base64 -d %s > %s && rm -f %s", tempFile, qPath, tempFile)
+		// Create parent dir, decode temp file → destination, verify file exists, then clean up.
+		finalCmd = fmt.Sprintf(
+			"mkdir -p $(dirname %s) && base64 -d %s > %s && rm -f %s && test -f %s && echo OK",
+			qPath, tempFile, qPath, tempFile, qPath,
+		)
 	}
 
-	if err := ssmExec(ctx, client, instanceID, finalCmd, docName); err != nil {
+	log.Printf("[UploadFile] finalCmd: %s", finalCmd)
+	out, err := ssmExecOutput(ctx, client, instanceID, finalCmd, docName)
+	if err != nil {
 		cleanupTemp()
 		return fmt.Errorf("write failed: %w", err)
 	}
+	if !strings.Contains(out, "OK") {
+		cleanupTemp()
+		return fmt.Errorf("file not written to %s (verify step failed)", remotePath)
+	}
 
+	log.Printf("[UploadFile] verified: %s -> %s", instanceID, remotePath)
 	return nil
 }
 
@@ -169,12 +205,28 @@ func (d *Discovery) DownloadFile(profile, region, instanceID, remotePath, platfo
 	totalChunks := int((fileSize + int64(downloadChunkSize) - 1) / int64(downloadChunkSize))
 	var allBase64 strings.Builder
 
+	startTime := time.Now()
 	for i := 0; i < totalChunks; i++ {
 		pct := (i * 95) / totalChunks
+		
+		elapsed := time.Since(startTime).Seconds()
+		bytesDone := int64(i * downloadChunkSize)
+		var speed int64
+		var eta int64
+		if elapsed > 0 {
+			speed = int64(float64(bytesDone) / elapsed)
+			if speed > 0 {
+				eta = (fileSize - bytesDone) / speed
+			}
+		}
+
 		onProgress(TransferProgress{
-			Progress: pct,
-			Message:  fmt.Sprintf("Reading chunk %d/%d", i+1, totalChunks),
-			Status:   "progress",
+			Progress:   pct,
+			Message:    fmt.Sprintf("Reading chunk %d/%d", i+1, totalChunks),
+			Status:     "progress",
+			TotalBytes: fileSize,
+			SpeedBps:   speed,
+			ETASec:     eta,
 		})
 
 		var cmd string

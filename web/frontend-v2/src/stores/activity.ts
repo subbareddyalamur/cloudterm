@@ -88,12 +88,10 @@ export const useActivityStore = create<ActivityState>()(
             i.id === id ? ({ ...i, status, ...(error ? { error } : {}) } as Activity) : i,
           ),
         }));
-        setTimeout(() => get().dismiss(id), 8000);
       },
       dismiss: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
       cancel: (id) => {
         get().update(id, { status: 'canceled' });
-        setTimeout(() => get().dismiss(id), 2000);
       },
       toggleCollapsed: () => set((s) => ({ collapsed: !s.collapsed })),
       setCollapsed: (c) => set({ collapsed: c }),

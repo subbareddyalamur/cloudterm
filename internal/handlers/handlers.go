@@ -694,12 +694,17 @@ func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, _, err := r.FormFile("file")
+	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		jsonError(w, "file is required", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
+
+	// If remotePath is a directory (ends with / or \), append the filename.
+	if strings.HasSuffix(remotePath, "/") || strings.HasSuffix(remotePath, "\\") {
+		remotePath = remotePath + fileHeader.Filename
+	}
 
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -710,14 +715,20 @@ func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	profile := r.FormValue("aws_profile")
 	region := r.FormValue("aws_region")
 	platform := r.FormValue("platform")
+	log.Printf("[handleUploadFile] received: instance=%s profile=%q region=%q platform=%q remotePath=%q",
+		instanceID, profile, region, platform, remotePath)
 	if profile == "" || region == "" {
 		if p, rg, err := h.discovery.GetInstanceConfig(instanceID); err == nil {
 			profile = p
 			region = rg
+			log.Printf("[handleUploadFile] resolved from cache: profile=%q region=%q", profile, region)
+		} else {
+			log.Printf("[handleUploadFile] WARNING: GetInstanceConfig failed: %v", err)
 		}
 	}
 	if platform == "" {
-		platform = "linux"
+		platform = h.findPlatform(instanceID)
+		log.Printf("[handleUploadFile] resolved platform: %q", platform)
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -736,8 +747,11 @@ func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
+	log.Printf("[handleUploadFile] starting upload: instance=%s profile=%q region=%q platform=%q path=%q size=%d",
+		instanceID, profile, region, platform, remotePath, len(data))
+
 	if err := h.discovery.UploadFile(profile, region, instanceID, remotePath, platform, data, sendProgress); err != nil {
-		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
+		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error", Error: err.Error(), Done: true})
 		return
 	}
 
@@ -749,7 +763,7 @@ func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		Details:    fmt.Sprintf("path=%s", remotePath),
 	})
 
-	sendProgress(aws.TransferProgress{Progress: 100, Message: "Upload complete", Status: "complete"})
+	sendProgress(aws.TransferProgress{Progress: 100, Message: "Upload complete", Status: "complete", Done: true})
 }
 
 func (h *Handler) handleExpressUpload(w http.ResponseWriter, r *http.Request) {
@@ -766,30 +780,33 @@ func (h *Handler) handleExpressUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, _, err := r.FormFile("file")
+	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		jsonError(w, "file is required", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(file)
-	if err != nil {
-		jsonError(w, "failed to read file", http.StatusInternalServerError)
-		return
+	if strings.HasSuffix(remotePath, "/") || strings.HasSuffix(remotePath, "\\") {
+		remotePath = remotePath + fileHeader.Filename
 	}
 
 	profile := r.FormValue("aws_profile")
 	region := r.FormValue("aws_region")
 	platform := r.FormValue("platform")
+	log.Printf("[handleExpressUpload] received: instance=%s bucket=%s profile=%q region=%q platform=%q path=%q",
+		instanceID, bucket, profile, region, platform, remotePath)
 	if profile == "" || region == "" {
 		if p, rg, err := h.discovery.GetInstanceConfig(instanceID); err == nil {
 			profile = p
 			region = rg
+			log.Printf("[handleExpressUpload] resolved: profile=%q region=%q", profile, region)
+		} else {
+			log.Printf("[handleExpressUpload] WARNING: GetInstanceConfig failed: %v", err)
 		}
 	}
 	if platform == "" {
-		platform = "linux"
+		platform = h.findPlatform(instanceID)
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -808,8 +825,8 @@ func (h *Handler) handleExpressUpload(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	if err := h.discovery.ExpressUpload(profile, region, bucket, instanceID, remotePath, platform, data, sendProgress); err != nil {
-		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
+	if err := h.discovery.ExpressUpload(profile, region, bucket, instanceID, remotePath, platform, file, fileHeader.Size, sendProgress); err != nil {
+		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error", Error: err.Error(), Done: true})
 		return
 	}
 
@@ -821,7 +838,7 @@ func (h *Handler) handleExpressUpload(w http.ResponseWriter, r *http.Request) {
 		Details:    fmt.Sprintf("path=%s bucket=%s", remotePath, bucket),
 	})
 
-	sendProgress(aws.TransferProgress{Progress: 100, Message: "Express upload complete", Status: "complete"})
+	sendProgress(aws.TransferProgress{Progress: 100, Message: "Express upload complete", Status: "complete", Done: true})
 }
 
 func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
@@ -845,6 +862,8 @@ func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	profile := req.AWSProfile
 	region := req.AWSRegion
 	platform := req.Platform
+	log.Printf("[handleDownloadFile] received: instance=%s profile=%q region=%q platform=%q path=%q",
+		req.InstanceID, profile, region, platform, req.RemotePath)
 	if profile == "" || region == "" {
 		if p, rg, err := h.discovery.GetInstanceConfig(req.InstanceID); err == nil {
 			profile = p
@@ -852,7 +871,7 @@ func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if platform == "" {
-		platform = "linux"
+		platform = h.findPlatform(req.InstanceID)
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -873,7 +892,7 @@ func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	fileData, filename, err := h.discovery.DownloadFile(profile, region, req.InstanceID, req.RemotePath, platform, sendProgress)
 	if err != nil {
-		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
+		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error", Error: err.Error(), Done: true})
 		return
 	}
 
@@ -890,12 +909,14 @@ func (h *Handler) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		Progress int    `json:"progress"`
 		Message  string `json:"message"`
 		Status   string `json:"status"`
+		Done     bool   `json:"done"`
 		Data     string `json:"data"`
 		Filename string `json:"filename"`
 	}{
 		Progress: 100,
 		Message:  "Download complete",
 		Status:   "complete",
+		Done:     true,
 		Data:     base64.StdEncoding.EncodeToString(fileData),
 		Filename: filename,
 	}
@@ -927,6 +948,8 @@ func (h *Handler) handleExpressDownload(w http.ResponseWriter, r *http.Request) 
 	profile := req.AWSProfile
 	region := req.AWSRegion
 	platform := req.Platform
+	log.Printf("[handleExpressDownload] received: instance=%s bucket=%s profile=%q region=%q platform=%q path=%q",
+		req.InstanceID, req.S3Bucket, profile, region, platform, req.RemotePath)
 	if profile == "" || region == "" {
 		if p, rg, err := h.discovery.GetInstanceConfig(req.InstanceID); err == nil {
 			profile = p
@@ -934,7 +957,7 @@ func (h *Handler) handleExpressDownload(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if platform == "" {
-		platform = "linux"
+		platform = h.findPlatform(req.InstanceID)
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -955,7 +978,7 @@ func (h *Handler) handleExpressDownload(w http.ResponseWriter, r *http.Request) 
 
 	fileData, filename, err := h.discovery.ExpressDownload(profile, region, req.S3Bucket, req.InstanceID, req.RemotePath, platform, sendProgress)
 	if err != nil {
-		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error"})
+		sendProgress(aws.TransferProgress{Progress: 100, Message: err.Error(), Status: "error", Error: err.Error(), Done: true})
 		return
 	}
 
@@ -971,12 +994,14 @@ func (h *Handler) handleExpressDownload(w http.ResponseWriter, r *http.Request) 
 		Progress int    `json:"progress"`
 		Message  string `json:"message"`
 		Status   string `json:"status"`
+		Done     bool   `json:"done"`
 		Data     string `json:"data"`
 		Filename string `json:"filename"`
 	}{
 		Progress: 100,
 		Message:  "Express download complete",
 		Status:   "complete",
+		Done:     true,
 		Data:     base64.StdEncoding.EncodeToString(fileData),
 		Filename: filename,
 	}
@@ -1144,6 +1169,7 @@ func (h *Handler) handleToggleRecording(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) converterURL(path string) string {
 	return fmt.Sprintf("http://%s:%d%s", h.cfg.ConverterHost, h.cfg.ConverterPort, path)
 }
+
 
 func (h *Handler) handleConvertRecording(w http.ResponseWriter, r *http.Request) {
 	var req struct {

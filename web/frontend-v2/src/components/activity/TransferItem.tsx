@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Upload, Download, X } from 'lucide-react';
+import { Upload, Download, X, CheckCircle } from 'lucide-react';
 import { type TransferActivity, useActivityStore } from '@/stores/activity';
 
 export interface TransferItemProps {
@@ -33,11 +33,19 @@ export function TransferItem({ activity }: TransferItemProps) {
     <div className="px-3 py-2.5 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <Icon
-            size={13}
-            className={`shrink-0 ${isError ? 'text-danger' : 'text-accent'}`}
-            aria-hidden="true"
-          />
+          {isSuccess ? (
+            <CheckCircle
+              size={13}
+              className="shrink-0 text-success"
+              aria-hidden="true"
+            />
+          ) : (
+            <Icon
+              size={13}
+              className={`shrink-0 ${isError ? 'text-danger' : 'text-accent'}`}
+              aria-hidden="true"
+            />
+          )}
           <div className="min-w-0">
             <p className="text-[12px] font-medium text-text-pri truncate">{activity.filename}</p>
             <p className="text-[11px] text-text-dim truncate">{activity.instanceName}</p>
@@ -54,11 +62,15 @@ export function TransferItem({ activity }: TransferItemProps) {
               <X size={12} />
             </button>
           )}
-          {isSuccess && (
-            <span className="text-[10px] text-success font-medium">Done</span>
-          )}
-          {isError && (
-            <span className="text-[10px] text-danger font-medium">Error</span>
+          {!isRunning && (
+            <button
+              type="button"
+              onClick={() => useActivityStore.getState().dismiss(activity.id)}
+              className="text-text-dim hover:text-text-pri transition-colors p-0.5 rounded ml-1"
+              aria-label="Dismiss activity"
+            >
+              <X size={12} />
+            </button>
           )}
         </div>
       </div>
@@ -87,16 +99,20 @@ export function TransferItem({ activity }: TransferItemProps) {
           {isRunning && activity.speedBps > 0 && (
             <span>{formatBytes(activity.speedBps)}/s</span>
           )}
-          {isRunning && activity.etaSec !== undefined && (
-            <span>ETA {activity.etaSec}s</span>
-          )}
-          {isError && activity.error && (
-            <span className="text-danger truncate max-w-[120px]" title={activity.error}>
-              {activity.error}
+          {isRunning && activity.etaSec !== undefined && activity.etaSec > 0 && (
+            <span>
+              ETA {activity.etaSec > 60 
+                ? `${Math.floor(activity.etaSec / 60)}m ${activity.etaSec % 60}s` 
+                : `${activity.etaSec}s`}
             </span>
           )}
         </div>
       </div>
+      {isError && activity.error && (
+        <div className="text-[10px] text-danger break-words leading-tight mt-1">
+          {activity.error}
+        </div>
+      )}
     </div>
   );
 }

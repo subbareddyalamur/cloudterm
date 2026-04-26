@@ -22,20 +22,24 @@ export function GhostText({
 
   if (!visible || !suggestion) return null;
 
+  // Xterm canvas is shifted by the padding we apply to the container div.
+  const PAD_LEFT = 6;
+  const PAD_TOP = 4;
+
   return (
     <div
       style={{
         position: 'absolute',
-        top: cursorY * cellHeight,
-        left: cursorX * cellWidth,
+        top: PAD_TOP + cursorY * cellHeight,
+        left: PAD_LEFT + cursorX * cellWidth,
         height: cellHeight,
         pointerEvents: 'none',
-        zIndex: 1,
+        zIndex: 10,
         fontFamily: `"${fontFamily}", ui-monospace, monospace`,
         fontSize: `${fontSize}px`,
         lineHeight: `${cellHeight}px`,
         color: 'var(--text-dim, #888)',
-        opacity: 0.25,
+        opacity: 0.55,
         whiteSpace: 'pre',
         userSelect: 'none',
         display: 'flex',

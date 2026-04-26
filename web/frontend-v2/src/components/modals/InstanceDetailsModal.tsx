@@ -51,6 +51,7 @@ interface InstanceDetails {
   launch_time: string;
   key_name?: string;
   instance_profile?: string;
+  tenancy?: string;
   ami_id?: string;
   architecture?: string;
   ebs_optimized?: boolean;
@@ -280,7 +281,8 @@ export function InstanceDetailsModal({ instanceId, open, onOpenChange }: Instanc
                   <KVRow label="Architecture" value={d.architecture} />
                   <KVRow label="Platform" value={d.os ?? d.platform} />
                   <KVRow label="AMI ID" value={d.ami_id} mono />
-                  <KVRow label="IAM Profile" value={d.instance_profile} />
+                  <KVRow label="IAM Profile" value={d.instance_profile} mono />
+                  <KVRow label="Key Name" value={d.key_name} mono />
                   <KVRow label="Launch Time" value={launchDaysAgo(d.launch_time)} />
                   <KVRow label="EBS Optimized" value={d.ebs_optimized} />
                   <KVRow label="State" value={d.state} />
@@ -299,6 +301,7 @@ export function InstanceDetailsModal({ instanceId, open, onOpenChange }: Instanc
                   <KVRow label="Private DNS" value={d.private_dns} mono />
                   <KVRow label="Public DNS" value={d.public_dns} mono />
                   <KVRow label="Availability Zone" value={d.availability_zone} />
+                  <KVRow label="Tenancy" value={d.tenancy} />
                 </div>
               </Section>
 

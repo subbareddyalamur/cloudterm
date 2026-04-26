@@ -38,6 +38,8 @@ services:
       - AI_MODEL=${AI_MODEL:-}
       - AI_BEDROCK_REGION=${AI_BEDROCK_REGION:-us-east-1}
       - AI_BEDROCK_PROFILE=${AI_BEDROCK_PROFILE:-dev}
+      - COST_DASHBOARD_HOST=cost-dashboard
+      - COST_DASHBOARD_PORT=80
       - GOMEMLIMIT=900MiB
       - GOGC=50
     healthcheck:

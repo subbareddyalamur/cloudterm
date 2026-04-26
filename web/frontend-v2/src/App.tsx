@@ -35,6 +35,7 @@ interface InstanceModalState {
   awsProfile?: string;
   awsRegion?: string;
   platform?: string;
+  initialPath?: string;
 }
 
 const CLOSED_MODAL: InstanceModalState = { open: false, instanceId: '', instanceName: '' };
@@ -581,6 +582,7 @@ export function App() {
           onOpenChange={(v) => setDownloadModal((p) => ({ ...p, open: v }))}
           instanceId={downloadModal.instanceId}
           instanceName={downloadModal.instanceName}
+          initialPath={downloadModal.initialPath}
         />
 
         <FileBrowserModal
@@ -593,18 +595,15 @@ export function App() {
           platform={fileBrowserModal.platform}
           onDownload={(path) => {
             setFileBrowserModal((p) => ({ ...p, open: false }));
-            setDownloadModal({ open: true, instanceId: fileBrowserModal.instanceId, instanceName: fileBrowserModal.instanceName });
-            window.dispatchEvent(new CustomEvent('ct:prefill-download-path', { detail: { path } }));
+            setDownloadModal({ open: true, instanceId: fileBrowserModal.instanceId, instanceName: fileBrowserModal.instanceName, initialPath: path });
           }}
           onUpload={(path) => {
             setFileBrowserModal((p) => ({ ...p, open: false }));
-            setUploadModal({ open: true, instanceId: fileBrowserModal.instanceId, instanceName: fileBrowserModal.instanceName });
-            window.dispatchEvent(new CustomEvent('ct:prefill-upload-path', { detail: { path } }));
+            setUploadModal({ open: true, instanceId: fileBrowserModal.instanceId, instanceName: fileBrowserModal.instanceName, initialPath: path });
           }}
           onExpressDownload={(path) => {
             setFileBrowserModal((p) => ({ ...p, open: false }));
-            setExpressDownloadModal({ open: true, instanceId: fileBrowserModal.instanceId, instanceName: fileBrowserModal.instanceName });
-            window.dispatchEvent(new CustomEvent('ct:prefill-download-path', { detail: { path } }));
+            setExpressDownloadModal({ open: true, instanceId: fileBrowserModal.instanceId, instanceName: fileBrowserModal.instanceName, initialPath: path });
           }}
         />
 
@@ -632,6 +631,7 @@ export function App() {
           onOpenChange={(v) => setExpressDownloadModal((p) => ({ ...p, open: v }))}
           instanceId={expressDownloadModal.instanceId}
           instanceName={expressDownloadModal.instanceName}
+          initialPath={expressDownloadModal.initialPath}
           express
           s3Bucket={s3Bucket}
         />

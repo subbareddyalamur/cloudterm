@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Dialog } from '@/components/primitives/Dialog';
 import { Button } from '@/components/primitives/Button';
 import { Input } from '@/components/primitives/Input';
@@ -7,20 +7,22 @@ import { useActivityStore } from '@/stores/activity';
 import { useToastStore } from '@/stores/toast';
 import { useInstancesStore } from '@/stores/instances';
 
-function isWindowsInstance(instanceId: string): boolean {
+interface InstanceMeta { platform: string; awsProfile: string; awsRegion: string; }
+
+function getInstanceMeta(instanceId: string): InstanceMeta {
   const accounts = useInstancesStore.getState().accounts;
   for (const a of accounts) {
     for (const r of a.regions) {
       for (const g of r.groups) {
         for (const i of g.instances) {
           if (i.instance_id === instanceId) {
-            return (i.platform ?? '').toLowerCase() === 'windows' || (i.os ?? '').toLowerCase().includes('windows');
+            return { platform: i.platform ?? 'linux', awsProfile: i.aws_profile ?? '', awsRegion: i.aws_region ?? '' };
           }
         }
       }
     }
   }
-  return false;
+  return { platform: 'linux', awsProfile: '', awsRegion: '' };
 }
 
 export interface DownloadModalProps {
@@ -33,18 +35,18 @@ export interface DownloadModalProps {
   s3Bucket?: string;
 }
 
-interface ProgressEvent {
+interface ProgressChunk {
   progress: number;
-  speed: number;
-  eta: number;
-  done: boolean;
+  speed?: number;
+  eta?: number;
+  total?: number;
+  done?: boolean;
+  status?: string;
   error?: string;
-}
-
-function formatSpeed(bps: number): string {
-  if (bps < 1024) return `${bps} B/s`;
-  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
-  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+  message?: string;
+  // final download chunk fields
+  data?: string;
+  filename?: string;
 }
 
 export function DownloadModal({
@@ -57,11 +59,18 @@ export function DownloadModal({
   s3Bucket = '',
 }: DownloadModalProps) {
   const [remotePath, setRemotePath] = useState(initialPath);
-  const [progress, setProgress] = useState(0);
-  const [speed, setSpeed] = useState(0);
-  const [eta, setEta] = useState(0);
   const [downloading, setDownloading] = useState(false);
-  const [done, setDone] = useState(false);
+
+  // Sync remotePath when modal opens with a new initialPath (e.g. from FileBrowser)
+  useEffect(() => {
+    if (open) {
+      if (initialPath) setRemotePath(initialPath);
+      setError('');
+    }
+  }, [open, initialPath]);
+
+  // Update placeholder hint based on instance platform
+  const isWin = getInstanceMeta(instanceId).platform.toLowerCase() === 'windows';
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const add = useActivityStore((s) => s.add);
@@ -71,11 +80,7 @@ export function DownloadModal({
 
   const reset = useCallback(() => {
     setRemotePath(initialPath);
-    setProgress(0);
-    setSpeed(0);
-    setEta(0);
     setDownloading(false);
-    setDone(false);
     setError('');
     abortRef.current = null;
   }, [initialPath]);
@@ -87,13 +92,14 @@ export function DownloadModal({
   }, [downloading, reset, onOpenChange]);
 
   const handleDownload = useCallback(async () => {
-    if (!remotePath.trim() || !instanceId) return;
+    const path = remotePath.trim();
+    if (!path || !instanceId) return;
 
     setError('');
     setDownloading(true);
-    setProgress(0);
 
-    const filename = remotePath.split(/[/\\]/).pop() ?? 'download';
+    const filename = path.split(/[/\\]/).pop() ?? 'download';
+    const meta = getInstanceMeta(instanceId);
 
     const activityId = add({
       kind: 'transfer',
@@ -109,9 +115,20 @@ export function DownloadModal({
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
+    // Capture meta before closing
+
+    // Close modal immediately so user can continue working
+    onOpenChange(false);
+
     try {
       const endpoint = express ? '/express-download' : '/download-file';
-      const body: Record<string, string> = { instance_id: instanceId, remote_path: remotePath };
+      const body: Record<string, string> = {
+        instance_id: instanceId,
+        remote_path: path,
+        platform: meta.platform,
+        aws_profile: meta.awsProfile,
+        aws_region: meta.awsRegion,
+      };
       if (express && s3Bucket) body['s3_bucket'] = s3Bucket;
 
       const res = await fetch(endpoint, {
@@ -126,48 +143,52 @@ export function DownloadModal({
         throw new Error(text);
       }
 
-      const contentType = res.headers.get('content-type') ?? '';
+      let fileData: string | null = null;
+      let resolvedFilename = filename;
 
-      if (contentType.includes('application/x-ndjson') || contentType.includes('text/plain')) {
-        for await (const chunk of streamNDJSON<ProgressEvent>(res)) {
-          if (ctrl.signal.aborted) break;
-          setProgress(chunk.progress);
-          setSpeed(chunk.speed);
-          setEta(chunk.eta);
-          update(activityId, { speedBps: chunk.speed, etaSec: chunk.eta });
-          if (chunk.error) throw new Error(chunk.error);
-          if (chunk.done) break;
+      for await (const chunk of streamNDJSON<ProgressChunk>(res)) {
+        if (ctrl.signal.aborted) break;
+
+        // Update activity progress
+        const total = chunk.total || 0;
+        const pct = chunk.progress > 1 ? chunk.progress / 100 : chunk.progress;
+        update(activityId, { 
+          speedBps: chunk.speed ?? 0, 
+          etaSec: chunk.eta ?? 0, 
+          bytesTotal: total,
+          bytesDone: total > 0 ? Math.floor(pct * total) : 0 
+        });
+
+        if (chunk.error) throw new Error(chunk.error);
+        if (chunk.status === 'error') throw new Error(chunk.message ?? 'Download failed');
+
+        // Final message carries the file data as base64
+        if (chunk.data) {
+          fileData = chunk.data;
+          if (chunk.filename) resolvedFilename = chunk.filename;
         }
 
-        const dlRes = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (!dlRes.ok) throw new Error('File fetch failed');
-        const blob = await dlRes.blob();
-        triggerBrowserDownload(blob, filename);
-      } else {
-        const blob = await res.blob();
-        triggerBrowserDownload(blob, filename);
+        if (chunk.done || chunk.status === 'complete') break;
       }
 
-      setProgress(1);
-      setDone(true);
+      if (!fileData) throw new Error('No file data received from server');
+
+      // Decode base64 natively to prevent browser crash on large files
+      const b64Res = await fetch(`data:application/octet-stream;base64,${fileData}`);
+      const blob = await b64Res.blob();
+      triggerBrowserDownload(blob, resolvedFilename);
+
       finish(activityId, 'success');
-      pushToast({ variant: 'success', title: 'Download complete', description: filename });
+      reset();
+      onOpenChange(false);
     } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        finish(activityId, 'canceled');
-        return;
-      }
+      if ((err as Error).name === 'AbortError') { finish(activityId, 'canceled'); setDownloading(false); return; }
       const msg = err instanceof Error ? err.message : 'Download failed';
       setError(msg);
-      finish(activityId, 'error', msg);
-    } finally {
       setDownloading(false);
+      finish(activityId, 'error', msg);
     }
-  }, [remotePath, instanceId, instanceName, express, s3Bucket, add, finish, update, pushToast]);
+  }, [remotePath, instanceId, instanceName, express, s3Bucket, add, finish, update, pushToast, reset, onOpenChange]);
 
   return (
     <Dialog
@@ -177,20 +198,16 @@ export function DownloadModal({
       size="sm"
       footer={
         <>
-          <Button variant="ghost" size="sm" onClick={handleClose}>
-            {done ? 'Close' : 'Cancel'}
+          <Button variant="ghost" size="sm" onClick={handleClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            loading={downloading}
+            disabled={!remotePath.trim() || downloading}
+            onClick={() => void handleDownload()}
+          >
+            Download
           </Button>
-          {!done && (
-            <Button
-              variant="primary"
-              size="sm"
-              loading={downloading}
-              disabled={!remotePath.trim() || downloading}
-              onClick={() => void handleDownload()}
-            >
-              Download
-            </Button>
-          )}
         </>
       }
     >
@@ -202,44 +219,31 @@ export function DownloadModal({
           </div>
         )}
 
-        <div>
-          <label htmlFor="dl-remote-path" className="text-[11px] font-medium text-text-mut block mb-1">
-            Remote file path
-          </label>
-          <Input
-            id="dl-remote-path"
-            placeholder="/home/ec2-user/file.txt"
-            value={remotePath}
-            onChange={(e) => setRemotePath(e.target.value)}
-            disabled={downloading}
-          />
-        </div>
-
-        {(downloading || done) && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-text-pri truncate max-w-[80%]">
-                {remotePath.split('/').pop()}
-              </span>
-              <span className="text-text-dim">{Math.round(progress * 100)}%</span>
-            </div>
-            <div className="h-1.5 bg-elev rounded-full overflow-hidden">
-              <div
-                className="h-full bg-accent transition-all duration-300 rounded-full"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-            {downloading && speed > 0 && (
-              <div className="flex gap-3 text-[11px] text-text-dim">
-                <span>{formatSpeed(speed)}</span>
-                {eta > 0 && <span>ETA: {eta}s</span>}
-              </div>
-            )}
-            {done && <p className="text-[12px] text-success font-medium">✓ Download complete</p>}
+        {initialPath ? (
+          <div>
+            <label className="text-[11px] font-medium text-text-mut block mb-1">File to download</label>
+            <p className="text-[13px] text-text-pri break-all font-mono">{initialPath}</p>
+          </div>
+        ) : (
+          <div>
+            <label htmlFor="dl-remote-path" className="text-[11px] font-medium text-text-mut block mb-1">
+              Remote file path
+            </label>
+            <Input
+              id="dl-remote-path"
+              placeholder={isWin ? 'C:\\Users\\Administrator\\file.txt' : '/home/ec2-user/file.txt'}
+              value={remotePath}
+              onChange={(e) => setRemotePath(e.target.value)}
+              disabled={downloading}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleDownload();
+              }}
+              autoFocus
+            />
           </div>
         )}
 
-        {error && <p className="text-[11px] text-danger">{error}</p>}
+        {error && <p className="text-[11px] text-danger leading-snug">{error}</p>}
       </div>
     </Dialog>
   );

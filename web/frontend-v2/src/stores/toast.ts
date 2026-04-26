@@ -42,7 +42,7 @@ export const useToastStore = create<ToastState>((set, get) => ({
       ...t,
       id,
       createdAt: Date.now(),
-      duration: t.duration !== undefined ? t.duration : 4000,
+      duration: t.duration !== undefined ? t.duration : null,
     };
     set((s) => ({ toasts: [toast, ...s.toasts] }));
     if (toast.duration && toast.duration > 0) {

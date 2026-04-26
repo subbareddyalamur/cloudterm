@@ -1,6 +1,8 @@
-.*          → ignore all hidden files/folders
-!.gitignore → keep .gitignore tracked
-!.git/      → keep git internals (important)
+# Ignore all hidden files/folders
+.*
+# But keep .gitignore and .git/
+!.gitignore
+!.git/
 
 # Compiled binaries (root-level only)
 /cloudterm
@@ -51,3 +53,4 @@ CLAUDE.md
 taskplane-tasks/
 node_modules/
 node_modules/
+skills-lock.json

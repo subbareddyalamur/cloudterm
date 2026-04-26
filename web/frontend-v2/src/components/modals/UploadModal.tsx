@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type DragEvent, type ChangeEvent } from 'react';
+import { useState, useCallback, useRef, useEffect, type DragEvent, type ChangeEvent } from 'react';
 import { Upload, X, FileIcon } from 'lucide-react';
 import { Dialog } from '@/components/primitives/Dialog';
 import { Button } from '@/components/primitives/Button';
@@ -7,42 +7,53 @@ import { streamNDJSON } from '@/hooks/useNDJSON';
 import { useActivityStore } from '@/stores/activity';
 import { useInstancesStore } from '@/stores/instances';
 
-function isWindowsInstance(instanceId: string): boolean {
+import { useToastStore } from '@/stores/toast';
+
+interface InstanceMeta { platform: string; os: string; awsProfile: string; awsRegion: string; }
+
+function getInstanceMeta(instanceId: string): InstanceMeta {
   const accounts = useInstancesStore.getState().accounts;
   for (const a of accounts) {
     for (const r of a.regions) {
       for (const g of r.groups) {
         for (const i of g.instances) {
           if (i.instance_id === instanceId) {
-            return (i.platform ?? '').toLowerCase() === 'windows' || (i.os ?? '').toLowerCase().includes('windows');
+            return { platform: i.platform ?? 'linux', os: i.os ?? '', awsProfile: i.aws_profile ?? '', awsRegion: i.aws_region ?? '' };
           }
         }
       }
     }
   }
-  return false;
+  return { platform: 'linux', os: '', awsProfile: '', awsRegion: '' };
+}
+
+function isWindows(meta: InstanceMeta): boolean {
+  return meta.platform.toLowerCase() === 'windows' || meta.os.toLowerCase().includes('windows');
 }
 
 function defaultRemotePath(instanceId: string): string {
-  return isWindowsInstance(instanceId) ? 'C:\\Temp\\' : '/tmp/';
+  return isWindows(getInstanceMeta(instanceId)) ? 'C:\\Temp\\' : '/tmp/';
 }
-import { useToastStore } from '@/stores/toast';
 
 export interface UploadModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   instanceId: string;
   instanceName?: string;
+  initialPath?: string;
   express?: boolean;
   s3Bucket?: string;
 }
 
 interface ProgressEvent {
   progress: number;
-  speed: number;
-  eta: number;
-  done: boolean;
+  speed?: number;
+  eta?: number;
+  total?: number;
+  done?: boolean;
+  status?: string;
   error?: string;
+  message?: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -51,30 +62,27 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatSpeed(bps: number): string {
-  if (bps < 1024) return `${bps} B/s`;
-  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
-  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
-}
-
 export function UploadModal({
   open,
   onOpenChange,
   instanceId,
   instanceName = '',
+  initialPath,
   express = false,
   s3Bucket = '',
 }: UploadModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [remotePath, setRemotePath] = useState(() => defaultRemotePath(instanceId));
+
+  // Re-sync default path when modal opens
+  useEffect(() => {
+    if (open) {
+      setRemotePath(initialPath || defaultRemotePath(instanceId));
+      setError('');
+    }
+  }, [open, instanceId, initialPath]);
   const [dragging, setDragging] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [speed, setSpeed] = useState(0);
-  const [eta, setEta] = useState(0);
-  const [uploading, setUploading] = useState(false);
-  const [done, setDone] = useState(false);
   const [error, setError] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const add = useActivityStore((s) => s.add);
   const finish = useActivityStore((s) => s.finish);
@@ -83,24 +91,15 @@ export function UploadModal({
 
   const reset = useCallback(() => {
     setFile(null);
-      setRemotePath(defaultRemotePath(instanceId));
+    setRemotePath(defaultRemotePath(instanceId));
     setDragging(false);
-    setProgress(0);
-    setSpeed(0);
-    setEta(0);
-    setUploading(false);
-    setDone(false);
     setError('');
-    abortRef.current = null;
-  }, []);
+  }, [instanceId]);
 
   const handleClose = useCallback(() => {
-    if (uploading) {
-      abortRef.current?.abort();
-    }
     reset();
     onOpenChange(false);
-  }, [uploading, reset, onOpenChange]);
+  }, [reset, onOpenChange]);
 
   const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -123,14 +122,7 @@ export function UploadModal({
 
   const handleUpload = useCallback(async () => {
     if (!file || !instanceId) return;
-
     setError('');
-    setUploading(true);
-    setProgress(0);
-
-    const effectiveRemotePath = (remotePath.endsWith('/') || remotePath.endsWith('\\'))
-      ? `${remotePath}${file.name}`
-      : remotePath;
 
     const activityId = add({
       kind: 'transfer',
@@ -143,14 +135,22 @@ export function UploadModal({
       speedBps: 0,
     });
 
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    // Capture instance meta before closing modal
+    const meta = getInstanceMeta(instanceId);
 
+    // Close modal immediately — progress tracked in Activity panel
+    reset();
+    onOpenChange(false);
+
+    const ctrl = new AbortController();
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('instance_id', instanceId);
-      formData.append('remote_path', effectiveRemotePath);
+      formData.append('remote_path', remotePath);
+      formData.append('platform', meta.platform);
+      formData.append('aws_profile', meta.awsProfile);
+      formData.append('aws_region', meta.awsRegion);
       if (express && s3Bucket) {
         formData.append('s3_bucket', s3Bucket);
       }
@@ -163,41 +163,26 @@ export function UploadModal({
         throw new Error(text);
       }
 
-      onOpenChange(false);
-      pushToast({ variant: 'info', title: 'Uploading…', description: `${file.name} → ${instanceName || instanceId}` });
-
       for await (const chunk of streamNDJSON<ProgressEvent>(res)) {
-        if (ctrl.signal.aborted) break;
         const pct = chunk.progress > 1 ? chunk.progress / 100 : chunk.progress;
-        setProgress(pct);
-        setSpeed(chunk.speed);
-        setEta(chunk.eta);
         update(activityId, {
           bytesDone: Math.floor(pct * file.size),
-          speedBps: chunk.speed,
-          etaSec: chunk.eta,
+          bytesTotal: chunk.total || file.size,
+          speedBps: chunk.speed ?? 0,
+          etaSec: chunk.eta ?? 0,
         });
-        if (chunk.error) {
-          throw new Error(chunk.error);
-        }
-        if (chunk.done) break;
+        if (chunk.error) throw new Error(chunk.error);
+        if (chunk.status === 'error') throw new Error(chunk.message ?? 'Upload failed');
+        if (chunk.done || chunk.status === 'complete') break;
       }
 
-      setDone(true);
       finish(activityId, 'success');
-      pushToast({ variant: 'success', title: 'Upload complete', description: file.name });
     } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        finish(activityId, 'canceled');
-        return;
-      }
+      if ((err as Error).name === 'AbortError') { finish(activityId, 'canceled'); return; }
       const msg = err instanceof Error ? err.message : 'Upload failed';
-      setError(msg);
       finish(activityId, 'error', msg);
-    } finally {
-      setUploading(false);
     }
-  }, [file, instanceId, instanceName, remotePath, express, s3Bucket, add, finish, update, pushToast]);
+  }, [file, instanceId, instanceName, remotePath, express, s3Bucket, add, finish, update, pushToast, reset, onOpenChange]);
 
   return (
     <Dialog
@@ -207,20 +192,15 @@ export function UploadModal({
       size="md"
       footer={
         <>
-          <Button variant="ghost" size="sm" onClick={handleClose} disabled={uploading && !done}>
-            {done ? 'Close' : 'Cancel'}
+          <Button variant="ghost" size="sm" onClick={handleClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!file}
+            onClick={() => void handleUpload()}
+          >
+            Upload
           </Button>
-          {!done && (
-            <Button
-              variant="primary"
-              size="sm"
-              loading={uploading}
-              disabled={!file || uploading}
-              onClick={() => void handleUpload()}
-            >
-              Upload
-            </Button>
-          )}
         </>
       }
     >
@@ -260,7 +240,7 @@ export function UploadModal({
           </div>
         )}
 
-        {file && !uploading && !done && (
+        {file && (
           <div className="flex items-center gap-2 p-2.5 bg-elev rounded border border-border">
             <FileIcon size={16} className="text-accent shrink-0" />
             <div className="flex-1 min-w-0">
@@ -278,47 +258,20 @@ export function UploadModal({
           </div>
         )}
 
-        {!done && (
-          <div>
-            <label htmlFor="upload-remote-path" className="text-[11px] font-medium text-text-mut block mb-1">
-              Remote path
-            </label>
-            <Input
-              id="upload-remote-path"
-              placeholder={isWindowsInstance(instanceId) ? 'C:\\Temp\\' : '/tmp/'}
-              value={remotePath}
-              onChange={(e) => setRemotePath(e.target.value)}
-              disabled={uploading}
-            />
-            <p className="text-[11px] text-text-dim mt-1">
-              Directory path (file will be placed here) or full path including filename
-            </p>
-          </div>
-        )}
-
-        {(uploading || done) && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-text-pri">{file?.name}</span>
-              <span className="text-text-dim">{Math.round(progress * 100)}%</span>
-            </div>
-            <div className="h-1.5 bg-elev rounded-full overflow-hidden">
-              <div
-                className="h-full bg-accent transition-all duration-300 rounded-full"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-            {uploading && speed > 0 && (
-              <div className="flex gap-3 text-[11px] text-text-dim">
-                <span>{formatSpeed(speed)}</span>
-                {eta > 0 && <span>ETA: {eta}s</span>}
-              </div>
-            )}
-            {done && (
-              <p className="text-[12px] text-success font-medium">✓ Upload complete</p>
-            )}
-          </div>
-        )}
+        <div>
+          <label htmlFor="upload-remote-path" className="text-[11px] font-medium text-text-mut block mb-1">
+            Remote path
+          </label>
+          <Input
+            id="upload-remote-path"
+            placeholder={isWindows(getInstanceMeta(instanceId)) ? 'C:\\Temp\\' : '/tmp/'}
+            value={remotePath}
+            onChange={(e) => setRemotePath(e.target.value)}
+          />
+          <p className="text-[11px] text-text-dim mt-1">
+            Directory path (file will be placed here) or full path including filename
+          </p>
+        </div>
 
         {error && <p className="text-[11px] text-danger">{error}</p>}
       </div>

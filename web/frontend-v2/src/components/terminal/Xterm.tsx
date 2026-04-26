@@ -379,7 +379,16 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
   );
 
   return (
-    <div className={`relative h-full w-full overflow-hidden ${className}`}>
+    <div
+      className={`relative h-full w-full overflow-hidden ${className}`}
+      onKeyDown={(e) => {
+        // Prevent Tab from moving browser focus out of the terminal
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          termRef.current?.focus();
+        }
+      }}
+    >
       <div ref={containerRef} className="h-full w-full" style={{ paddingLeft: 6, paddingTop: 4 }} />
       <GhostText
         suggestion={ghostState?.suggestion ?? null}
