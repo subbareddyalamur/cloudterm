@@ -1513,6 +1513,8 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		SessionID    string `json:"session_id"`
 		AWSProfile   string `json:"aws_profile"`
 		AWSRegion    string `json:"aws_region"`
+		Cols         uint16 `json:"cols"`
+		Rows         uint16 `json:"rows"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		h.logger.Printf("wsStartSession unmarshal: %v", err)
@@ -1573,7 +1575,14 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		}
 	}
 
-	if err := h.sessions.StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion, creds, onOutput); err != nil {
+	cols, rows := msg.Cols, msg.Rows
+	if cols == 0 {
+		cols = 220
+	}
+	if rows == 0 {
+		rows = 50
+	}
+	if err := h.sessions.StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion, creds, cols, rows, onOutput); err != nil {
 		h.logger.Printf("start session %s: %v", sessionID, err)
 		writeMu.Lock()
 		conn.WriteJSON(types.WSMessage{

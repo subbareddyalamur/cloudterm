@@ -81,7 +81,7 @@ type AWSCreds struct {
 // begins streaming its output through onOutput.
 // If creds is non-nil, the credentials are passed via environment variables
 // instead of --profile (used for manually-added AWS accounts).
-func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion string, creds *AWSCreds, onOutput func([]byte)) error {
+func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion string, creds *AWSCreds, cols, rows uint16, onOutput func([]byte)) error {
 	// Atomic check-and-reserve under a full write lock to prevent a TOCTOU
 	// race where two concurrent start_session messages both pass the check.
 	m.mu.Lock()
@@ -144,7 +144,7 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "COLORTERM=truecolor")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
-	ptmx, err := pty.Start(cmd)
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
 		// Release the reserved slot so the session ID can be retried.
 		m.mu.Lock()

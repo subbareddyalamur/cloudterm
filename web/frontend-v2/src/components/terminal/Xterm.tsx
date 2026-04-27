@@ -88,6 +88,7 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const containerEl = containerRef.current;
     const mySessionId = sessionId.current;
 
     const term = new Terminal({
@@ -119,8 +120,6 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
     serializeRef.current = serialize;
 
     term.open(containerRef.current);
-
-    fit.fit();
 
     termRef.current = term;
     fitRef.current = fit;
@@ -171,6 +170,7 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
       }
     });
 
+    fit.fit();
     ws.send({
       type: 'start_session',
       payload: {
@@ -179,8 +179,38 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
         session_id: currentSessionId,
         aws_profile: awsProfile ?? '',
         aws_region: awsRegion ?? '',
+        cols: term.cols,
+        rows: term.rows,
       },
     });
+
+    const sendInput = (input: string) => {
+      if (!sessionStartedRef.current) return;
+      if (syncRef.enabled) {
+        const sessions = useSessionsStore.getState().sessions.filter((s) => s.type === 'ssh');
+        for (const s of sessions) {
+          ws.send({ type: 'terminal_input', payload: { session_id: s.id, input } });
+        }
+      } else {
+        ws.send({ type: 'terminal_input', payload: { session_id: sessionId.current, input } });
+      }
+    };
+
+    const sendPastedText = (text: string) => {
+      if (!text) return;
+      currentLineBuffer.current = '';
+      setGhost(null);
+      // Cancel any pending suggest request triggered by the keystroke before paste.
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+      }
+      // Delegate to xterm's paste() so bracketed-paste markers (\x1b[200~...\x1b[201~)
+      // are only added when the remote shell has actually enabled the mode via \x1b[?2004h.
+      // Unconditionally wrapping corrupts readline's cursor state on shells that have
+      // not enabled bracketed paste mode, causing the cursor to jump mid-line.
+      term.paste(text);
+    };
 
     const syncRef = { enabled: false };
     const syncHandler = (e: Event) => {
@@ -288,19 +318,11 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
       }
 
       // Forward input to backend
-      if (!sessionStartedRef.current) return;
-      if (syncRef.enabled) {
-        const sessions = useSessionsStore.getState().sessions.filter((s) => s.type === 'ssh');
-        for (const s of sessions) {
-          ws.send({ type: 'terminal_input', payload: { session_id: s.id, input: d } });
-        }
-      } else {
-        ws.send({ type: 'terminal_input', payload: { session_id: sessionId.current, input: d } });
-      }
+      sendInput(d);
     });
 
     const resDisp = term.onResize(({ cols, rows }) => {
-      if (!sessionStartedRef.current || cols < 1 || rows < 1) return;
+      if (cols < 1 || rows < 1) return;
       ws.send({
         type: 'terminal_resize',
         payload: { session_id: sessionId.current, cols, rows },
@@ -320,6 +342,17 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
     };
     window.addEventListener('ct:terminal-type', typeHandler);
 
+    // Intercept clipboard paste to avoid chunked/garbled long pastes.
+    // xterm uses a hidden textarea; paste events bubble from it.
+    const pasteHandler = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void sendPastedText(text);
+    };
+    containerEl.addEventListener('paste', pasteHandler, true);
+
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       const wasStarted = sessionStartedRef.current;
@@ -334,6 +367,7 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
         ro.disconnect();
         window.removeEventListener('ct:terminal-type', typeHandler);
         window.removeEventListener('ct:sync-typing', syncHandler);
+        containerEl.removeEventListener('paste', pasteHandler, true);
         term.dispose();
       } catch {
         void 0;
