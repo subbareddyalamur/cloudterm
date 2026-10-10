@@ -16,9 +16,11 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: APIError };
 
 async function request<T>(path: string, init?: RequestInit): Promise<Result<T>> {
   try {
+    const { headers: initHeaders, ...rest } = init ?? {};
     const res = await fetch(`${BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
-      ...init,
+      ...rest,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...(initHeaders as Record<string, string> | undefined) },
     });
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);

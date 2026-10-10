@@ -2,10 +2,47 @@ import type { EC2Instance, AccountNode } from '@/lib/types';
 
 export type { EC2Instance as Instance };
 
+function instanceHaystack(inst: EC2Instance): string {
+  const env = inst.tags?.Environment ?? inst.tags?.environment ?? inst.tag2_value ?? '';
+  return [
+    inst.name,
+    inst.instance_id,
+    inst.private_ip,
+    inst.public_ip,
+    inst.account_alias,
+    inst.account_id,
+    inst.aws_region,
+    env,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+/** Which searchable field contained the query, for the fleet filter hint. */
+export function matchField(inst: EC2Instance, query: string): string | null {
+  const token = query.trim().toLowerCase().split(/\s+/).filter(Boolean)[0];
+  if (!token) return null;
+  const fields: Array<[string, string | undefined]> = [
+    ['name', inst.name],
+    ['instance id', inst.instance_id],
+    ['private ip', inst.private_ip],
+    ['public ip', inst.public_ip],
+    ['account', inst.account_alias],
+    ['account id', inst.account_id],
+    ['region', inst.aws_region],
+    ['environment', inst.tags?.Environment ?? inst.tags?.environment ?? inst.tag2_value],
+  ];
+  for (const [label, value] of fields) {
+    if (value && value.toLowerCase().includes(token)) return label;
+  }
+  return null;
+}
+
 export function matchInstance(inst: EC2Instance, query: string): boolean {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
-  const hay = `${inst.name} ${inst.instance_id}`.toLowerCase();
+  const hay = instanceHaystack(inst);
   return tokens.every((t) => hay.includes(t));
 }
 

@@ -4,8 +4,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        sans: ['var(--font-sans, Inter)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono, "JetBrains Mono")', 'ui-monospace', 'monospace'],
       },
       transitionDuration: {
         '180': '180ms',
@@ -13,6 +13,8 @@ export default {
       colors: {
         bg: 'var(--bg)',
         surface: 'var(--surface)',
+        side: 'var(--side, var(--surface))',
+        'warn-ink': 'var(--warn-ink, rgba(245, 158, 11, 0.12))',
         elev: 'var(--elev)',
         border: 'var(--border)',
         'border-2': 'var(--border-2)',

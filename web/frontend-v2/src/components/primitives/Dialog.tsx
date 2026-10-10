@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useCallback } from 'react';
+import { type ReactNode, createContext, useContext, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
@@ -20,7 +20,31 @@ const sizeMap = {
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-export function Dialog({ open, onOpenChange, title, size = 'md', children, footer }: DialogProps) {
+/**
+ * When true, a Dialog renders as a full page in the work column instead of
+ * an overlay. Desk destinations (Audit, Recordings, Snippets) reuse their
+ * dialogs this way.
+ */
+export const DialogPageContext = createContext(false);
+
+export function Dialog(props: DialogProps) {
+  const asPage = useContext(DialogPageContext);
+  return asPage ? <DialogPage {...props} /> : <DialogOverlay {...props} />;
+}
+
+function DialogPage({ title, children, footer }: DialogProps) {
+  return (
+    <section className="h-full flex flex-col bg-bg" aria-labelledby="page-title">
+      <header className="flex items-center justify-between px-6 pt-5 pb-3 shrink-0">
+        <h1 className="text-[16px] font-semibold text-text-pri" id="page-title">{title}</h1>
+        {footer && <div className="flex items-center gap-2">{footer}</div>}
+      </header>
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">{children}</div>
+    </section>
+  );
+}
+
+function DialogOverlay({ open, onOpenChange, title, size = 'md', children, footer }: DialogProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<Element | null>(null);
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);

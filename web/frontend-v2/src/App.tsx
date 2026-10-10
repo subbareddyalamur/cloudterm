@@ -1,13 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
+import { useEffect, useCallback, useState, useMemo } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useThemeStore } from '@/stores/theme';
 import { usePaletteStore } from '@/stores/palette';
 import { shortcuts } from '@/lib/shortcuts';
 import { CmdKPalette } from '@/components/palette/CmdKPalette';
 import { FleetDashboard } from '@/components/dashboard/FleetDashboard';
-import { InstanceDetailsModal } from '@/components/modals/InstanceDetailsModal';
-import { RecordingsModal } from '@/components/recordings/RecordingsModal';
+import { DeskPage } from '@/components/layout/DeskPages';
+import { useLayoutStore } from '@/stores/layout';
 import { PortForwardModal } from '@/components/modals/PortForwardModal';
 import { UploadModal } from '@/components/modals/UploadModal';
 import { DownloadModal } from '@/components/modals/DownloadModal';
@@ -44,9 +44,7 @@ export function App() {
   const theme = useThemeStore((s) => s.theme);
   const togglePalette = usePaletteStore((s) => s.toggle);
 
-  const [detailsInstanceId, setDetailsInstanceId] = useState<string | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [recordingsOpen, setRecordingsOpen] = useState(false);
+  const view = useLayoutStore((s) => s.view);
   // settingsOpen lives in TopBar but the keyboard shortcut handler needs it here
   const [settingsOpen, setSettingsOpen] = useState(false);
   void settingsOpen; // consumed by handleSettings callback
@@ -198,8 +196,7 @@ export function App() {
   useEffect(() => {
     const handleDetails = (e: Event) => {
       const { instanceId } = (e as CustomEvent<{ instanceId: string }>).detail;
-      setDetailsInstanceId(instanceId);
-      setDetailsOpen(true);
+      useLayoutStore.getState().showDetails(instanceId);
     };
     window.addEventListener('ct:show-details', handleDetails);
     return () => window.removeEventListener('ct:show-details', handleDetails);
@@ -376,7 +373,7 @@ export function App() {
 
   const handleRecordings = useCallback((e: KeyboardEvent) => {
     e.preventDefault();
-    setRecordingsOpen(true);
+    useLayoutStore.getState().setView('recordings');
   }, []);
 
   const handleCloseTab = useCallback((e: KeyboardEvent) => {
@@ -474,7 +471,7 @@ export function App() {
     return (
       <>
         {sessions.map((session) => {
-          const isActive = session.id === activeId;
+          const isActive = view === 'session' && session.id === activeId;
 
           if (session.type === 'cost') {
             return (
@@ -503,7 +500,7 @@ export function App() {
           const inst = findInstance(session.instanceId);
           if (!inst) {
             return (
-              <div key={session.id} style={{ position: 'absolute', inset: 0, display: session.id === activeId ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center' }}>
+              <div key={session.id} style={{ position: 'absolute', inset: 0, display: isActive ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center' }}>
                 <span className="text-text-dim text-sm">Loading instance data…</span>
               </div>
             );
@@ -528,8 +525,10 @@ export function App() {
             </div>
           );
         })}
-        {!hasAnySessions && <div style={{ position: 'absolute', inset: 0, overflow: 'auto' }}><FleetDashboard /></div>}
-        {hasAnySessions && !activeId && <div style={{ position: 'absolute', inset: 0, overflow: 'auto' }}><FleetDashboard /></div>}
+        {view === 'session' && (!hasAnySessions || !activeId) && (
+          <div style={{ position: 'absolute', inset: 0, overflow: 'auto' }}><FleetDashboard /></div>
+        )}
+        {view !== 'session' && <DeskPage view={view} />}
       </>
     );
   })();
@@ -542,17 +541,6 @@ export function App() {
         </AppShell>
 
         <CmdKPalette />
-
-        <InstanceDetailsModal
-          instanceId={detailsInstanceId}
-          open={detailsOpen}
-          onOpenChange={setDetailsOpen}
-        />
-
-        <RecordingsModal
-          open={recordingsOpen}
-          onOpenChange={setRecordingsOpen}
-        />
 
         {rdpPendingInstance && (
           <RDPCredentialsModal

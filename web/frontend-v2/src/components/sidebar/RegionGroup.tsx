@@ -2,30 +2,12 @@ import { memo, type KeyboardEvent } from 'react';
 import { ChevronRight, ChevronDown } from 'lucide-react';
 import { useInstancesStore } from '@/stores/instances';
 import type { RegionNode, TagGroup } from '@/lib/types';
-import { InstanceRow } from './InstanceRow';
-
-const TAG_COLORS: Record<string, string> = {
-  prod: 'bg-danger/20 text-danger',
-  production: 'bg-danger/20 text-danger',
-  prd: 'bg-danger/20 text-danger',
-  staging: 'bg-warn/20 text-warn',
-  stage: 'bg-warn/20 text-warn',
-  stg: 'bg-warn/20 text-warn',
-  uat: 'bg-warn/20 text-warn',
-  dev: 'bg-success/20 text-success',
-  development: 'bg-success/20 text-success',
-  test: 'bg-info/20 text-info',
-  testing: 'bg-info/20 text-info',
-  qa: 'bg-info/20 text-info',
-  sandbox: 'bg-accent/20 text-accent',
-};
+import { VirtualInstanceList } from './VirtualInstanceList';
+import { envTone } from '@/lib/env';
 
 function getTagBadgeClass(label: string): string {
-  const lower = label.toLowerCase();
-  for (const [key, cls] of Object.entries(TAG_COLORS)) {
-    if (lower.includes(key)) return cls;
-  }
-  return 'bg-accent/15 text-accent';
+  const env = label.split('/').pop()?.trim() ?? label;
+  return envTone(env);
 }
 
 interface TagSectionProps {
@@ -45,9 +27,7 @@ const TagSection = memo(function TagSection({ accountId, regionKey, group }: Tag
   if (!label) {
     return (
       <>
-        {group.instances.map((inst) => (
-          <InstanceRow key={inst.instance_id} instance={inst} />
-        ))}
+        <VirtualInstanceList instances={group.instances} />
       </>
     );
   }
@@ -79,15 +59,12 @@ const TagSection = memo(function TagSection({ accountId, regionKey, group }: Tag
           <ChevronRight size={9} className="text-text-dim shrink-0 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
         )}
         <span
-          className={`text-[9px] font-bold px-1.5 py-[1px] rounded uppercase tracking-wider leading-normal ${getTagBadgeClass(label)}`}
+          className={`text-[10px] uppercase tracking-[0.05em] leading-normal ${getTagBadgeClass(label)}`}
         >
           {label}
         </span>
       </button>
-      {isOpen &&
-        group.instances.map((inst) => (
-          <InstanceRow key={inst.instance_id} instance={inst} />
-        ))}
+      {isOpen && <VirtualInstanceList instances={group.instances} />}
     </div>
   );
 });

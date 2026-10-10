@@ -170,7 +170,7 @@ export function FileBrowserModal({
       pushToast({ variant: 'danger', title: 'Browse failed', description: msg });
     }
     setLoading(false);
-  }, []); // stable — reads props via ref
+  }, [pushToast]); // stable — reads props via ref; pushToast is a fixed store function
 
   // Reset and browse whenever the modal opens or switches to a different instance
   useEffect(() => {

@@ -13,7 +13,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
-import { cloudtermThemeForXterm } from '@/lib/xterm-themes';
+import { terminalThemeById } from '@/lib/xterm-themes';
 import { useThemeStore } from '@/stores/theme';
 import { useSettingsStore } from '@/stores/settings';
 import { useSessionsStore } from '@/stores/sessions';
@@ -44,7 +44,9 @@ export interface XtermProps {
   sessionId?: string;
   awsProfile?: string;
   awsRegion?: string;
+  environment?: string;
   onReady?: () => void;
+  onSearchResults?: (resultIndex: number, resultCount: number) => void;
   className?: string;
 }
 
@@ -56,8 +58,19 @@ type GhostData = {
   cellH: number;
 };
 
+const SEARCH_OPTS = {
+  decorations: {
+    matchBackground: '#f59e0b',
+    matchBorder: '#f59e0b',
+    matchOverviewRuler: '#f59e0b',
+    activeMatchBackground: '#fb923c',
+    activeMatchBorder: '#fb923c',
+    activeMatchColorOverviewRuler: '#fb923c',
+  },
+};
+
 export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
-  { instanceId, instanceName, sessionId: sessionIdProp, awsProfile, awsRegion, onReady, className = '' },
+  { instanceId, instanceName, sessionId: sessionIdProp, awsProfile, awsRegion, environment, onReady, onSearchResults, className = '' },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -65,10 +78,12 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const serializeRef = useRef<SerializeAddon | null>(null);
+  const lastSearchQuery = useRef('');
   const sessionId = useRef(sessionIdProp ?? nanoid());
   const theme = useThemeStore((s) => s.theme);
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
+  const terminalTheme = useSettingsStore((s) => s.terminalTheme);
 
   // Line buffer tracking (what the user is currently typing on the prompt)
   const currentLineBuffer = useRef('');
@@ -95,9 +110,9 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
       fontFamily: `"${fontFamily}", ui-monospace, monospace`,
       fontSize: useSettingsStore.getState().fontSize,
       lineHeight: 1.25,
-      cursorBlink: true,
-      cursorStyle: 'block',
-      theme: cloudtermThemeForXterm(),
+      cursorBlink: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      cursorStyle: 'bar',
+      theme: terminalThemeById(useSettingsStore.getState().terminalTheme),
       allowProposedApi: true,
       scrollback: 10000,
       tabStopWidth: 4,
@@ -114,6 +129,9 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
     const search = new SearchAddon();
     term.loadAddon(search);
     searchRef.current = search;
+    search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      onSearchResults?.(resultIndex, resultCount);
+    });
 
     const serialize = new SerializeAddon();
     term.loadAddon(serialize);
@@ -133,8 +151,15 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
 
       if (msg.type === 'terminal_output' && term) {
         term.write((payload as { output: string }).output);
+        if (!sessionStartedRef.current) useSessionsStore.getState().updateStatus(mySessionId, 'connected');
         sessionStartedRef.current = true;
         onReady?.();
+      }
+
+      if (msg.type === 'session_error' && term && payload && payload.session_id === mySessionId) {
+        const reason = String((payload as { error?: string }).error ?? 'The session could not start.');
+        term.write(`\r\n\x1b[31mCloudTerm: ${reason}\x1b[0m\r\n`);
+        useSessionsStore.getState().updateStatus(mySessionId, 'error');
       }
 
       if (msg.type === 'suggest_response' && term) {
@@ -179,6 +204,7 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
         session_id: currentSessionId,
         aws_profile: awsProfile ?? '',
         aws_region: awsRegion ?? '',
+        environment: environment ?? '',
         cols: term.cols,
         rows: term.rows,
       },
@@ -382,9 +408,9 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
 
   useEffect(() => {
     if (termRef.current) {
-      termRef.current.options.theme = cloudtermThemeForXterm();
+      termRef.current.options.theme = terminalThemeById(terminalTheme);
     }
-  }, [theme]);
+  }, [theme, terminalTheme]);
 
   useEffect(() => {
     if (termRef.current) {
@@ -402,10 +428,10 @@ export const Xterm = forwardRef<XtermRef, XtermProps>(function Xterm(
       paste: (d) => termRef.current?.paste(d),
       copySelection: () => termRef.current?.getSelection() ?? '',
       getSessionId: () => sessionId.current,
-      search: (q: string) => searchRef.current?.findNext(q) ?? false,
-      searchNext: () => searchRef.current?.findNext('') ?? false,
-      searchPrevious: () => searchRef.current?.findPrevious('') ?? false,
-      clearSearch: () => searchRef.current?.clearDecorations(),
+      search: (q: string) => { lastSearchQuery.current = q; return searchRef.current?.findNext(q, SEARCH_OPTS) ?? false; },
+      searchNext: () => searchRef.current?.findNext(lastSearchQuery.current, SEARCH_OPTS) ?? false,
+      searchPrevious: () => searchRef.current?.findPrevious(lastSearchQuery.current, SEARCH_OPTS) ?? false,
+      clearSearch: () => { lastSearchQuery.current = ''; searchRef.current?.clearDecorations(); },
       serialize: () => serializeRef.current?.serialize() ?? '',
       dispose: () => termRef.current?.dispose(),
     }),

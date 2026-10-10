@@ -109,7 +109,7 @@ export function GuacPlayer({ filename }: GuacPlayerProps) {
       guacDisplayRef.current = null;
       while (container.firstChild) container.removeChild(container.firstChild);
     };
-  }, [filename, fitDisplay]);  // seeking intentionally omitted — stale ref is fine here
+  }, [filename, fitDisplay]); // eslint-disable-line react-hooks/exhaustive-deps -- seeking intentionally omitted: stale flag is fine here
 
   // Refit on wrapper resize (maximize/restore of parent modal)
   useEffect(() => {

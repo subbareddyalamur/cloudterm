@@ -15,6 +15,19 @@ export const ENV_STYLES: Record<Env, EnvStyle> = {
   other:   { color: 'var(--border)',   width: 1 },
 };
 
+/**
+ * Text color for an environment label on the desk. Production is amber, the
+ * same color as the session frame; red stays reserved for errors and End.
+ */
+export function envTone(env: string): string {
+  const e = env.toLowerCase();
+  if (!e) return 'text-text-dim';
+  if (e.includes('prod') || e === 'prd') return 'text-warn';
+  if (e.includes('val') || e.includes('uat') || e.includes('stag') || e.includes('test') || e.includes('qa')) return 'text-info';
+  if (e.includes('dev') || e.includes('sandbox')) return 'text-success';
+  return 'text-text-mut';
+}
+
 export function detectEnv(tags: Record<string, string>): Env {
   const t = (
     tags['Environment'] ??

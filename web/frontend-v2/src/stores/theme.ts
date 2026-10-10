@@ -13,7 +13,7 @@ export const useThemeStore = create<ThemeState>()(
   subscribeWithSelector(
     persist(
       (set, get) => ({
-        theme: 'warp' as ThemeSlug,
+        theme: 'night' as ThemeSlug,
         systemIsDark:
           typeof window !== 'undefined'
             ? window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -31,6 +31,11 @@ export const useThemeStore = create<ThemeState>()(
       }),
       {
         name: 'ct-theme',
+        version: 2,
+        migrate: (persisted) => {
+          const prev = (persisted as { theme?: string } | undefined)?.theme;
+          return { theme: prev && prev !== 'warp' && isValidTheme(prev) ? prev : 'night' } as ThemeState;
+        },
         storage: createJSONStorage(() => localStorage),
         partialize: (s) => ({ theme: s.theme }),
         onRehydrateStorage: () => (state) => {

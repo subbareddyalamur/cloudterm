@@ -10,6 +10,7 @@ export default [
       'node_modules/**',
       'coverage/**',
       'playwright-report/**',
+      'public/**',
       '*.config.js',
       '*.config.ts',
       '*.config.mjs',

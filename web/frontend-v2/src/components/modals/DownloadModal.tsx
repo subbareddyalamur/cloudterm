@@ -4,7 +4,6 @@ import { Button } from '@/components/primitives/Button';
 import { Input } from '@/components/primitives/Input';
 import { streamNDJSON } from '@/hooks/useNDJSON';
 import { useActivityStore } from '@/stores/activity';
-import { useToastStore } from '@/stores/toast';
 import { useInstancesStore } from '@/stores/instances';
 
 interface InstanceMeta { platform: string; awsProfile: string; awsRegion: string; }
@@ -76,7 +75,6 @@ export function DownloadModal({
   const add = useActivityStore((s) => s.add);
   const finish = useActivityStore((s) => s.finish);
   const update = useActivityStore((s) => s.update);
-  const pushToast = useToastStore((s) => s.push);
 
   const reset = useCallback(() => {
     setRemotePath(initialPath);
@@ -188,7 +186,7 @@ export function DownloadModal({
       setDownloading(false);
       finish(activityId, 'error', msg);
     }
-  }, [remotePath, instanceId, instanceName, express, s3Bucket, add, finish, update, pushToast, reset, onOpenChange]);
+  }, [remotePath, instanceId, instanceName, express, s3Bucket, add, finish, update, reset, onOpenChange]);
 
   return (
     <Dialog

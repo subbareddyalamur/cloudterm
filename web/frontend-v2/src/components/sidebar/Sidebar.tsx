@@ -12,19 +12,35 @@ function EmptyState({ filter, loading }: { filter: string; loading: boolean }) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-8 text-text-dim text-[12px]">
         <Loader size={16} className="animate-spin" />
-        <span>Scanning fleet…</span>
+        <span>Scanning your AWS accounts…</span>
+      </div>
+    );
+  }
+  if (!filter) {
+    return (
+      <div className="p-4 text-center text-text-dim text-[12px] space-y-2">
+        <p>Add an account to see this fleet.</p>
+        <button
+          type="button"
+          className="text-text-pri underline"
+          onClick={() => window.dispatchEvent(new CustomEvent('ct:open-settings', { detail: { tab: 'accounts' } }))}
+        >
+          Add an account
+        </button>
       </div>
     );
   }
   return (
     <div className="p-4 text-center text-text-dim text-[12px]">
-      {filter ? 'No matching instances' : 'No instances found'}
+      No matching instances
     </div>
   );
 }
 
 export function Sidebar() {
-  const loading = useInstancesStore((s) => s.loading);
+  const fetching = useInstancesStore((s) => s.loading);
+  const scanning = useInstancesStore((s) => s.scanning);
+  const loading = fetching || scanning;
   const filter = useInstancesStore((s) => s.filter);
   const accounts = useInstancesStore((s) => s.accounts);
   const setFilter = useInstancesStore((s) => s.setFilter);
@@ -33,9 +49,11 @@ export function Sidebar() {
   const fetchInstances = useInstancesStore((s) => s.fetchInstances);
   const [allExpanded, setAllExpanded] = useState(false);
 
+  const watchScans = useInstancesStore((s) => s.watchScans);
   useEffect(() => {
     void fetchInstances();
-  }, [fetchInstances]);
+    return watchScans();
+  }, [fetchInstances, watchScans]);
 
   const filtered = useMemo(() => getFilteredAccounts(accounts, filter), [accounts, filter]);
   const isEmpty = filtered.length === 0;
@@ -51,28 +69,30 @@ export function Sidebar() {
 
   return (
     <div
-      className="h-full flex flex-col bg-surface overflow-hidden"
-      aria-label="Instance sidebar"
+      className="h-full flex flex-col bg-side overflow-hidden"
+      aria-label="Fleet"
       role="tree"
     >
-      <div className="px-2 pt-2 pb-1.5 border-b border-border">
-        <div className="flex items-center gap-1.5">
-          <Input
-            leftIcon={<Search size={11} />}
-            placeholder="Filter instances…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="flex-1 text-[12px] min-w-0"
-            aria-label="Filter instances"
-          />
+      <div className="px-2 pt-2 pb-2 border-b border-border space-y-1.5">
+        <Input
+          leftIcon={<Search size={11} />}
+          placeholder="Filter by name, id, IP, account, region"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="w-full text-[12px] min-w-0"
+          aria-label="Filter instances"
+        />
+        <div className="flex items-center justify-between px-0.5">
+          <span className="text-[11px] text-text-dim">
+            {loading && accounts.length === 0 ? 'Scanning…' : `${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
+          </span>
           <button
             type="button"
             onClick={toggleExpandCollapse}
-            className="text-text-dim hover:text-text-pri transition-colors shrink-0 p-0.5"
-            title={allExpanded ? 'Collapse all' : 'Expand all'}
-            aria-label={allExpanded ? 'Collapse all' : 'Expand all'}
+            className="inline-flex items-center gap-1 text-[11px] text-text-mut hover:text-text-pri transition-colors"
           >
-            {allExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+            {allExpanded ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />}
+            {allExpanded ? 'Collapse all' : 'Expand all'}
           </button>
         </div>
       </div>

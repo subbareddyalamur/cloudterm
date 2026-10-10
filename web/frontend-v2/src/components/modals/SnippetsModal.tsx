@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Plus, Pencil, Trash2, Copy, Terminal } from 'lucide-react';
-import { Dialog } from '@/components/primitives/Dialog';
+import { Dialog, DialogPageContext } from '@/components/primitives/Dialog';
 import { Button } from '@/components/primitives/Button';
 import { Input } from '@/components/primitives/Input';
 import { api } from '@/lib/api';
@@ -120,13 +120,15 @@ export function SnippetsModal({ open, onOpenChange, onInsert }: SnippetsModalPro
 
   if (editing) {
     return (
-      <SnippetEditor
-        snippet={editing}
-        isNew={isNew}
-        saving={saving}
-        onSave={(s) => void handleSaveEdit(s)}
-        onCancel={() => { setEditing(null); setIsNew(false); }}
-      />
+      <DialogPageContext.Provider value={false}>
+        <SnippetEditor
+          snippet={editing}
+          isNew={isNew}
+          saving={saving}
+          onSave={(s) => void handleSaveEdit(s)}
+          onCancel={() => { setEditing(null); setIsNew(false); }}
+        />
+      </DialogPageContext.Provider>
     );
   }
 
@@ -134,7 +136,7 @@ export function SnippetsModal({ open, onOpenChange, onInsert }: SnippetsModalPro
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Command Snippets"
+      title="Snippets"
       size="lg"
       footer={
         <Button

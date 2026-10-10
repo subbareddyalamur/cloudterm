@@ -25,6 +25,8 @@ interface InstancesState {
   setSelected: (id: string | null) => void;
   fetchInstances: () => Promise<void>;
   triggerScan: () => Promise<void>;
+  /** Reloads the tree whenever a server-side scan finishes, including the startup scan. */
+  watchScans: () => () => void;
 }
 
 export const useInstancesStore = create<InstancesState>()(
@@ -107,6 +109,26 @@ export const useInstancesStore = create<InstancesState>()(
             }
           };
           setTimeout(() => void poll(), 1500);
+        },
+
+        watchScans: () => {
+          let stopped = false;
+          let wasScanning = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const tick = async () => {
+            if (stopped) return;
+            const res = await apiGet<{ status: string }>('/scan-status');
+            const scanningNow = res.ok && res.value.status === 'scanning';
+            if (scanningNow !== get().scanning) set({ scanning: scanningNow });
+            if (wasScanning && !scanningNow) await get().fetchInstances();
+            wasScanning = scanningNow;
+            if (!stopped) timer = setTimeout(() => void tick(), scanningNow ? 2000 : 30000);
+          };
+          void tick();
+          return () => {
+            stopped = true;
+            if (timer) clearTimeout(timer);
+          };
         },
       }),
       {

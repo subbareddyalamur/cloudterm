@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
+import { useLayoutStore } from './layout';
+
+const showSessionView = () => useLayoutStore.getState().setView('session');
 
 export type SessionType = 'ssh' | 'rdp' | 'topology' | 'cost' | 'fleet-map' | 'diagram';
 export type SessionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -33,14 +36,16 @@ export const useSessionsStore = create<SessionsState>()(
     (set, get) => ({
       sessions: [],
       activeId: null,
-      openSession: (s) =>
+      openSession: (s) => {
+        showSessionView();
         set((state) => {
           if (state.sessions.some((x) => x.id === s.id)) return { activeId: s.id };
           return {
             sessions: [...state.sessions, { ...s, createdAt: Date.now() }],
             activeId: s.id,
           };
-        }),
+        });
+      },
       closeSession: (id) =>
         set((state) => {
           const sessions = state.sessions.filter((x) => x.id !== id);
@@ -75,7 +80,10 @@ export const useSessionsStore = create<SessionsState>()(
           if (moved) next.splice(to, 0, moved);
           return { sessions: next };
         }),
-      setActive: (id) => set({ activeId: id }),
+      setActive: (id) => {
+        if (id) showSessionView();
+        set({ activeId: id });
+      },
       updateStatus: (id, status) =>
         set((state) => ({
           sessions: state.sessions.map((s) => (s.id === id ? { ...s, status } : s)),

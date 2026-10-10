@@ -253,15 +253,13 @@ export function AIChatPanel() {
 
   const isEmpty = messages.length === 0;
 
+  if (!open) return null;
+
   return (
     <div
-      className="flex flex-col bg-[var(--surface)] border-l border-[var(--border)] shadow-2xl shrink-0 transition-all duration-150 overflow-hidden"
-      style={{
-        width: open ? 420 : 0,
-        minWidth: open ? 420 : 0,
-      }}
-      aria-label="AI chat panel"
-      aria-hidden={!open}
+      className="flex flex-col bg-[var(--surface)] border-l border-[var(--border)] shrink-0 overflow-hidden"
+      style={{ width: 360, minWidth: 360 }}
+      aria-label="AI assistant"
       role="complementary"
     >
       {/* Header */}

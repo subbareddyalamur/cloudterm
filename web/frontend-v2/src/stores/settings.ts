@@ -12,6 +12,7 @@ interface SettingsState {
   fontFamily: string;
   appZoom: number;
   theme: string;
+  terminalTheme: string;
   compactMode: boolean;
   enableEnvBorders: boolean;
   scrollbackLines: number;
@@ -39,6 +40,7 @@ interface SettingsState {
   zoomOut: () => void;
   resetZoom: () => void;
   setTheme: (t: string) => void;
+  setTerminalTheme: (t: string) => void;
   setCompactMode: (v: boolean) => void;
   setEnableEnvBorders: (v: boolean) => void;
   setScrollbackLines: (n: number) => void;
@@ -69,6 +71,7 @@ export const useSettingsStore = create<SettingsState>()(
           fontFamily: 'JetBrains Mono',
           appZoom: 100,
           theme: 'warp',
+          terminalTheme: 'tokyo-night',
           compactMode: false,
           enableEnvBorders: true,
           scrollbackLines: 10000,
@@ -96,6 +99,7 @@ export const useSettingsStore = create<SettingsState>()(
           zoomOut: () => get().setFontSize(get().fontSize - 1),
           resetZoom: () => set({ fontSize: DEFAULT_FONT, appZoom: 100 }),
           setTheme: (t) => set({ theme: t }),
+          setTerminalTheme: (t) => set({ terminalTheme: t }),
           setCompactMode: (v) => set({ compactMode: v }),
           setEnableEnvBorders: (v) => set({ enableEnvBorders: v }),
           setScrollbackLines: (n) => set({ scrollbackLines: Math.max(1000, Math.min(100000, n)) }),
@@ -116,6 +120,7 @@ export const useSettingsStore = create<SettingsState>()(
                 if (typeof data.fontSize === 'number') patch.fontSize = data.fontSize as number;
                 if (typeof data.fontFamily === 'string') patch.fontFamily = data.fontFamily as string;
                 if (typeof data.theme === 'string') patch.theme = data.theme as string;
+                if (typeof data.terminalTheme === 'string') patch.terminalTheme = data.terminalTheme as string;
                 if (typeof data.aiProvider === 'string') patch.aiProvider = data.aiProvider as string;
                 if (typeof data.aiModel === 'string') patch.aiModel = data.aiModel as string;
                 if (typeof data.aiApiKey === 'string') patch.aiApiKey = data.aiApiKey as string;
@@ -145,6 +150,7 @@ export const useSettingsStore = create<SettingsState>()(
               fontSize: s.fontSize,
               fontFamily: s.fontFamily,
               theme: s.theme,
+              terminalTheme: s.terminalTheme,
               aiProvider: s.aiProvider,
               aiModel: s.aiModel,
               aiApiKey: s.aiApiKey,
@@ -191,6 +197,7 @@ useSettingsStore.subscribe(
     fontSize: s.fontSize,
     fontFamily: s.fontFamily,
     theme: s.theme,
+    terminalTheme: s.terminalTheme,
     aiProvider: s.aiProvider,
     aiModel: s.aiModel,
     aiApiKey: s.aiApiKey,

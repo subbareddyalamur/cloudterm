@@ -1,10 +1,11 @@
 export const THEME_SLUGS = [
   'auto',
+  'night',
   'warp', 'linear', 'vscode', 'arc',
   'github-dark', 'nord', 'atom-one-dark', 'dracula',
   'solarized-dark', 'tokyo-night', 'catppuccin-mocha', 'monokai',
   'github-light', 'solarized-light', 'one-light',
-  'tokyo-night-day', 'catppuccin-latte', 'rose-pine-dawn',
+  'tokyo-night-day', 'catppuccin-latte', 'rose-pine-dawn', 'paper',
 ] as const;
 
 export type ThemeSlug = (typeof THEME_SLUGS)[number];
@@ -23,6 +24,8 @@ export interface ThemeMeta {
 export const themes: ReadonlyArray<ThemeMeta> = [
   { slug: 'auto', label: '✨ Auto (match system)', group: 'system', tagline: 'Adapts to your OS', mode: 'auto',
     swatches: ['#ffffff', '#f6f8fa', '#0969da', '#1F2328'] },
+  { slug: 'night', label: 'Night', group: 'design', tagline: 'CloudTerm desk, dark', mode: 'dark',
+    swatches: ['#100f0c', '#181712', '#e2a23a', '#e8e2d6'] },
   { slug: 'warp', label: 'Warp / Raycast', group: 'design', tagline: 'Dense developer-native', mode: 'dark',
     swatches: ['#0D0F12', '#151821', '#7C5CFF', '#E8EAF0'] },
   { slug: 'linear', label: 'Linear / Vercel', group: 'design', tagline: 'Minimalist SaaS', mode: 'dark',
@@ -59,6 +62,8 @@ export const themes: ReadonlyArray<ThemeMeta> = [
     swatches: ['#eff1f5', '#e6e9ef', '#1e66f5', '#4c4f69'] },
   { slug: 'rose-pine-dawn', label: 'Rosé Pine Dawn', group: 'light', tagline: 'Rosé daybreak', mode: 'light',
     swatches: ['#faf4ed', '#fffaf3', '#286983', '#575279'] },
+  { slug: 'paper', label: 'Paper', group: 'light', tagline: 'CloudTerm desk, high-contrast light', mode: 'light',
+    swatches: ['#ffffff', '#f4f1ea', '#8a5a00', '#1c1915'] },
 ];
 
 export const themesBySlug = Object.fromEntries(

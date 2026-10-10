@@ -8,11 +8,17 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import './styles/index.css';
 import { App } from './App';
+import { AuthGate } from './components/auth/SignInPage';
+import { installSessionWatch } from './stores/auth';
+
+installSessionWatch();
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Root element #root not found');
 createRoot(rootEl).render(
   <StrictMode>
-    <App />
+    <AuthGate>
+      <App />
+    </AuthGate>
   </StrictMode>,
 );

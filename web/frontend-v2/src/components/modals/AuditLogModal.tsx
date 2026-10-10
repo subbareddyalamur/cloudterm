@@ -13,10 +13,15 @@ export interface AuditLogModalProps {
 interface AuditEntry {
   timestamp: string;
   action: string;
-  instance_id: string;
-  instance_name: string;
-  session_id: string;
-  details: string;
+  instance_id?: string;
+  instance_name?: string;
+  session_id?: string;
+  details?: string;
+  user_id?: string;
+  user_email?: string;
+  role?: string;
+  ip?: string;
+  outcome?: string;
 }
 
 const ACTION_VARIANTS: Record<string, 'success' | 'danger' | 'warn' | 'info' | 'default'> = {
@@ -30,9 +35,17 @@ const ACTION_VARIANTS: Record<string, 'success' | 'danger' | 'warn' | 'info' | '
   port_forward_start: 'info',
   port_forward_stop: 'default',
   clone: 'warn',
+  login_sso: 'success',
+  login_password: 'success',
+  login_break_glass: 'warn',
+  logout: 'default',
+  access_denied: 'danger',
+  license_redeem: 'info',
+  request: 'default',
 };
 
-function actionVariant(action: string): 'success' | 'danger' | 'warn' | 'info' | 'default' {
+function actionVariant(action: string, outcome?: string): 'success' | 'danger' | 'warn' | 'info' | 'default' {
+  if (outcome === 'denied' || outcome === 'error') return 'danger';
   return ACTION_VARIANTS[action.toLowerCase()] ?? 'default';
 }
 
@@ -59,7 +72,7 @@ export function AuditLogModal({ open, onOpenChange }: AuditLogModalProps) {
     setLoading(true);
     const res = await api.get<AuditEntry[]>('/audit-log');
     if (res.ok) {
-      setEntries(res.data);
+      setEntries(res.data ?? []);
     }
     setLoading(false);
   }, []);
@@ -78,12 +91,9 @@ export function AuditLogModal({ open, onOpenChange }: AuditLogModalProps) {
     if (actionFilter) list = list.filter((e) => e.action === actionFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
-      list = list.filter(
-        (e) =>
-          e.instance_name.toLowerCase().includes(q) ||
-          e.action.toLowerCase().includes(q) ||
-          e.details.toLowerCase().includes(q) ||
-          e.session_id.toLowerCase().includes(q),
+      list = list.filter((e) =>
+        [e.instance_name, e.instance_id, e.action, e.details, e.session_id, e.user_id, e.user_email, e.ip, e.outcome]
+          .some((v) => (v ?? '').toLowerCase().includes(q)),
       );
     }
     return list;
@@ -93,7 +103,7 @@ export function AuditLogModal({ open, onOpenChange }: AuditLogModalProps) {
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Session History & Audit Log"
+      title="Audit"
       size="xl"
     >
       <div className="space-y-3">
@@ -137,6 +147,7 @@ export function AuditLogModal({ open, onOpenChange }: AuditLogModalProps) {
                 <tr className="border-b border-border bg-elev">
                   <th className="text-left px-3 py-2 font-medium text-text-dim w-36">Time</th>
                   <th className="text-left px-3 py-2 font-medium text-text-dim w-28">Action</th>
+                  <th className="text-left px-3 py-2 font-medium text-text-dim">Who</th>
                   <th className="text-left px-3 py-2 font-medium text-text-dim">Instance</th>
                   <th className="text-left px-3 py-2 font-medium text-text-dim hidden md:table-cell">Details</th>
                 </tr>
@@ -144,7 +155,7 @@ export function AuditLogModal({ open, onOpenChange }: AuditLogModalProps) {
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="text-center py-6 text-text-dim">No entries</td>
+                    <td colSpan={5} className="text-center py-6 text-text-dim">No entries</td>
                   </tr>
                 )}
                 {filtered.map((entry, i) => {
@@ -165,12 +176,24 @@ export function AuditLogModal({ open, onOpenChange }: AuditLogModalProps) {
                         {formatTimestamp(entry.timestamp)}
                       </td>
                       <td className="px-3 py-2">
-                        <Badge variant={actionVariant(entry.action)} size="sm">
-                          {entry.action}
+                        <Badge variant={actionVariant(entry.action, entry.outcome)} size="sm">
+                          {entry.action.replace(/_/g, ' ')}
                         </Badge>
+                        {entry.outcome && entry.outcome !== 'success' && (
+                          <div className="text-[10.5px] text-danger mt-0.5">{entry.outcome}</div>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-text-pri max-w-[160px] truncate">
-                        {entry.instance_name || entry.instance_id || '—'}
+                      <td className="px-3 py-2 max-w-[200px]">
+                        <div className="truncate text-text-pri">{entry.user_email || entry.user_id || '—'}</div>
+                        <div className="text-[10.5px] text-text-dim truncate">
+                          {[entry.role, entry.ip].filter(Boolean).join(' · ')}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-text-pri max-w-[220px]">
+                        <div className="truncate">{entry.instance_name || entry.instance_id || '—'}</div>
+                        {entry.instance_name && entry.instance_id && (
+                          <div className="font-mono text-[10.5px] text-text-dim truncate">{entry.instance_id}</div>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-text-dim hidden md:table-cell max-w-[240px]">
                         {isExpanded ? (

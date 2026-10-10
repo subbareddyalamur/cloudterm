@@ -19,6 +19,7 @@
   "dependencies": {
     "@fontsource/inter": "^5.1.0",
     "@fontsource/jetbrains-mono": "^5.1.0",
+    "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.99.1",
     "@tanstack/react-router": "^1.90.0",
     "@types/dagre": "^0.7.54",

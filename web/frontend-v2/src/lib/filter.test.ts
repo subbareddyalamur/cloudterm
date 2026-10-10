@@ -75,7 +75,10 @@ describe('matchInstance', () => {
 
   it('no match returns false', () => {
     expect(matchInstance(makeInst(), 'xyz-does-not-exist')).toBe(false);
-    expect(matchInstance(makeInst(), 'us-east-1')).toBe(false);
+  });
+
+  it('region is searched', () => {
+    expect(matchInstance(makeInst(), 'us-east-1')).toBe(true);
   });
 
   it('whitespace-only query matches all instances', () => {
@@ -92,14 +95,14 @@ describe('matchInstance', () => {
     expect(matchInstance(inst, 'alice-unique-tag')).toBe(false);
   });
 
-  it('private IP is NOT searched (VanillaJS parity)', () => {
+  it('private IP is searched', () => {
     const inst = makeInst({ private_ip: '10.99.88.77' });
-    expect(matchInstance(inst, '10.99.88.77')).toBe(false);
+    expect(matchInstance(inst, '10.99.88.77')).toBe(true);
   });
 
-  it('account alias is NOT searched (VanillaJS parity)', () => {
+  it('account alias is searched', () => {
     const inst = makeInst({ account_alias: 'my-special-account' });
-    expect(matchInstance(inst, 'my-special-account')).toBe(false);
+    expect(matchInstance(inst, 'my-special-account')).toBe(true);
   });
 
   it('unicode names are preserved and matched', () => {

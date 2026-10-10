@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Palette, Type, Cloud, Sparkles, KeyRound, Database, Minus, Plus, Trash2, X, Pencil, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings';
 import { useThemeStore } from '@/stores/theme';
@@ -6,15 +6,27 @@ import { themes, themesByGroup } from '@/lib/themes';
 import { Button, Input } from '@/components/primitives';
 import { api } from '@/lib/api';
 
+type Tab = 'appearance' | 'general' | 'accounts' | 'signin' | 'ai' | 'vault' | 'database';
+
 interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialTab?: Tab;
 }
 
-type Tab = 'appearance' | 'general' | 'accounts' | 'ai' | 'vault' | 'database';
-
-export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
-  const [tab, setTab] = useState<Tab>('appearance');
+export function SettingsModal({ open, onOpenChange, initialTab }: SettingsModalProps) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'appearance');
+  useEffect(() => {
+    if (open && initialTab) setTab(initialTab);
+  }, [open, initialTab]);
+  useEffect(() => {
+    const onOpen = (ev: Event) => {
+      const next = (ev as CustomEvent<{ tab?: Tab }>).detail?.tab;
+      if (next) setTab(next);
+    };
+    window.addEventListener('ct:open-settings', onOpen);
+    return () => window.removeEventListener('ct:open-settings', onOpen);
+  }, []);
 
   // Escape to close + body scroll lock
   useEffect(() => {
@@ -37,6 +49,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     { id: 'appearance', label: 'Appearance', icon: <Palette size={13} /> },
     { id: 'general', label: 'General', icon: <Type size={13} /> },
     { id: 'accounts', label: 'AWS Accounts', icon: <Cloud size={13} /> },
+    { id: 'signin', label: 'Sign-in', icon: <KeyRound size={13} /> },
     { id: 'ai', label: 'AI Agent', icon: <Sparkles size={13} /> },
     { id: 'vault', label: 'Credential Vault', icon: <KeyRound size={13} /> },
     { id: 'database', label: 'Database Viewer', icon: <Database size={13} /> },
@@ -78,6 +91,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             {tab === 'appearance' && <AppearanceTab />}
             {tab === 'general' && <GeneralTab />}
             {tab === 'accounts' && <AWSAccountsTab />}
+            {tab === 'signin' && <SignInProvidersTab />}
             {tab === 'ai' && <AIAgentTab />}
             {tab === 'vault' && <VaultTab />}
             {tab === 'database' && <DatabaseViewerTab />}
@@ -289,9 +303,11 @@ function GeneralTab() {
 interface AWSAccount {
   id: string;
   name: string;
-  access_key_id: string;
-  secret_access_key: string;
+  access_key_id?: string;
+  secret_access_key?: string;
   session_token?: string;
+  role_arn?: string;
+  external_id?: string;
   added_at?: string;
 }
 
@@ -308,6 +324,11 @@ function AWSAccountsTab() {
   const [newAccessKeyId, setNewAccessKeyId] = useState('');
   const [newSecretAccessKey, setNewSecretAccessKey] = useState('');
   const [newSessionToken, setNewSessionToken] = useState('');
+  const [newRoleArn, setNewRoleArn] = useState('');
+  const [mode, setMode] = useState<'role' | 'keys'>('role');
+  const [onboarding, setOnboarding] = useState<{ external_id?: string; template?: string; mode?: string; access_keys?: boolean } | null>(null);
+  const [verify, setVerify] = useState<Record<string, { ok: boolean; text: string } | 'busy'>>({});
+  const [addError, setAddError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -315,23 +336,33 @@ function AWSAccountsTab() {
       if (r.ok) setAccounts(r.data ?? []);
       setLoading(false);
     }).catch(() => setLoading(false));
+    api.get<{ external_id?: string; template?: string; mode?: string; access_keys?: boolean }>('/api/aws/onboarding').then((r) => {
+      if (r.ok && r.data) setOnboarding(r.data);
+    }).catch(() => undefined);
   }, []);
 
   const addAccount = async () => {
-    if (!newAccessKeyId.trim() || !newSecretAccessKey.trim()) return;
+    if (mode === 'role' && !newRoleArn.trim()) return;
+    if (mode === 'keys' && (!newAccessKeyId.trim() || !newSecretAccessKey.trim())) return;
     setSubmitting(true);
-    const result = await api.post<AWSAccount>('/aws-accounts', {
-      name: newName.trim() || undefined,
-      access_key_id: newAccessKeyId.trim(),
-      secret_access_key: newSecretAccessKey.trim(),
-      session_token: newSessionToken.trim() || undefined,
-    });
+    const result = await api.post<AWSAccount>('/aws-accounts', mode === 'role'
+      ? { name: newName.trim() || undefined, role_arn: newRoleArn.trim() }
+      : {
+          name: newName.trim() || undefined,
+          access_key_id: newAccessKeyId.trim(),
+          secret_access_key: newSecretAccessKey.trim(),
+          session_token: newSessionToken.trim() || undefined,
+        });
+    setAddError(result.ok ? null : (() => {
+      try { return (JSON.parse(result.error.message) as { error?: string }).error ?? result.error.message; } catch { return result.error.message; }
+    })());
     if (result.ok && result.data) {
       setAccounts((prev) => [...prev, result.data as AWSAccount]);
       setNewName('');
       setNewAccessKeyId('');
       setNewSecretAccessKey('');
       setNewSessionToken('');
+      setNewRoleArn('');
       setShowAdd(false);
     }
     setSubmitting(false);
@@ -343,17 +374,40 @@ function AWSAccountsTab() {
   };
 
   const scanAccount = async (id: string) => {
-    await api.post(`/aws-accounts/${id}/scan`, {});
+    await api.post(`/aws-accounts/scan/${id}`, {});
   };
+
+  const verifyAccount = async (id: string) => {
+    setVerify((v) => ({ ...v, [id]: 'busy' }));
+    const r = await api.post<{ ok: boolean; account_id?: string; arn?: string; error?: string }>(`/aws-accounts/verify/${id}`, {});
+    const d = r.ok ? r.data : { ok: false, error: r.error.message };
+    setVerify((v) => ({
+      ...v,
+      [id]: d.ok ? { ok: true, text: `Assumed ${d.arn} in ${d.account_id}` } : { ok: false, text: d.error ?? 'AssumeRole failed' },
+    }));
+  };
+
+  const keysAllowed = onboarding?.access_keys !== false;
 
   if (loading) return <div className="text-[12px] text-text-dim">Loading accounts...</div>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] text-text-dim leading-relaxed">
-          Add AWS accounts with access keys for scanning instances. Useful when ~/.aws/credentials is not available.
-        </p>
+        <div className="text-[11px] text-text-dim leading-relaxed space-y-1">
+          <p>
+            CloudTerm reaches each AWS account by assuming its <span className="font-mono text-text-mut">CloudTermAccess</span> role from this server's own role.
+            Launch <span className="font-mono text-text-mut">{onboarding?.template ?? 'deploy/cloudformation/cloudterm-access.yaml'}</span> in the account, then paste the role ARN here.
+          </p>
+          {onboarding?.external_id && (
+            <p>ExternalId for this deployment: <span className="font-mono text-text-pri select-all">{onboarding.external_id}</span></p>
+          )}
+          <p>
+            {onboarding?.mode === 'hub'
+              ? 'Hub mode: this server never reads ~/.aws credentials.'
+              : 'Profiles mode: this server also scans ~/.aws profiles. Set AWS_ACCESS_MODE=hub to stop that.'}
+          </p>
+        </div>
         <Button variant="ghost" size="xs" onClick={() => setShowAdd(!showAdd)} className="shrink-0">
           {showAdd ? 'Cancel' : '+ Add Account'}
         </Button>
@@ -361,39 +415,57 @@ function AWSAccountsTab() {
 
       {showAdd && (
         <div className="bg-elev rounded border border-border p-3 space-y-2">
+          {keysAllowed && (
+            <div className="flex gap-2 text-[11px]">
+              <button type="button" className={mode === 'role' ? 'text-text-pri font-semibold' : 'text-text-dim'} onClick={() => setMode('role')}>Assume role</button>
+              <button type="button" className={mode === 'keys' ? 'text-text-pri font-semibold' : 'text-text-dim'} onClick={() => setMode('keys')}>Access keys (migration)</button>
+            </div>
+          )}
           <Input
             placeholder="Account name (optional)"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             className="text-[12px]"
           />
-          <Input
-            placeholder="Access Key ID *"
-            value={newAccessKeyId}
-            onChange={(e) => setNewAccessKeyId(e.target.value)}
-            className="text-[12px] font-mono"
-          />
-          <Input
-            type="password"
-            placeholder="Secret Access Key *"
-            value={newSecretAccessKey}
-            onChange={(e) => setNewSecretAccessKey(e.target.value)}
-            className="text-[12px] font-mono"
-          />
-          <Input
-            placeholder="Session Token (optional)"
-            value={newSessionToken}
-            onChange={(e) => setNewSessionToken(e.target.value)}
-            className="text-[12px] font-mono"
-          />
+          {mode === 'role' ? (
+            <Input
+              placeholder="arn:aws:iam::123456789012:role/CloudTermAccess"
+              value={newRoleArn}
+              onChange={(e) => setNewRoleArn(e.target.value)}
+              className="text-[12px] font-mono"
+            />
+          ) : (
+            <>
+              <Input
+                placeholder="Access Key ID *"
+                value={newAccessKeyId}
+                onChange={(e) => setNewAccessKeyId(e.target.value)}
+                className="text-[12px] font-mono"
+              />
+              <Input
+                type="password"
+                placeholder="Secret Access Key *"
+                value={newSecretAccessKey}
+                onChange={(e) => setNewSecretAccessKey(e.target.value)}
+                className="text-[12px] font-mono"
+              />
+              <Input
+                placeholder="Session Token (optional)"
+                value={newSessionToken}
+                onChange={(e) => setNewSessionToken(e.target.value)}
+                className="text-[12px] font-mono"
+              />
+            </>
+          )}
           <Button
             variant="primary"
             size="xs"
             onClick={() => void addAccount()}
-            disabled={!newAccessKeyId.trim() || !newSecretAccessKey.trim() || submitting}
+            disabled={submitting || (mode === 'role' ? !newRoleArn.trim() : !newAccessKeyId.trim() || !newSecretAccessKey.trim())}
           >
             {submitting ? 'Adding…' : 'Add Account'}
           </Button>
+          {addError && <p className="text-[11px] text-danger">{addError}</p>}
         </div>
       )}
 
@@ -405,11 +477,22 @@ function AWSAccountsTab() {
             <div key={a.id} className="flex items-start gap-3 px-3 py-2.5 rounded bg-elev/50 border border-border text-[12px]">
               <Cloud size={14} className="text-text-dim shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <div className="font-semibold text-text-pri truncate">{a.name || a.access_key_id}</div>
-                <div className="text-[10px] text-text-dim font-mono mt-0.5">
-                  {maskKey(a.access_key_id)} · <span className="opacity-60">secret: {maskKey(a.secret_access_key)}</span>
+                <div className="font-semibold text-text-pri truncate">{a.name || a.role_arn || a.access_key_id}</div>
+                <div className="text-[10px] text-text-dim font-mono mt-0.5 break-all">
+                  {a.role_arn ? a.role_arn : `${maskKey(a.access_key_id ?? '')} · secret: ${maskKey(a.secret_access_key ?? '')}`}
                 </div>
+                {(() => {
+                  const v = verify[a.id];
+                  if (!v) return null;
+                  if (v === 'busy') return <div className="text-[11px] text-text-mut mt-1">Assuming role…</div>;
+                  return <div className={`text-[11px] mt-1 leading-relaxed ${v.ok ? 'text-success' : 'text-danger'}`}>{v.text}</div>;
+                })()}
               </div>
+              {a.role_arn && (
+                <Button variant="ghost" size="xs" onClick={() => void verifyAccount(a.id)} aria-label={`Verify ${a.name}`}>
+                  Verify
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="xs"
@@ -431,6 +514,111 @@ function AWSAccountsTab() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+interface ProviderRow {
+  id: string;
+  label: string;
+  type: 'saml' | 'oidc';
+  domains?: string[];
+  redirect_url?: string;
+  saml?: { entity_id: string; acs_url: string; metadata_url: string; certificate_sha256: string };
+  admin_groups?: string[];
+  operator_groups?: string[];
+  viewer_groups?: string[];
+  default_role?: string;
+}
+
+function CopyRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-3 text-[11px] py-0.5">
+      <span className="w-28 shrink-0 text-text-dim">{label}</span>
+      <button
+        type="button"
+        className="font-mono text-text-pri text-left break-all hover:text-accent"
+        title="Copy"
+        onClick={() => void navigator.clipboard?.writeText(value)}
+      >
+        {value}
+      </button>
+    </div>
+  );
+}
+
+function SignInProvidersTab() {
+  const [rows, setRows] = useState<ProviderRow[] | null>(null);
+  const [local, setLocal] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ providers: ProviderRow[]; local: string }>('/api/auth/providers').then((r) => {
+      if (r.ok) {
+        setRows(r.data.providers);
+        setLocal(r.data.local);
+      } else {
+        setError(r.error.status === 403 ? 'Only administrators can see sign-in settings.' : r.error.message);
+      }
+    }).catch(() => setError('Could not load sign-in providers.'));
+  }, []);
+
+  if (error) return <div className="text-[12px] text-text-mut">{error}</div>;
+  if (!rows) return <div className="text-[12px] text-text-dim">Loading…</div>;
+
+  const roles = (r: ProviderRow) =>
+    [
+      r.admin_groups?.length ? `admin ← ${r.admin_groups.join(', ')}` : '',
+      r.operator_groups?.length ? `operator ← ${r.operator_groups.join(', ')}` : '',
+      r.viewer_groups?.length ? `viewer ← ${r.viewer_groups.join(', ')}` : '',
+      r.default_role ? `everyone else ← ${r.default_role}` : 'everyone else is refused',
+    ].filter(Boolean);
+
+  return (
+    <div className="space-y-4">
+      <div className="text-[11px] text-text-dim leading-relaxed space-y-1">
+        <p>
+          Providers come from <span className="font-mono text-text-mut">sso-providers.json</span> in the data directory (or <span className="font-mono text-text-mut">SSO_PROVIDERS_FILE</span>).
+          Each one can be SAML or OIDC, so Okta, Entra ID, Google Workspace, and others can be used together.
+        </p>
+        <p>
+          Password sign-in: {local === 'admin' ? 'break-glass administrator only' : local === 'off' ? 'off' : 'all local accounts'}.
+          A person signed in through two providers is two CloudTerm users; accounts are never merged by email.
+        </p>
+      </div>
+      {rows.length === 0 && (
+        <div className="text-[12px] text-text-mut bg-elev/50 border border-border rounded-md p-3">
+          No single sign-on provider is configured yet.
+        </div>
+      )}
+      {rows.map((r) => (
+        <div key={r.id} className="bg-elev/50 border border-border rounded-md p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold text-text-pri">{r.label}</span>
+            <span className="text-[10px] font-mono uppercase text-text-dim">{r.type}</span>
+            <span className="text-[10px] font-mono text-text-dim">id {r.id}</span>
+          </div>
+          {r.saml && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-text-dim mb-1">Paste into the IdP's SAML app</div>
+              <CopyRow label="ACS (reply) URL" value={r.saml.acs_url} />
+              <CopyRow label="Entity ID" value={r.saml.entity_id} />
+              <CopyRow label="SP metadata" value={r.saml.metadata_url} />
+              <CopyRow label="Signing cert" value={r.saml.certificate_sha256} />
+            </div>
+          )}
+          {r.redirect_url && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-text-dim mb-1">Paste into the IdP's OIDC app</div>
+              <CopyRow label="Redirect URI" value={r.redirect_url} />
+            </div>
+          )}
+          <div className="text-[11px] text-text-mut space-y-0.5">
+            {r.domains?.length ? <div>Allowed domains: {r.domains.join(', ')}</div> : <div>Any email domain</div>}
+            {roles(r).map((line) => <div key={line} className="font-mono">{line}</div>)}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -7,8 +7,6 @@ import { streamNDJSON } from '@/hooks/useNDJSON';
 import { useActivityStore } from '@/stores/activity';
 import { useInstancesStore } from '@/stores/instances';
 
-import { useToastStore } from '@/stores/toast';
-
 interface InstanceMeta { platform: string; os: string; awsProfile: string; awsRegion: string; }
 
 function getInstanceMeta(instanceId: string): InstanceMeta {
@@ -87,7 +85,6 @@ export function UploadModal({
   const add = useActivityStore((s) => s.add);
   const finish = useActivityStore((s) => s.finish);
   const update = useActivityStore((s) => s.update);
-  const pushToast = useToastStore((s) => s.push);
 
   const reset = useCallback(() => {
     setFile(null);
@@ -182,7 +179,7 @@ export function UploadModal({
       const msg = err instanceof Error ? err.message : 'Upload failed';
       finish(activityId, 'error', msg);
     }
-  }, [file, instanceId, instanceName, remotePath, express, s3Bucket, add, finish, update, pushToast, reset, onOpenChange]);
+  }, [file, instanceId, instanceName, remotePath, express, s3Bucket, add, finish, update, reset, onOpenChange]);
 
   return (
     <Dialog

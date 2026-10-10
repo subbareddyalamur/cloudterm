@@ -1,18 +1,19 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Xterm, type XtermRef } from './Xterm';
-import { TerminalTitleBar } from './TerminalTitleBar';
+import { SessionStrip, isProdEnv } from './SessionStrip';
 import { EnvBorder } from './EnvBorder';
 import { getTerminalWS } from '@/lib/ws';
 import type { Instance } from '@/stores/instances';
 import { GuacamoleClient } from '@/components/rdp/GuacamoleClient';
-import { RDPTitleBar } from '@/components/rdp/RDPTitleBar';
 import { useSessionsStore } from '@/stores/sessions';
 import { useToastStore } from '@/stores/toast';
 import { api } from '@/lib/api';
 import { nanoid } from 'nanoid';
 import { TopologyRoute } from '@/components/topology/TopologyRoute';
 import { useInstancesStore } from '@/stores/instances';
+import { useLayoutStore } from '@/stores/layout';
+import { TerminalSearch } from './TerminalSearch';
 
 export interface TerminalSessionProps {
   instance: Instance;
@@ -35,8 +36,15 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XtermRef>(null);
   const [recording, setRecording] = useState(initialRecording);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<{ index: number; count: number } | null>(null);
   const [splitTarget, setSplitTarget] = useState<SplitTarget | null>(null);
   const [showSplitPicker, setShowSplitPicker] = useState(false);
+  const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
+  const focus = useLayoutStore((s) => s.sidebarCollapsed);
+  const detailsOpen = useLayoutStore((s) => s.detailsInstanceId === instance.instance_id);
+  const toggleDetails = useLayoutStore((s) => s.toggleDetails);
+  const status = useSessionsStore((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const splitXtermRef = useRef<XtermRef>(null);
   const closeSession = useSessionsStore((s) => s.closeSession);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -51,8 +59,8 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
   }, [sessionId]);
 
   const handleDetails = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('ct:show-details', { detail: { instanceId: instance.instance_id } }));
-  }, [instance.instance_id]);
+    toggleDetails(instance.instance_id);
+  }, [instance.instance_id, toggleDetails]);
 
   const handleExport = useCallback(async () => {
     toast().push({ variant: 'info', title: 'Exporting session log…' });
@@ -112,7 +120,7 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
       awsProfile: inst?.aws_profile ?? '',
       awsRegion: inst?.aws_region ?? '',
     });
-  }, [allInstances, sshSessions]);
+  }, [allInstances]);
 
   const handleFullscreen = useCallback(() => {
     const el = containerRef.current;
@@ -130,7 +138,41 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
     xtermRef.current?.dispose();
   }, [sessionId, closeSession]);
 
+  const handleSearchOpen = useCallback(() => setSearchOpen((v) => !v), []);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchOpen(false);
+    setSearchResults(null);
+    xtermRef.current?.clearSearch();
+    xtermRef.current?.focus();
+  }, []);
+
+  const handleSearchNext = useCallback((q: string) => {
+    xtermRef.current?.search(q);
+  }, []);
+
+  const handleSearchPrev = useCallback((q: string) => {
+    xtermRef.current?.search(q);
+    xtermRef.current?.searchPrevious();
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const tags = instance.tags;
+  const envLabel = tags?.['Environment'] ?? tags?.['environment'] ?? instance.tag2_value ?? '';
+  const envName = envLabel.toLowerCase();
+  const prod = isProdEnv(envName);
+  const frame = prod ? 'border-2 border-warn' : 'border-2 border-transparent';
+  const envBorderTags = prod ? {} : (tags ?? {});
 
   if (sessionType === 'topology') {
     return (
@@ -142,18 +184,23 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
 
   if (sessionType === 'rdp') {
     return (
-      <div ref={containerRef} className="flex flex-col h-full">
-        <RDPTitleBar
-          instanceName={instance.name}
-          env={tags?.['Environment'] ?? tags?.['environment']}
+      <div ref={containerRef} className={`flex flex-col h-full ${frame}`} aria-label={prod ? 'Production session' : undefined}>
+        <SessionStrip
+          kind="rdp"
+          name={instance.name}
+          instanceId={instance.instance_id}
+          env={envLabel}
+          status={rdpConnectStatus ?? status}
           recording={recording}
-          connectStatus={rdpConnectStatus}
+          detailsOpen={detailsOpen}
           onDetails={handleDetails}
-          onFullscreen={handleFullscreen}
+          focus={focus}
+          onFocus={toggleSidebar}
+          more={[
+            { label: 'Send Ctrl+Alt+Del', onSelect: () => window.dispatchEvent(new CustomEvent('ct:rdp-ctrl-alt-del', { detail: { sessionId } })) },
+            { label: 'Full screen', onSelect: handleFullscreen },
+          ]}
           onEnd={() => { closeSession(sessionId); }}
-          onCtrlAltDel={() => {
-            window.dispatchEvent(new CustomEvent('ct:rdp-ctrl-alt-del', { detail: { sessionId } }));
-          }}
         />
         <div className="flex-1 min-h-0">
           {rdpToken ? (
@@ -169,17 +216,27 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full">
-      <TerminalTitleBar
-        instanceName={instance.name}
+    <div ref={containerRef} className={`flex flex-col h-full ${frame}`} aria-label={prod ? 'Production session' : undefined}>
+      <SessionStrip
+        kind="ssh"
+        name={instance.name}
         instanceId={instance.instance_id}
+        env={envLabel}
+        status={status}
         recording={recording}
-        onSuggest={handleSuggest}
+        onToggleRecording={() => void handleRecord()}
+        onFind={handleSearchOpen}
+        findOpen={searchOpen}
+        detailsOpen={detailsOpen}
         onDetails={handleDetails}
-        onExport={() => void handleExport()}
-        onRecord={() => void handleRecord()}
-        onSplit={handleSplit}
-        onFullscreen={handleFullscreen}
+        focus={focus}
+        onFocus={toggleSidebar}
+        more={[
+          { label: 'Suggest a command', onSelect: handleSuggest },
+          { label: splitTarget ? 'Close split' : 'Split with another session', onSelect: handleSplit },
+          { label: 'Export session log', onSelect: () => void handleExport() },
+          { label: 'Full screen', onSelect: handleFullscreen },
+        ]}
         onEnd={handleEnd}
       />
       <div className={`flex-1 relative min-h-0 ${splitTarget ? 'flex' : ''}`}>
@@ -225,7 +282,16 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
         )}
 
         <div className={`${splitTarget ? 'w-1/2 border-r border-border' : 'w-full h-full'} relative`}>
-          <EnvBorder tags={tags ?? {}}>
+          {searchOpen && (
+            <TerminalSearch
+              onNext={handleSearchNext}
+              onPrev={handleSearchPrev}
+              onClose={handleSearchClose}
+              resultIndex={searchResults?.index ?? -1}
+              resultCount={searchResults?.count ?? 0}
+            />
+          )}
+          <EnvBorder tags={envBorderTags}>
             <Xterm
               ref={xtermRef}
               instanceId={instance.instance_id}
@@ -233,6 +299,8 @@ export function TerminalSession({ instance, sessionId, sessionType = 'ssh', rdpT
               sessionId={sessionId}
               awsProfile={instance.aws_profile}
               awsRegion={instance.aws_region}
+              environment={envName}
+              onSearchResults={(index, count) => setSearchResults({ index, count })}
             />
           </EnvBorder>
         </div>

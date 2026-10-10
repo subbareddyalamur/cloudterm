@@ -11,14 +11,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama',
 };
 
-const PROVIDER_SHORT: Record<string, string> = {
-  bedrock: 'BEDROCK',
-  anthropic: 'ANTHROPIC',
-  openai: 'OPENAI',
-  gemini: 'GEMINI',
-  ollama: 'OLLAMA',
-};
-
 const PROVIDER_COLORS: Record<string, string> = {
   bedrock: 'bg-warn/15 text-warn',
   anthropic: 'bg-accent/15 text-accent',

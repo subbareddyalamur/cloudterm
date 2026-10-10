@@ -28,6 +28,7 @@ const BACKEND_ROUTES = [
   '/recordings',
   '/convert',
   '/convert-status',
+  '/aws-accounts',
   '/vault',
   '/settings',
   '/ai-agent',

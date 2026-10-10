@@ -5,7 +5,7 @@ import { AWS_COLORS } from '../lib/icons';
 
 type DiagramIconNodeProps = NodeProps & { data: DiagramNodeData };
 
-function ServiceIcon({ service, category, iconType, color }: {
+function ServiceIcon({ service, category, iconType }: {
   service: string;
   category?: string;
   iconType?: string;

@@ -6,7 +6,8 @@ export function ThemeSwitcher() {
   const setTheme = useThemeStore((s) => s.setTheme);
 
   const groups = [
-    { label: '✨ System', slugs: ['auto'] as ThemeSlug[] },
+    { label: 'CloudTerm desk', slugs: ['night', 'paper'] as ThemeSlug[] },
+    { label: 'System', slugs: ['auto'] as ThemeSlug[] },
     { label: 'Dark — Design', slugs: ['warp', 'linear', 'vscode', 'arc'] as ThemeSlug[] },
     {
       label: 'Dark — Classics',

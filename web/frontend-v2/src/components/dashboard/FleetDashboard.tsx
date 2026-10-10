@@ -6,6 +6,7 @@ import { Button } from '@/components/primitives';
 import { PlatformIcon } from '@/components/primitives/PlatformIcon';
 import type { Platform } from '@/lib/platform';
 import { api } from '@/lib/api';
+import { useInstancesStore } from '@/stores/instances';
 
 interface PlatformMix {
   linux?: number;
@@ -49,6 +50,7 @@ export function FleetDashboard() {
   const [instanceTypes, setInstanceTypes] = useState<Array<{ type: string; count: number }>>([]);
   const [regions, setRegions] = useState<Array<{ region: string; count: number }>>([]);
   const [loading, setLoading] = useState(false);
+  const lastScanAt = useInstancesStore((s) => s.lastScanAt);
 
   const fetchData = async () => {
     setLoading(true);
@@ -91,7 +93,7 @@ export function FleetDashboard() {
     setLoading(false);
   };
 
-  useEffect(() => { void fetchData(); }, []);
+  useEffect(() => { void fetchData(); }, [lastScanAt]);
 
   const linuxCount = useMemo(() => {
     const p = summary.platforms ?? {};
@@ -110,7 +112,7 @@ export function FleetDashboard() {
     <div className="p-6 space-y-5 overflow-y-auto h-full">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[16px] font-semibold text-text-pri">Fleet Dashboard</h1>
+          <h1 className="text-[16px] font-semibold text-text-pri">Fleet</h1>
           <p className="text-[11px] text-text-dim mt-0.5">
             {summary.accounts.length} account{summary.accounts.length === 1 ? '' : 's'}
             {summary.scan_duration ? ` · scanned in ${summary.scan_duration}` : ''}

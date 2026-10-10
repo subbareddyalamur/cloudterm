@@ -6,8 +6,8 @@ import { StatusBar } from './StatusBar';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { ToastViewport } from '@/components/primitives/ToastViewport';
 import { ActivityCenter } from '@/components/activity/ActivityCenter';
-import { AIChatPanel } from '@/components/ai/AIChatPanel';
 import { useLayoutStore } from '@/stores/layout';
+import { ReadingColumn } from './ReadingColumn';
 
 
 function SidebarResizer() {
@@ -75,7 +75,7 @@ export function AppShell({ children }: AppShellProps) {
       </header>
       <div
         style={{ gridArea: 'tabbar' }}
-        className="flex items-stretch bg-bg border-b border-border overflow-x-auto scrollbar-none"
+        className="flex items-stretch bg-side border-b border-border overflow-x-auto scrollbar-none"
       >
         <TabBar />
       </div>
@@ -90,7 +90,7 @@ export function AppShell({ children }: AppShellProps) {
         <div className="flex-1 min-w-0 relative">
           {children}
         </div>
-        <AIChatPanel />
+        <ReadingColumn />
       </main>
       <footer style={{ gridArea: 'statusbar' }}>
         <StatusBar />

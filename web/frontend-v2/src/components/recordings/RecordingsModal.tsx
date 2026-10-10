@@ -78,7 +78,7 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={handleOpenChange} title="Session Recordings" size="xl">
+      <Dialog open={open} onOpenChange={handleOpenChange} title="Recordings" size="xl">
         <RecordingsList onPlay={(r) => setPlaying(r)} />
       </Dialog>
 

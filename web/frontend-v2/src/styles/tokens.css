@@ -483,6 +483,62 @@
   }
 }
 
+[data-theme='night'] {
+  --bg: #100f0c;
+  --surface: #181712;
+  --side: #14130f;
+  --elev: #262318;
+  --border: #2e2b22;
+  --border-2: #23211a;
+  --text-pri: #e8e2d6;
+  --text-mut: #a89f91;
+  --text-dim: #7d7568;
+  --accent: #7ea0c4;
+  --accent-dim: rgba(126, 160, 196, 0.14);
+  --accent-2: #7ec4b6;
+  --success: #8fbf7a;
+  --danger: #d4654f;
+  --warn: #e2a23a;
+  --warn-ink: #2a220f;
+  --info: #7ea0c4;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+  --base-size: 13px;
+  --mono-size: 13px;
+  --font-sans: 'Avenir Next', 'Segoe UI', Inter, system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+
+[data-theme='paper'] {
+  --side: #ece7dc;
+  --warn-ink: #fbefd2;
+  --font-sans: 'Avenir Next', 'Segoe UI', Inter, system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --bg: #ffffff;
+  --surface: #f4f1ea;
+  --elev: #fffdf8;
+  --border: #1c1915;
+  --border-2: #d9d2c5;
+  --text-pri: #1c1915;
+  --text-mut: #3f3a32;
+  --text-dim: #5c564c;
+  --accent: #8a5a00;
+  --accent-dim: rgba(138, 90, 0, 0.12);
+  --accent-2: #0b6b4f;
+  --success: #0b6b4f;
+  --danger: #9b0000;
+  --warn: #8a5a00;
+  --info: #0033cc;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+  --base-size: 14px;
+  --mono-size: 14px;
+  color-scheme: light;
+}
+
 .plat-linux { color: var(--success); }
 .plat-rhel { color: var(--danger); }
 .plat-ubuntu { color: #e95420; }
