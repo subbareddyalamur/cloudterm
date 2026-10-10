@@ -151,6 +151,48 @@ func TestSignedValuesCarryExpiry(t *testing.T) {
 	}
 }
 
+func TestRoleChangesApplyToLiveSessions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "users.json"), testSecret, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.UpsertSSOUser("okta", "https://okta.example", "sub-1", "priya@sycamore.example", "Priya", RoleAdmin, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _, err := s.Issue(u, MethodSSO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Parse(tok)
+	if err != nil || c.Role != RoleAdmin {
+		t.Fatalf("fresh session: %+v %v", c, err)
+	}
+
+	// The IdP demotes Priya at her next sign-in: the stored role changes, and
+	// the live session must follow on its next request.
+	if _, err := s.UpsertSSOUser("okta", "https://okta.example", "sub-1", "priya@sycamore.example", "Priya", RoleViewer, ""); err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.Parse(tok)
+	if err != nil || c.Role != RoleViewer {
+		t.Fatalf("a demotion must reach the live session: %+v %v", c, err)
+	}
+
+	// A user removed from the store has no sessions left.
+	s.mu.Lock()
+	for i := range s.users {
+		if s.users[i].ID == u.ID {
+			s.users = append(s.users[:i], s.users[i+1:]...)
+			break
+		}
+	}
+	s.mu.Unlock()
+	if _, err := s.Parse(tok); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("a deleted user's session must end, got %v", err)
+	}
+}
+
 func TestSSOUsersAreSeparatePerProvider(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "users.json"), testSecret, Options{})
 	if err != nil {

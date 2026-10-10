@@ -43,6 +43,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			"authorization_endpoint":                f.srv.URL + "/authorize",
 			"token_endpoint":                        f.srv.URL + "/token",
 			"jwks_uri":                              f.srv.URL + "/keys",
+			"end_session_endpoint":                  f.srv.URL + "/logout",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	})
@@ -123,7 +124,7 @@ func TestSSOHappyPathMapsGroupsAndUsesPKCE(t *testing.T) {
 	st := startFlow(t, s)
 	idp.claims = baseClaims(idp.srv.URL, st.Nonce)
 
-	id, err := s.Callback(context.Background(), st, st.State, "code-1", "")
+	id, _, err := s.Callback(context.Background(), st, st.State, "code-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestSSOHappyPathMapsGroupsAndUsesPKCE(t *testing.T) {
 	idp.claims["groups"] = []string{"cloudterm-operators", "cloudterm-admins"}
 	st = startFlow(t, s)
 	idp.claims["nonce"] = st.Nonce
-	id, err = s.Callback(context.Background(), st, st.State, "code-2", "")
+	id, _, err = s.Callback(context.Background(), st, st.State, "code-2", "")
 	if err != nil || id.Role != RoleAdmin {
 		t.Fatalf("admin group must win: %+v %v", id, err)
 	}
@@ -169,7 +170,7 @@ func TestSSORefusals(t *testing.T) {
 			st := startFlow(t, s)
 			idp.claims = baseClaims(idp.srv.URL, st.Nonce)
 			got := tc.mutate(idp.claims, &st)
-			_, err := s.Callback(context.Background(), st, got, "code", "")
+			_, _, err := s.Callback(context.Background(), st, got, "code", "")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want refusal containing %q, got %v", tc.want, err)
 			}
@@ -183,7 +184,7 @@ func TestSSORefusals(t *testing.T) {
 		real := idp.key
 		idp.key = other
 		defer func() { idp.key = real }()
-		if _, err := s.Callback(context.Background(), st, st.State, "code", ""); err == nil || !strings.Contains(err.Error(), "ID token rejected") {
+		if _, _, err := s.Callback(context.Background(), st, st.State, "code", ""); err == nil || !strings.Contains(err.Error(), "ID token rejected") {
 			t.Fatalf("token signed by another key must be rejected, got %v", err)
 		}
 	})
@@ -197,5 +198,35 @@ func TestLoginStateCookieIsTamperProof(t *testing.T) {
 	}
 	if _, err := svc.DecodeState(v + "x"); err == nil {
 		t.Fatal("tampered state cookie accepted")
+	}
+}
+
+func TestOIDCSignOutRedirectsToIDPEndSession(t *testing.T) {
+	idp := newFakeIdP(t)
+	p := newTestSSO(idp.srv.URL)
+	ctx := context.Background()
+
+	target, err := p.LogoutURL(ctx, "the-id-token", "https://desk.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Path != "/logout" {
+		t.Fatalf("must target the IdP's end_session_endpoint, got %q", target)
+	}
+	if u.Query().Get("id_token_hint") != "the-id-token" {
+		t.Error("the session's ID token must ride along as id_token_hint")
+	}
+	if u.Query().Get("post_logout_redirect_uri") != "https://desk.example/" {
+		t.Error("the landing page must be the post_logout_redirect_uri")
+	}
+
+	// Without a hint the redirect still works; without an endpoint it does not.
+	target, err = p.LogoutURL(ctx, "", "https://desk.example/")
+	if err != nil || !strings.Contains(target, "/logout") {
+		t.Fatalf("logout without a hint: %q %v", target, err)
 	}
 }

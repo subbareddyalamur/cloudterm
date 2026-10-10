@@ -28,6 +28,9 @@ type ProviderConfig struct {
 	MetadataURL  string `json:"metadata_url,omitempty"`
 	MetadataFile string `json:"metadata_file,omitempty"`
 	MetadataXML  string `json:"metadata_xml,omitempty"`
+	// EntityID picks one IdP out of a federation metadata file. Optional:
+	// metadata with a single IdP needs no entity_id.
+	EntityID string `json:"entity_id,omitempty"`
 
 	// Attribute or claim names. Empty uses the common names for each IdP.
 	EmailAttribute  string `json:"email_attribute,omitempty"`

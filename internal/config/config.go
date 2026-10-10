@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -80,10 +81,16 @@ type Config struct {
 	SessionIdleMinutes  int
 	PublicURL           string
 	SSOProvidersFile    string
+	// TrustedProxies lists IPs/CIDRs whose X-Forwarded-For and
+	// X-Forwarded-Proto headers CloudTerm believes. Empty trusts everyone
+	// (for deployments behind one TLS-terminating proxy).
+	TrustedProxies []string
+	// Warnings are configuration problems worth logging at boot.
+	Warnings []string
 }
 
 func Load() *Config {
-	return &Config{
+	cfg := &Config{
 		Port:                 envInt("PORT", 5000),
 		Tag1:                 envStr("TAG1", "Customer"),
 		Tag2:                 envStr("TAG2", "Environment"),
@@ -155,6 +162,52 @@ func Load() *Config {
 		PublicURL:            envStr("PUBLIC_URL", ""),
 		SSOProvidersFile:     envStr("SSO_PROVIDERS_FILE", ""),
 	}
+	cfg.Warnings, cfg.TrustedProxies = parseTrustedProxies(envList("TRUSTED_PROXIES"))
+	return cfg
+}
+
+// parseTrustedProxies accepts IPs and CIDRs. A bare IP covers just that
+// address; anything unparsable is reported rather than silently ignored.
+func parseTrustedProxies(entries []string) (warnings, cleaned []string) {
+	for _, e := range entries {
+		if strings.Contains(e, "/") {
+			if _, _, err := net.ParseCIDR(e); err != nil {
+				warnings = append(warnings, "TRUSTED_PROXIES: cannot parse "+e)
+				continue
+			}
+			cleaned = append(cleaned, e)
+			continue
+		}
+		if net.ParseIP(e) == nil {
+			warnings = append(warnings, "TRUSTED_PROXIES: cannot parse "+e)
+			continue
+		}
+		if strings.Contains(e, ":") {
+			cleaned = append(cleaned, e+"/128")
+		} else {
+			cleaned = append(cleaned, e+"/32")
+		}
+	}
+	return warnings, cleaned
+}
+
+// IsTrustedProxy reports whether the peer that connected to CloudTerm is a
+// listed proxy. With no list, every peer is trusted (single-proxy deployments
+// that forward headers); a list restricts header trust to those peers.
+func (c *Config) IsTrustedProxy(peer string) bool {
+	if len(c.TrustedProxies) == 0 {
+		return true
+	}
+	ip := net.ParseIP(peer)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range c.TrustedProxies {
+		if _, netIP, err := net.ParseCIDR(cidr); err == nil && netIP.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // envList splits a comma-separated variable, trimming blanks.

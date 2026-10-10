@@ -56,6 +56,9 @@ func (h *Handler) mountEnterprise(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/providers", h.handleProvidersAdmin)
 	mux.HandleFunc("GET /api/auth/me", h.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", h.handleLogout)
+	mux.HandleFunc("GET /api/auth/logout", h.handleLogoutRedirect)
+	mux.HandleFunc("GET /api/auth/saml/{id}/slo", h.handleSAMLLogoutResponse)
+	mux.HandleFunc("POST /api/auth/saml/{id}/slo", h.handleSAMLLogoutResponse)
 	mux.HandleFunc("GET /api/license", h.handleLicense)
 	mux.HandleFunc("POST /api/license/redeem", h.handleLicenseRedeem)
 	mux.HandleFunc("GET /api/aws/onboarding", h.handleOnboarding)
@@ -67,11 +70,8 @@ func (h *Handler) mountEnterprise(mux *http.ServeMux) {
 // Request identity
 // ---------------------------------------------------------------------------
 
-func clientIP(r *http.Request) string {
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		first, _, _ := strings.Cut(xf, ",")
-		return strings.TrimSpace(first)
-	}
+// peerIP is the address that actually connected to CloudTerm (never a header).
+func peerIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -79,8 +79,45 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func isHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+// clientIP reports who is calling for the audit log. X-Forwarded-For is
+// honored only when it arrives through a trusted proxy (TRUSTED_PROXIES).
+// With a list, the walk starts at the right end and skips trusted proxies,
+// so entries a client spoofs on the left cannot masquerade as real callers.
+func (h *Handler) clientIP(r *http.Request) string {
+	xf := r.Header.Get("X-Forwarded-For")
+	if h.cfg == nil || xf == "" || !h.cfg.IsTrustedProxy(peerIP(r)) {
+		return peerIP(r)
+	}
+	// No list configured: keep honoring the header as before, for deployments
+	// behind a single forwarding proxy.
+	if len(h.cfg.TrustedProxies) == 0 {
+		first, _, _ := strings.Cut(xf, ",")
+		return strings.TrimSpace(first)
+	}
+	parts := strings.Split(xf, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := strings.TrimSpace(parts[i])
+		if h.cfg.IsTrustedProxy(ip) {
+			continue
+		}
+		if ip != "" {
+			return ip
+		}
+	}
+	return peerIP(r)
+}
+
+// isHTTPS reports whether the user's connection is encrypted: directly, or
+// through a trusted proxy that says X-Forwarded-Proto: https. An untrusted
+// header can no longer flip cookies to Secure or enable HSTS.
+func (h *Handler) isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if h.cfg != nil && !h.cfg.IsTrustedProxy(peerIP(r)) {
+		return false
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func sessionToken(r *http.Request) string {
@@ -125,7 +162,7 @@ func (h *Handler) auditAuth(r *http.Request, action, outcome, email, uid string,
 		UserEmail: email,
 		Role:      string(role),
 		TenantID:  tenant.ID(r),
-		IP:        clientIP(r),
+		IP:        h.clientIP(r),
 		UserAgent: r.UserAgent(),
 		Details:   details,
 	})
@@ -138,13 +175,13 @@ func (h *Handler) setSession(w http.ResponseWriter, r *http.Request, token strin
 		Path:     "/",
 		MaxAge:   int(h.authn.MaxAge().Seconds()),
 		HttpOnly: true,
-		Secure:   isHTTPS(r),
+		Secure:   h.isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-func clearCookie(w http.ResponseWriter, r *http.Request, name string) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteLaxMode})
+func (h *Handler) clearCookie(w http.ResponseWriter, r *http.Request, name string) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: h.isHTTPS(r), SameSite: http.SameSiteLaxMode})
 }
 
 // localLoginPolicy is "all", "admin" (break-glass only), or "off".
@@ -197,7 +234,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Sign in with single sign-on.", http.StatusForbidden)
 		return
 	}
-	user, err := h.authn.Login(body.Email, body.Password, clientIP(r))
+	user, err := h.authn.Login(body.Email, body.Password, h.clientIP(r))
 	if err != nil {
 		reason := err.Error()
 		h.auditAuth(r, "login_password", "denied", body.Email, "", "", reason)
@@ -245,8 +282,10 @@ func (h *Handler) ssoFail(w http.ResponseWriter, r *http.Request, provider, reas
 	http.Redirect(w, r, "/?auth_error="+url.QueryEscape(reason), http.StatusFound)
 }
 
-// finishSSO turns a verified identity into a CloudTerm session.
-func (h *Handler) finishSSO(w http.ResponseWriter, r *http.Request, id auth.Identity, protocol string) {
+// finishSSO turns a verified identity into a CloudTerm session. The raw ID
+// token (OIDC only) is kept for the session so sign-out can pass it back to
+// the IdP as an id_token_hint.
+func (h *Handler) finishSSO(w http.ResponseWriter, r *http.Request, id auth.Identity, protocol, rawIDToken string) {
 	user, err := h.authn.UpsertSSOUser(id.ProviderID, id.Issuer, id.Subject, id.Email, id.Name, id.Role, tenant.ID(r))
 	if err != nil {
 		h.ssoFail(w, r, id.ProviderID, "CloudTerm could not record this user: "+err.Error(), id.Email)
@@ -256,6 +295,9 @@ func (h *Handler) finishSSO(w http.ResponseWriter, r *http.Request, id auth.Iden
 	if err != nil {
 		h.ssoFail(w, r, id.ProviderID, "could not start session", id.Email)
 		return
+	}
+	if rawIDToken != "" {
+		h.authn.StashIDToken(claims.SessionID, rawIDToken)
 	}
 	h.setSession(w, r, tok)
 	h.auditAuth(r, "login_sso", "success", user.Email, user.ID, user.Role,
@@ -280,7 +322,7 @@ func (h *Handler) handleSSOStart(w http.ResponseWriter, r *http.Request) {
 		}
 		http.SetCookie(w, &http.Cookie{
 			Name: stateCookie, Value: h.authn.EncodeState(st), Path: "/api/auth/sso",
-			MaxAge: 600, HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteLaxMode,
+			MaxAge: 600, HttpOnly: true, Secure: h.isHTTPS(r), SameSite: http.SameSiteLaxMode,
 		})
 		http.Redirect(w, r, target, http.StatusFound)
 		return
@@ -292,7 +334,7 @@ func (h *Handler) handleSSOStart(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/?auth_error="+url.QueryEscape(p.Config().Label+" is unreachable. An admin can use the break-glass account."), http.StatusFound)
 			return
 		}
-		if isHTTPS(r) {
+		if h.isHTTPS(r) {
 			// The IdP posts back cross-site, so this cookie must be SameSite=None.
 			http.SetCookie(w, &http.Cookie{
 				Name: samlCookie, Value: h.authn.SignValue(id + "|" + reqID), Path: "/api/auth/saml",
@@ -313,7 +355,7 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, err := r.Cookie(stateCookie)
-	clearCookie(w, r, stateCookie)
+	h.clearCookie(w, r, stateCookie)
 	if err != nil {
 		h.ssoFail(w, r, id, "Sign-in took too long or started in another browser. Try again.", "")
 		return
@@ -326,12 +368,12 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	ident, err := p.Callback(ctx, st, q.Get("state"), q.Get("code"), q.Get("error"))
+	ident, rawIDToken, err := p.Callback(ctx, st, q.Get("state"), q.Get("code"), q.Get("error"))
 	if err != nil {
 		h.ssoFail(w, r, id, err.Error(), ident.Email)
 		return
 	}
-	h.finishSSO(w, r, ident, "oidc")
+	h.finishSSO(w, r, ident, "oidc", rawIDToken)
 }
 
 func (h *Handler) handleSAMLMetadata(w http.ResponseWriter, r *http.Request) {
@@ -364,9 +406,9 @@ func (h *Handler) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		h.ssoFail(w, r, id, err.Error(), ident.Email)
 		return
 	}
-	if isHTTPS(r) {
+	if h.isHTTPS(r) {
 		c, cerr := r.Cookie(samlCookie)
-		clearCookie(w, r, samlCookie)
+		h.clearCookie(w, r, samlCookie)
 		v, valid := "", false
 		if cerr == nil {
 			v, valid = h.authn.VerifyValue(c.Value)
@@ -376,7 +418,7 @@ func (h *Handler) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.finishSSO(w, r, ident, "saml")
+	h.finishSSO(w, r, ident, "saml", "")
 }
 
 // handleProvidersAdmin shows what each IdP needs configured on its side.
@@ -431,8 +473,68 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		h.authn.Revoke(c)
 		h.auditAuth(r, "logout", "success", c.Email, c.UserID, c.Role, "session "+safePrefix(c.SessionID))
 	}
-	clearCookie(w, r, sessionCookie)
+	h.clearCookie(w, r, sessionCookie)
 	jsonResponse(w, map[string]string{"status": "signed out"})
+}
+
+// handleLogoutRedirect is the sign-out a browser navigates to: it ends the
+// local session and, when the person came in through an IdP, continues to the
+// IdP's own logout so the next sign-in asks for a password again.
+func (h *Handler) handleLogoutRedirect(w http.ResponseWriter, r *http.Request) {
+	c, err := h.claims(r)
+	if err != nil {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	// The IdP hint must be read before the revocation drops the stash.
+	idToken, _ := h.authn.GetIDToken(c.SessionID)
+	h.authn.Revoke(c)
+	h.clearCookie(w, r, sessionCookie)
+	h.auditAuth(r, "logout", "success", c.Email, c.UserID, c.Role, "session "+safePrefix(c.SessionID)+" (sign-out page)")
+
+	provider, isSSO := strings.CutPrefix(c.Provider, "sso:")
+	if isSSO && h.idps != nil {
+		if p, ok := h.idps.SAML(provider); ok {
+			if u, exists := h.authn.User(c.UserID); exists && u.Subject != "" {
+				start, _, err := p.StartLogout(r.Context(), u.Subject, "")
+				if err == nil {
+					start.Write(w, r)
+					return
+				}
+				h.auditAuth(r, "logout_sso", "error", c.Email, c.UserID, c.Role, "provider="+provider+" "+err.Error())
+			}
+		} else if p, ok := h.idps.OIDC(provider); ok {
+			home := ""
+			if h.cfg != nil {
+				home = strings.TrimRight(h.cfg.PublicURL, "/") + "/"
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+			defer cancel()
+			if target, err := p.LogoutURL(ctx, idToken, home); err == nil && target != "" {
+				http.Redirect(w, r, target, http.StatusFound)
+				return
+			}
+		}
+	}
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// handleSAMLLogoutResponse is where the IdP sends the result of single logout.
+func (h *Handler) handleSAMLLogoutResponse(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := h.idps.SAML(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := p.LogoutResponse(r.Context(), r); err != nil {
+		h.auditAuth(r, "logout_sso", "denied", "", "", "", "provider="+id+" "+err.Error())
+		http.Redirect(w, r, "/?auth_error="+url.QueryEscape("Sign-out at the identity provider could not be confirmed."), http.StatusFound)
+		return
+	}
+	h.auditAuth(r, "logout_sso", "success", "", "", "", "provider="+id)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func safePrefix(s string) string {
@@ -617,9 +719,13 @@ func sameOrigin(r *http.Request) bool {
 }
 
 // isSAMLACS is the one cross-site POST CloudTerm accepts: the IdP returning a
-// signed assertion. It is bound to a pending request instead of an Origin.
+// signed assertion or logout response. It is bound to a pending request
+// instead of an Origin.
 func isSAMLACS(r *http.Request) bool {
-	return r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/auth/saml/") && strings.HasSuffix(r.URL.Path, "/acs")
+	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/api/auth/saml/") {
+		return false
+	}
+	return strings.HasSuffix(r.URL.Path, "/acs") || strings.HasSuffix(r.URL.Path, "/slo")
 }
 
 type statusRecorder struct {
@@ -654,7 +760,7 @@ func (h *Handler) wrap(next http.Handler) http.Handler {
 		hdr.Set("X-Content-Type-Options", "nosniff")
 		hdr.Set("Referrer-Policy", "same-origin")
 		hdr.Set("X-Frame-Options", "SAMEORIGIN")
-		if isHTTPS(r) {
+		if h.isHTTPS(r) {
 			hdr.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 
@@ -711,7 +817,7 @@ func (h *Handler) wrap(next http.Handler) http.Handler {
 			UserEmail: c.Email,
 			Role:      string(c.Role),
 			TenantID:  c.TenantID,
-			IP:        clientIP(r),
+			IP:        h.clientIP(r),
 			UserAgent: r.UserAgent(),
 			Details:   r.Method + " " + r.URL.Path + " " + http.StatusText(rec.status),
 		})

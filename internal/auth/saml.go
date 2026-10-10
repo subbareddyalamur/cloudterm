@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -75,6 +76,7 @@ func newSAMLProvider(cfg ProviderConfig, base, dataDir string) (*SAMLProvider, e
 	root := base + "/api/auth/saml/" + cfg.ID
 	metaURL, _ := url.Parse(root + "/metadata")
 	acsURL, _ := url.Parse(root + "/acs")
+	sloURL, _ := url.Parse(root + "/slo")
 	client := &http.Client{Timeout: 15 * time.Second}
 	sp := &saml.ServiceProvider{
 		EntityID:              metaURL.String(),
@@ -82,6 +84,8 @@ func newSAMLProvider(cfg ProviderConfig, base, dataDir string) (*SAMLProvider, e
 		Certificate:           cert,
 		MetadataURL:           *metaURL,
 		AcsURL:                *acsURL,
+		SloURL:                *sloURL,
+		LogoutBindings:        []string{saml.HTTPPostBinding, saml.HTTPRedirectBinding},
 		HTTPClient:            client,
 		AllowIDPInitiated:     false,
 		AuthnNameIDFormat:     saml.UnspecifiedNameIDFormat,
@@ -140,7 +144,7 @@ func (p *SAMLProvider) ensureMetadata(ctx context.Context) error {
 		}
 		return fmt.Errorf("%s metadata: %w", p.cfg.Label, err)
 	}
-	ed, err := parseIDPMetadata(raw)
+	ed, err := parseIDPMetadata(raw, p.cfg.EntityID)
 	if err != nil {
 		return fmt.Errorf("%s metadata: %w", p.cfg.Label, err)
 	}
@@ -177,22 +181,40 @@ func (p *SAMLProvider) fetchMetadata(ctx context.Context) ([]byte, error) {
 	}
 }
 
-// parseIDPMetadata accepts an EntityDescriptor or an EntitiesDescriptor with one IdP.
-func parseIDPMetadata(raw []byte) (*saml.EntityDescriptor, error) {
-	var ed saml.EntityDescriptor
-	if err := xml.Unmarshal(raw, &ed); err == nil && len(ed.IDPSSODescriptors) > 0 {
-		return &ed, nil
+// parseIDPMetadata accepts an EntityDescriptor or an EntitiesDescriptor.
+// A federation file lists several IdPs, so entity_id selects which one to
+// trust; without it, exactly one IdP must be present. Picking arbitrarily
+// would silently trust the wrong certificate.
+func parseIDPMetadata(raw []byte, entityID string) (*saml.EntityDescriptor, error) {
+	var single saml.EntityDescriptor
+	if err := xml.Unmarshal(raw, &single); err == nil && len(single.IDPSSODescriptors) > 0 {
+		return &single, nil
 	}
 	var eds saml.EntitiesDescriptor
 	if err := xml.Unmarshal(raw, &eds); err != nil {
 		return nil, err
 	}
+	var found []*saml.EntityDescriptor
 	for i := range eds.EntityDescriptors {
 		if len(eds.EntityDescriptors[i].IDPSSODescriptors) > 0 {
-			return &eds.EntityDescriptors[i], nil
+			found = append(found, &eds.EntityDescriptors[i])
 		}
 	}
-	return nil, errors.New("no IdP SSO descriptor found")
+	switch {
+	case len(found) == 0:
+		return nil, errors.New("no IdP SSO descriptor found")
+	case entityID != "":
+		for _, ed := range found {
+			if ed.EntityID == entityID {
+				return ed, nil
+			}
+		}
+		return nil, fmt.Errorf("entity_id %q is not one of the %d IdPs in this metadata", entityID, len(found))
+	case len(found) > 1:
+		return nil, fmt.Errorf("%d IdPs in this metadata: set entity_id to the one to trust", len(found))
+	default:
+		return found[0], nil
+	}
 }
 
 // Start creates an AuthnRequest and remembers its ID for the response.
@@ -319,6 +341,106 @@ func (p *SAMLProvider) ACS(ctx context.Context, r *http.Request) (Identity, stri
 		return id, head.InResponseTo, err
 	}
 	return id, head.InResponseTo, nil
+}
+
+// StartLogout begins SP-initiated single logout: it asks the IdP to end its
+// session for nameID, using whichever SLO binding the IdP metadata offers.
+// The logout request ID is remembered so the returning LogoutResponse can be
+// matched to a logout this process actually started.
+func (p *SAMLProvider) StartLogout(ctx context.Context, nameID, relayState string) (redirectOrForm, string, error) {
+	if err := p.ensureMetadata(ctx); err != nil {
+		return redirectOrForm{}, "", err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	loc := p.sp.GetSLOBindingLocation(saml.HTTPRedirectBinding)
+	if loc != "" {
+		req, err := p.sp.MakeLogoutRequest(loc, nameID)
+		if err != nil {
+			return redirectOrForm{}, "", err
+		}
+		p.rememberLocked(req.ID)
+		return redirectOrForm{URL: req.Redirect(relayState).String()}, req.ID, nil
+	}
+	loc = p.sp.GetSLOBindingLocation(saml.HTTPPostBinding)
+	if loc != "" {
+		req, err := p.sp.MakeLogoutRequest(loc, nameID)
+		if err != nil {
+			return redirectOrForm{}, "", err
+		}
+		p.rememberLocked(req.ID)
+		page := []byte(`<!doctype html><html><head><meta charset="utf-8"><title>Signing out</title></head><body onload="document.forms[0].submit()">` +
+			string(req.Post(relayState)) + `<noscript><button type="submit" form="SAMLRequestForm">Continue</button></noscript></body></html>`)
+		return redirectOrForm{Form: page}, req.ID, nil
+	}
+	return redirectOrForm{}, "", &DeniedError{Reason: p.cfg.Label + " does not offer single logout"}
+}
+
+// LogoutResponse validates the IdP's answer to a logout this process started.
+// A LogoutResponse must answer a remembered logout request, exactly once.
+func (p *SAMLProvider) LogoutResponse(ctx context.Context, r *http.Request) error {
+	if err := p.ensureMetadata(ctx); err != nil {
+		return err
+	}
+	if r.PostForm == nil {
+		if err := r.ParseForm(); err != nil {
+			return &DeniedError{Reason: "malformed logout response"}
+		}
+	}
+	if r.PostForm.Get("SAMLRequest") != "" || r.URL.Query().Get("SAMLRequest") != "" {
+		return &DeniedError{Reason: "CloudTerm does not accept IdP-initiated logout requests"}
+	}
+	head, err := logoutResponseHead(r)
+	if err != nil {
+		return err
+	}
+	if head.InResponseTo == "" {
+		return &DeniedError{Reason: "logout response answers no logout from this CloudTerm"}
+	}
+	if !p.consume(head.InResponseTo) {
+		return &DeniedError{Reason: "logout response does not answer a pending logout, or was already used"}
+	}
+	if err := p.sp.ValidateLogoutResponseRequest(r); err != nil {
+		reason := err.Error()
+		var ire *saml.InvalidResponseError
+		if errors.As(err, &ire) && ire.PrivateErr != nil {
+			reason = ire.PrivateErr.Error()
+		}
+		return &DeniedError{Reason: "logout response rejected: " + reason}
+	}
+	return nil
+}
+
+// logoutResponseHead reads the InResponseTo of a LogoutResponse arriving over
+// either binding, before the (signed) document is trusted.
+func logoutResponseHead(r *http.Request) (struct {
+	InResponseTo string `xml:"InResponseTo,attr"`
+}, error) {
+	var out struct {
+		InResponseTo string `xml:"InResponseTo,attr"`
+	}
+	encoded := r.PostForm.Get("SAMLResponse")
+	if encoded == "" {
+		encoded = r.URL.Query().Get("SAMLResponse")
+	}
+	if encoded == "" {
+		return out, &DeniedError{Reason: "no SAMLResponse in the logout response"}
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return out, &DeniedError{Reason: "logout response is not base64"}
+	}
+	if r.PostForm.Get("SAMLResponse") == "" {
+		// HTTP-Redirect binding: the response is deflated before base64.
+		zr := flate.NewReader(bytes.NewReader(raw))
+		defer func() { _ = zr.Close() }()
+		raw, err = io.ReadAll(io.LimitReader(zr, 1<<20))
+		if err != nil {
+			return out, &DeniedError{Reason: "logout response cannot be inflated"}
+		}
+	}
+	_ = xml.Unmarshal(raw, &out)
+	return out, nil
 }
 
 func withOverride(override string, defaults []string) []string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -20,6 +21,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // testIdP is a real SAML IdP (the library's own) that signs and encrypts assertions.
@@ -185,6 +187,133 @@ func TestSAMLRefusals(t *testing.T) {
 				t.Fatalf("want refusal containing %q, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// federationXML lists two IdPs the way an InCommon-style metadata file does.
+func federationXML() string {
+	return `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+  <EntityDescriptor entityID="https://idp-one.example">
+    <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"/>
+  </EntityDescriptor>
+  <EntityDescriptor entityID="https://idp-two.example">
+    <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"/>
+  </EntityDescriptor>
+</EntitiesDescriptor>`
+}
+
+func TestFederationMetadataNeedsEntityID(t *testing.T) {
+	ed, err := parseIDPMetadata([]byte(federationXML()), "")
+	if err == nil || !strings.Contains(err.Error(), "entity_id") {
+		t.Fatalf("a federation without entity_id must be refused, got %v", err)
+	}
+	if ed != nil {
+		t.Fatal("no descriptor may be returned on refusal")
+	}
+
+	ed, err = parseIDPMetadata([]byte(federationXML()), "https://idp-two.example")
+	if err != nil || ed.EntityID != "https://idp-two.example" {
+		t.Fatalf("entity_id must pick the named IdP: %+v %v", ed, err)
+	}
+
+	if _, err := parseIDPMetadata([]byte(federationXML()), "https://idp-three.example"); err == nil || !strings.Contains(err.Error(), "not one of") {
+		t.Fatalf("an entity_id absent from the metadata must be refused, got %v", err)
+	}
+
+	single := `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://solo.example">
+	  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"/>
+	</EntityDescriptor>`
+	ed, err = parseIDPMetadata([]byte(single), "")
+	if err != nil || ed.EntityID != "https://solo.example" {
+		t.Fatalf("single-IdP metadata needs no entity_id: %+v %v", ed, err)
+	}
+}
+
+// idpSignLogoutResponse builds a LogoutResponse the way a real IdP does:
+// signed with the IdP's key, so the signature path is exercised for real.
+func idpSignLogoutResponse(t *testing.T, idp *saml.IdentityProvider, sp *saml.ServiceProvider, inResponseTo string) []byte {
+	t.Helper()
+	resp, err := sp.MakeLogoutResponse(sp.SloURL.String(), inResponseTo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Issuer = &saml.Issuer{Value: idp.Metadata().EntityID}
+	doc := etree.NewDocument()
+	doc.SetRoot(resp.Element())
+	keyPair := tls.Certificate{Certificate: [][]byte{idp.Certificate.Raw}, PrivateKey: idp.Key, Leaf: idp.Certificate}
+	ctx := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore(keyPair))
+	ctx.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
+	if err := ctx.SetSignatureMethod(dsig.RSASHA256SignatureMethod); err != nil {
+		t.Fatal(err)
+	}
+	el, err := ctx.SignEnveloped(doc.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.SetRoot(el)
+	return mustBytes(t, doc)
+}
+
+func TestSAMLSPInitiatedLogout(t *testing.T) {
+	idp := testIdP(t)
+	slo, _ := url.Parse("https://idp.example/slo")
+	idp.LogoutURL = *slo
+	p := newTestSAML(t, idp)
+	ctx := context.Background()
+
+	// The logout request must go to the IdP's SLO endpoint.
+	start, reqID, err := p.StartLogout(ctx, "priya@sycamore.example", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(start.URL, "https://idp.example/slo?SAMLRequest=") || reqID == "" {
+		t.Fatalf("logout request %q (id %q) must target the IdP SLO endpoint", start.URL, reqID)
+	}
+
+	// The IdP answers: a LogoutResponse naming our request, to our SLO URL.
+	mkResponse := func(inResponseTo string) *http.Request {
+		raw := idpSignLogoutResponse(t, idp, p.sp, inResponseTo)
+		form := url.Values{"SAMLResponse": {base64.StdEncoding.EncodeToString(raw)}}
+		req := httptest.NewRequest(http.MethodPost, p.sp.SloURL.String(), strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req
+	}
+
+	if err := p.LogoutResponse(ctx, mkResponse(reqID)); err != nil {
+		t.Fatalf("a genuine logout response must validate: %v", err)
+	}
+	if err := p.LogoutResponse(ctx, cloneRequest(t, mkResponse(reqID))); err == nil || !strings.Contains(err.Error(), "already used") {
+		t.Fatalf("a replayed logout response must be refused, got %v", err)
+	}
+	if err := p.LogoutResponse(ctx, mkResponse("never-issued")); err == nil || !strings.Contains(err.Error(), "does not answer a pending logout") {
+		t.Fatalf("an unsolicited logout response must be refused, got %v", err)
+	}
+
+	// CloudTerm does not accept IdP-initiated logout requests at its SLO URL.
+	form := url.Values{"SAMLRequest": {base64.StdEncoding.EncodeToString([]byte("<x/>"))}}
+	req := httptest.NewRequest(http.MethodPost, p.sp.SloURL.String(), strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := p.LogoutResponse(ctx, req); err == nil || !strings.Contains(err.Error(), "does not accept IdP-initiated") {
+		t.Fatalf("a logout request must be refused, got %v", err)
+	}
+}
+
+func mustBytes(t *testing.T, doc *etree.Document) []byte {
+	t.Helper()
+	b, err := doc.WriteToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestSAMLLogoutNeedsIDPSupport: an IdP without SLO endpoints gets local-only
+// sign-out rather than a broken redirect.
+func TestSAMLLogoutNeedsIDPSupport(t *testing.T) {
+	idp := testIdP(t) // no LogoutURL: no SLO in metadata
+	p := newTestSAML(t, idp)
+	if _, _, err := p.StartLogout(context.Background(), "priya@sycamore.example", ""); err == nil || !strings.Contains(err.Error(), "does not offer single logout") {
+		t.Fatalf("an IdP without SLO must refuse the logout request, got %v", err)
 	}
 }
 

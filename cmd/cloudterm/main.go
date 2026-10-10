@@ -112,6 +112,23 @@ func main() {
 	for _, p := range idps.Providers() {
 		logger.Printf("Sign-in provider: %s (%s, id %s)", p.Label, strings.ToUpper(p.Type), p.ID)
 	}
+	for _, w := range cfg.Warnings {
+		logger.Printf("warning: %s", w)
+	}
+	if idps.Enabled() {
+		if !strings.HasPrefix(cfg.PublicURL, "https://") {
+			for _, p := range idps.Providers() {
+				if p.Type == "saml" {
+					logger.Printf("warning: provider %s speaks SAML but PUBLIC_URL is not https; the browser-binding cookie is skipped and assertions cross the network in the clear", p.ID)
+					break
+				}
+			}
+		}
+		if len(cfg.TrustedProxies) == 0 && strings.HasPrefix(cfg.PublicURL, "https://") {
+			logger.Printf("note: TRUSTED_PROXIES is unset, so X-Forwarded-* headers are honored from any peer; set it to the proxy address before exposing the port directly")
+		}
+		logger.Printf("note: SAML pending requests and session state live in this process; run one replica or use sticky sessions")
+	}
 	handler.SetIdentity(idents, idps)
 	if cfg.RequireAuth {
 		logger.Printf("Sign-in required for every route")

@@ -11,8 +11,8 @@ func TestShippedProviderExampleLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfgs) != 5 {
-		t.Fatalf("expected 5 example providers, got %d", len(cfgs))
+	if len(cfgs) != 6 {
+		t.Fatalf("expected 6 example providers, got %d", len(cfgs))
 	}
 	for i := range cfgs {
 		if err := cfgs[i].validate(); err != nil {

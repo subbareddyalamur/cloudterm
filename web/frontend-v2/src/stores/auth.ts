@@ -75,8 +75,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   signOut: async () => {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
-    window.location.assign('/');
+    // A full-page navigation lets the server continue to the IdP's own
+    // logout (SAML SLO / OIDC end_session) after ending the local session.
+    window.location.assign('/api/auth/logout');
   },
 
   setSignInOpen: (open) => set({ signInOpen: open }),

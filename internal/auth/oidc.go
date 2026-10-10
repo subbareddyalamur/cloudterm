@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -83,42 +84,44 @@ func (p *OIDCProvider) Start(ctx context.Context) (string, LoginState, error) {
 	return url, st, nil
 }
 
-// Callback validates the redirect back from the IdP and returns the identity.
-func (p *OIDCProvider) Callback(ctx context.Context, st LoginState, gotState, code, idpError string) (Identity, error) {
+// Callback validates the redirect back from the IdP. It returns the identity
+// and the raw ID token, which the caller keeps for the id_token_hint of a
+// later sign-out.
+func (p *OIDCProvider) Callback(ctx context.Context, st LoginState, gotState, code, idpError string) (Identity, string, error) {
 	id := Identity{ProviderID: p.cfg.ID}
 	if idpError != "" {
-		return id, &DeniedError{Reason: p.cfg.Label + " returned " + idpError}
+		return id, "", &DeniedError{Reason: p.cfg.Label + " returned " + idpError}
 	}
 	if st.Provider != p.cfg.ID {
-		return id, &DeniedError{Reason: "sign-in was started with a different provider"}
+		return id, "", &DeniedError{Reason: "sign-in was started with a different provider"}
 	}
 	if st.State == "" || subtle.ConstantTimeCompare([]byte(st.State), []byte(gotState)) != 1 {
-		return id, &DeniedError{Reason: "login state did not match; start sign-in again"}
+		return id, "", &DeniedError{Reason: "login state did not match; start sign-in again"}
 	}
 	if code == "" {
-		return id, &DeniedError{Reason: "no authorization code"}
+		return id, "", &DeniedError{Reason: "no authorization code"}
 	}
 	if err := p.init(ctx); err != nil {
-		return id, err
+		return id, "", err
 	}
 	tok, err := p.oauth.Exchange(ctx, code, oauth2.VerifierOption(st.Verifier))
 	if err != nil {
-		return id, &DeniedError{Reason: "code exchange failed: " + err.Error()}
+		return id, "", &DeniedError{Reason: "code exchange failed: " + err.Error()}
 	}
 	rawID, _ := tok.Extra("id_token").(string)
 	if rawID == "" {
-		return id, &DeniedError{Reason: p.cfg.Label + " did not return an ID token"}
+		return id, "", &DeniedError{Reason: p.cfg.Label + " did not return an ID token"}
 	}
 	idt, err := p.verifier.Verify(ctx, rawID)
 	if err != nil {
-		return id, &DeniedError{Reason: "ID token rejected: " + err.Error()}
+		return id, "", &DeniedError{Reason: "ID token rejected: " + err.Error()}
 	}
 	if subtle.ConstantTimeCompare([]byte(idt.Nonce), []byte(st.Nonce)) != 1 {
-		return id, &DeniedError{Reason: "ID token nonce did not match"}
+		return id, "", &DeniedError{Reason: "ID token nonce did not match"}
 	}
 	var raw map[string]any
 	if err := idt.Claims(&raw); err != nil {
-		return id, err
+		return id, "", err
 	}
 	id.Issuer, id.Subject = idt.Issuer, idt.Subject
 	id.Email = firstNonEmpty(stringClaim(raw, p.cfg.EmailAttribute), stringClaim(raw, "email"), stringClaim(raw, "preferred_username"), stringClaim(raw, "upn"))
@@ -126,9 +129,9 @@ func (p *OIDCProvider) Callback(ctx context.Context, st LoginState, gotState, co
 	id.Groups = groupsClaim(raw, p.cfg.GroupsAttribute)
 	verified, _ := raw["email_verified"].(bool)
 	if err := p.policy.decide(&id, verified); err != nil {
-		return id, err
+		return id, "", err
 	}
-	return id, nil
+	return id, rawID, nil
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -164,6 +167,39 @@ func groupsClaim(raw map[string]any, key string) []string {
 	default:
 		return nil
 	}
+}
+
+// EndSessionURL is the IdP's RP-initiated logout endpoint from its discovery
+// document, when it advertises one (OIDC Session Management). An empty URL
+// means the IdP did not publish end_session_endpoint.
+func (p *OIDCProvider) EndSessionURL(ctx context.Context) (string, error) {
+	if err := p.init(ctx); err != nil {
+		return "", err
+	}
+	var doc struct {
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if err := p.provider.Claims(&doc); err != nil {
+		return "", err
+	}
+	return doc.EndSessionEndpoint, nil
+}
+
+// LogoutURL builds the IdP logout redirect: end_session_endpoint with the
+// session's ID token as the hint and PUBLIC_URL as the landing page.
+func (p *OIDCProvider) LogoutURL(ctx context.Context, idTokenHint, postLogoutRedirect string) (string, error) {
+	endpoint, err := p.EndSessionURL(ctx)
+	if err != nil || endpoint == "" {
+		return "", err
+	}
+	q := url.Values{}
+	if idTokenHint != "" {
+		q.Set("id_token_hint", idTokenHint)
+	}
+	if postLogoutRedirect != "" {
+		q.Set("post_logout_redirect_uri", postLogoutRedirect)
+	}
+	return endpoint + "?" + q.Encode(), nil
 }
 
 // EncodeState and DecodeState move LoginState through the signed cookie.

@@ -23,6 +23,15 @@
     "viewer_groups": ["00000000-0000-0000-0000-000000000003"]
   },
   {
+    "_setup": "A federation metadata file (InCommon and friends) lists many IdPs, so entity_id names the one to trust; CloudTerm refuses such a file without it, rather than picking an arbitrary certificate. Single sign-on URL, Entity ID, and the SLO response endpoint come from CloudTerm Settings > Sign-in.",
+    "id": "shibboleth",
+    "type": "saml",
+    "label": "Shibboleth",
+    "metadata_url": "https://federation.example/metadata.xml",
+    "entity_id": "https://idp.your-org.example/idp/shibboleth",
+    "operator_groups": ["cloudterm-operators"]
+  },
+  {
     "_setup": "Google Admin > Apps > Web and mobile apps > Add custom SAML app. ACS URL and Entity ID come from CloudTerm Settings > Sign-in; Name ID format EMAIL. Under Attribute mapping > Group membership, select the CloudTerm groups and set App attribute 'groups'. Download the IdP metadata XML and point metadata_file at it.",
     "id": "google",
     "type": "saml",

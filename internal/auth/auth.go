@@ -64,6 +64,7 @@ type Claims struct {
 	Role      Role   `json:"role"`
 	TenantID  string `json:"tid"`
 	Method    string `json:"amr"`
+	Provider  string `json:"pvd,omitempty"` // "local" or "sso:<provider id>"
 	SessionID string `json:"sid"`
 	IssuedAt  int64  `json:"iat"`
 	Exp       int64  `json:"exp"`
@@ -100,6 +101,9 @@ type Service struct {
 	failures map[string]*failure
 	revoked  map[string]time.Time // sid -> token expiry
 	lastSeen map[string]time.Time // sid -> last request
+	// idTokens holds the OIDC ID token of a session so sign-out can offer the
+	// IdP an id_token_hint. Like the other session maps it lives in-process.
+	idTokens map[string]string
 
 	// InitialAdminPassword is set when the break-glass admin was created with a
 	// generated password. The caller prints it once.
@@ -126,6 +130,7 @@ func newService(secret []byte, opt Options) *Service {
 		failures: map[string]*failure{},
 		revoked:  map[string]time.Time{},
 		lastSeen: map[string]time.Time{},
+		idTokens: map[string]string{},
 	}
 }
 
@@ -367,7 +372,7 @@ func (s *Service) Issue(u User, method string) (string, Claims, error) {
 	}
 	c := Claims{
 		UserID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role, TenantID: u.TenantID,
-		Method: method, SessionID: hex.EncodeToString(sid),
+		Method: method, Provider: u.Provider, SessionID: hex.EncodeToString(sid),
 		IssuedAt: now.Unix(), Exp: now.Add(s.maxAge).Unix(),
 	}
 	tok, err := s.sign(c)
@@ -469,24 +474,52 @@ func (s *Service) Parse(token string) (Claims, error) {
 	}
 	if seen, ok := s.lastSeen[c.SessionID]; ok && now.Sub(seen) > s.idle {
 		s.revoked[c.SessionID] = time.Unix(c.Exp, 0)
-		delete(s.lastSeen, c.SessionID)
+		s.dropSessionLocked(c.SessionID)
 		return Claims{}, ErrSessionEnded
 	}
-	if s.isDisabledLocked(c.UserID) {
+	u, ok := s.userLocked(c.UserID)
+	if !ok || u.Disabled {
 		return Claims{}, ErrDisabled
 	}
+	// The role follows the user record, not the token, so a demotion made at
+	// the IdP (at her next sign-in) or by an admin applies to a live session
+	// on its very next request instead of at session expiry.
+	c.Role = u.Role
 	s.lastSeen[c.SessionID] = now
 	s.pruneLocked(now)
 	return c, nil
 }
 
-func (s *Service) isDisabledLocked(uid string) bool {
-	for _, u := range s.users {
-		if u.ID == uid {
-			return u.Disabled
+// StashIDToken keeps the OIDC ID token of a session for the id_token_hint on
+// sign-out. It is dropped with the session and never persisted.
+func (s *Service) StashIDToken(sid, rawIDToken string) {
+	s.mu.Lock()
+	s.idTokens[sid] = rawIDToken
+	s.mu.Unlock()
+}
+
+// GetIDToken returns the stashed ID token for a session, if any.
+func (s *Service) GetIDToken(sid string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, ok := s.idTokens[sid]
+	return tok, ok
+}
+
+// dropSessionLocked forgets everything this process tracks about a session.
+func (s *Service) dropSessionLocked(sid string) {
+	delete(s.lastSeen, sid)
+	delete(s.idTokens, sid)
+}
+
+// userLocked finds a user by id. The caller must hold s.mu.
+func (s *Service) userLocked(uid string) (User, bool) {
+	for i := range s.users {
+		if s.users[i].ID == uid {
+			return s.users[i], true
 		}
 	}
-	return true
+	return User{}, false
 }
 
 func (s *Service) pruneLocked(now time.Time) {
@@ -501,6 +534,13 @@ func (s *Service) pruneLocked(now time.Time) {
 func (s *Service) Revoke(c Claims) {
 	s.mu.Lock()
 	s.revoked[c.SessionID] = time.Unix(c.Exp, 0)
-	delete(s.lastSeen, c.SessionID)
+	s.dropSessionLocked(c.SessionID)
 	s.mu.Unlock()
+}
+
+// User returns the stored record for a user id, if it still exists.
+func (s *Service) User(uid string) (User, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.userLocked(uid)
 }
