@@ -213,6 +213,7 @@ type GuacamoleTokenRequest struct {
 	VaultEntryID string `json:"vault_entry_id"`
 	Record       bool   `json:"record"`
 	Security     string `json:"security"`
+	Environment  string `json:"environment,omitempty"`
 }
 
 type GuacamoleTokenResponse struct {

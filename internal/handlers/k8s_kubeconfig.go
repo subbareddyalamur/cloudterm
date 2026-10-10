@@ -14,11 +14,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-
 // handleK8sKubeconfigUpload parses an uploaded kubeconfig and returns available clusters
 func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	if r.Method != "POST" {
 		json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		return
@@ -67,7 +66,7 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 		ExecArgs   []string `json:"exec_args,omitempty"`
 		IsTeleport bool     `json:"is_teleport,omitempty"`
 	}
-	
+
 	var clusters []ClusterWithExec
 	for name, cluster := range rawConfig.Clusters {
 		kc := ClusterWithExec{
@@ -77,7 +76,7 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 		if len(cluster.CertificateAuthorityData) > 0 {
 			kc.CertAuth = base64.StdEncoding.EncodeToString(cluster.CertificateAuthorityData)
 		}
-		
+
 		// Find the user for this cluster and extract exec command
 		for _, ctx := range rawConfig.Contexts {
 			if ctx.Cluster == name {
@@ -97,7 +96,7 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 				break
 			}
 		}
-		
+
 		clusters = append(clusters, kc)
 	}
 
@@ -111,7 +110,7 @@ func (h *Handler) handleK8sKubeconfigUpload(w http.ResponseWriter, r *http.Reque
 // If that fails and the cluster is Teleport-managed, it falls back to Web SSO.
 func (h *Handler) handleK8sKubeconfigConnect(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	var req struct {
 		Server            string   `json:"server"`
 		CAData            string   `json:"ca_data"`

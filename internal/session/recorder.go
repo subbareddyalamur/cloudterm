@@ -41,6 +41,18 @@ func RecordingFilename(instanceID, instanceName, ext string) string {
 	return fmt.Sprintf("%s-%s-%s.%s", instanceID, safe, ts, ext)
 }
 
+func safePrefix(p string) string {
+	var parts []string
+	for _, part := range strings.Split(p, "/") {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		parts = append(parts, unsafeChars.ReplaceAllString(part, "-"))
+	}
+	return filepath.Join(parts...)
+}
+
 // NewRecorder creates a .cast file and writes the asciicast v2 header.
 func NewRecorder(dir, instanceID, instanceName string, cols, rows int) (*Recorder, error) {
 	filename := RecordingFilename(instanceID, instanceName, "cast")

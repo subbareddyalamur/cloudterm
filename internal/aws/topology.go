@@ -20,24 +20,24 @@ import (
 
 // VPCTopology is the complete topology data for a VPC.
 type VPCTopology struct {
-	VPC              VPCInfo              `json:"vpc"`
-	Subnets          []SubnetInfo         `json:"subnets"`
-	Instances        []TopologyInstance   `json:"instances"`
-	SecurityGroups   []SecurityGroupInfo  `json:"securityGroups"`
-	NetworkACLs      []NetworkACLInfo     `json:"networkAcls"`
-	RouteTables      []RouteTableInfo     `json:"routeTables"`
-	InternetGateways []IGWInfo            `json:"internetGateways"`
-	NatGateways      []NATGWInfo          `json:"natGateways"`
-	TGWAttachments   []TGWAttachmentInfo  `json:"tgwAttachments"`
-	VPCPeerings      []VPCPeeringInfo     `json:"vpcPeerings"`
-	VPCEndpoints     []VPCEndpointInfo    `json:"vpcEndpoints"`
-	LoadBalancers    []TopologyLBInfo     `json:"loadBalancers"`
-	PeerVPCDetails   []PeerVPCDetails     `json:"peerVpcDetails,omitempty"`
-	ElasticIPs       []ElasticIPInfo      `json:"elasticIps,omitempty"`
-	DHCPOptions      *DHCPOptionsInfo     `json:"dhcpOptions,omitempty"`
-	FlowLogs         []FlowLogInfo        `json:"flowLogs,omitempty"`
-	PrefixLists      []PrefixListInfo     `json:"prefixLists,omitempty"`
-	FetchedAt        string               `json:"fetchedAt"`
+	VPC              VPCInfo             `json:"vpc"`
+	Subnets          []SubnetInfo        `json:"subnets"`
+	Instances        []TopologyInstance  `json:"instances"`
+	SecurityGroups   []SecurityGroupInfo `json:"securityGroups"`
+	NetworkACLs      []NetworkACLInfo    `json:"networkAcls"`
+	RouteTables      []RouteTableInfo    `json:"routeTables"`
+	InternetGateways []IGWInfo           `json:"internetGateways"`
+	NatGateways      []NATGWInfo         `json:"natGateways"`
+	TGWAttachments   []TGWAttachmentInfo `json:"tgwAttachments"`
+	VPCPeerings      []VPCPeeringInfo    `json:"vpcPeerings"`
+	VPCEndpoints     []VPCEndpointInfo   `json:"vpcEndpoints"`
+	LoadBalancers    []TopologyLBInfo    `json:"loadBalancers"`
+	PeerVPCDetails   []PeerVPCDetails    `json:"peerVpcDetails,omitempty"`
+	ElasticIPs       []ElasticIPInfo     `json:"elasticIps,omitempty"`
+	DHCPOptions      *DHCPOptionsInfo    `json:"dhcpOptions,omitempty"`
+	FlowLogs         []FlowLogInfo       `json:"flowLogs,omitempty"`
+	PrefixLists      []PrefixListInfo    `json:"prefixLists,omitempty"`
+	FetchedAt        string              `json:"fetchedAt"`
 }
 
 // PeerVPCDetails holds the resources fetched for a peer or connected VPC.
@@ -61,14 +61,14 @@ type VPCInfo struct {
 }
 
 type SubnetInfo struct {
-	ID               string `json:"id"`
-	CIDR             string `json:"cidr"`
-	Name             string `json:"name"`
-	AZ               string `json:"az"`
-	IsPublic         bool   `json:"isPublic"`
-	AvailableIPs     int32  `json:"availableIps"`
-	RouteTableID     string `json:"routeTableId"`
-	NetworkACLID     string `json:"networkAclId"`
+	ID           string `json:"id"`
+	CIDR         string `json:"cidr"`
+	Name         string `json:"name"`
+	AZ           string `json:"az"`
+	IsPublic     bool   `json:"isPublic"`
+	AvailableIPs int32  `json:"availableIps"`
+	RouteTableID string `json:"routeTableId"`
+	NetworkACLID string `json:"networkAclId"`
 }
 
 type TopologyInstance struct {
@@ -145,12 +145,12 @@ type NATGWInfo struct {
 }
 
 type TGWAttachmentInfo struct {
-	AttachmentID string              `json:"attachmentId"`
-	TGWID        string              `json:"tgwId"`
-	TGWName      string              `json:"tgwName"`
-	ResourceType string              `json:"resourceType"`
-	State        string              `json:"state"`
-	SubnetIDs    []string            `json:"subnetIds,omitempty"`
+	AttachmentID    string              `json:"attachmentId"`
+	TGWID           string              `json:"tgwId"`
+	TGWName         string              `json:"tgwName"`
+	ResourceType    string              `json:"resourceType"`
+	State           string              `json:"state"`
+	SubnetIDs       []string            `json:"subnetIds,omitempty"`
 	PeerAttachments []TGWPeerAttachment `json:"peerAttachments,omitempty"`
 }
 
@@ -209,19 +209,19 @@ type LBTargetInfo struct {
 }
 
 type ElasticIPInfo struct {
-	AllocationID  string `json:"allocationId"`
-	PublicIP      string `json:"publicIp"`
-	InstanceID    string `json:"instanceId,omitempty"`
-	ENI           string `json:"eni,omitempty"`
-	PrivateIP     string `json:"privateIp,omitempty"`
-	Name          string `json:"name,omitempty"`
+	AllocationID string `json:"allocationId"`
+	PublicIP     string `json:"publicIp"`
+	InstanceID   string `json:"instanceId,omitempty"`
+	ENI          string `json:"eni,omitempty"`
+	PrivateIP    string `json:"privateIp,omitempty"`
+	Name         string `json:"name,omitempty"`
 }
 
 type DHCPOptionsInfo struct {
-	ID            string            `json:"id"`
-	DomainName    string            `json:"domainName,omitempty"`
-	DomainServers []string          `json:"domainServers,omitempty"`
-	NTPServers    []string          `json:"ntpServers,omitempty"`
+	ID            string   `json:"id"`
+	DomainName    string   `json:"domainName,omitempty"`
+	DomainServers []string `json:"domainServers,omitempty"`
+	NTPServers    []string `json:"ntpServers,omitempty"`
 }
 
 type FlowLogInfo struct {
@@ -233,10 +233,10 @@ type FlowLogInfo struct {
 }
 
 type PrefixListInfo struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	CIDRs   []string `json:"cidrs,omitempty"`
-	MaxEntries int32 `json:"maxEntries"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	CIDRs      []string `json:"cidrs,omitempty"`
+	MaxEntries int32    `json:"maxEntries"`
 }
 
 // extractName extracts the Name tag value from EC2 tags.
@@ -576,14 +576,14 @@ func (d *Discovery) FetchVPCTopology(ctx context.Context, instanceID string) (*V
 		}
 
 		topology.Subnets = append(topology.Subnets, SubnetInfo{
-			ID:               subnetID,
-			CIDR:             aws.ToString(subnet.CidrBlock),
-			Name:             extractName(subnet.Tags),
-			AZ:               aws.ToString(subnet.AvailabilityZone),
-			IsPublic:         isPublic,
-			AvailableIPs:     aws.ToInt32(subnet.AvailableIpAddressCount),
-			RouteTableID:     rtID,
-			NetworkACLID:     naclID,
+			ID:           subnetID,
+			CIDR:         aws.ToString(subnet.CidrBlock),
+			Name:         extractName(subnet.Tags),
+			AZ:           aws.ToString(subnet.AvailabilityZone),
+			IsPublic:     isPublic,
+			AvailableIPs: aws.ToInt32(subnet.AvailableIpAddressCount),
+			RouteTableID: rtID,
+			NetworkACLID: naclID,
 		})
 	}
 

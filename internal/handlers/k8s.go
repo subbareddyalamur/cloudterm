@@ -108,11 +108,11 @@ func (h *Handler) handleK8sNamespaces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	
+
 	// Use short timeout to fail fast if cluster is unreachable
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	
+
 	nsList, err := conn.Client.CoreV1().Namespaces().List(ctx, k8s.ListOpts())
 	if err != nil {
 		h.logger.Printf("WARN: failed to list namespaces (cluster may be unreachable): %v", err)

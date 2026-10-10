@@ -31,6 +31,7 @@ type EKSCluster struct {
 // EKSService discovers EKS clusters and generates auth tokens.
 type EKSService struct {
 	cfg      *config.Config
+	disc     *Discovery
 	accounts *AccountStore
 	logger   *log.Logger
 	cache    map[string]*eksCacheEntry
@@ -43,6 +44,9 @@ type eksCacheEntry struct {
 }
 
 const eksCacheTTL = 2 * time.Minute
+
+// SetDiscovery lets EKS use registered CloudTermAccess roles.
+func (s *EKSService) SetDiscovery(d *Discovery) { s.disc = d }
 
 func NewEKSService(cfg *config.Config, accounts *AccountStore, logger *log.Logger) *EKSService {
 	return &EKSService{
@@ -146,6 +150,13 @@ func (s *EKSService) awsConfigForAccount(ctx context.Context, accountID, region 
 	acct, ok := s.accounts.Get(accountID)
 	if !ok {
 		return awsv2.Config{}, fmt.Errorf("account %s not found", accountID)
+	}
+	if acct.RoleARN != "" && s.disc != nil {
+		p, err := s.disc.RoleProvider(ctx, acct.RoleARN, "cloudterm-eks")
+		if err != nil {
+			return awsv2.Config{}, err
+		}
+		return awsconfig.LoadDefaultConfig(ctx, append(noSharedFiles(), awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(p))...)
 	}
 	return awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(region),

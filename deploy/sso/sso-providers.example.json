@@ -1,0 +1,61 @@
+[
+  {
+    "_setup": "Okta admin > Applications > Create App Integration > SAML 2.0. Single sign-on URL = the ACS URL and Audience URI = the Entity ID shown in CloudTerm Settings > Sign-in. Add a Group Attribute Statement named 'groups' (filter: starts with 'cloudterm-'). Copy the app's Metadata URL here.",
+    "id": "okta",
+    "type": "saml",
+    "label": "Okta",
+    "metadata_url": "https://YOUR-ORG.okta.com/app/APP-ID/sso/saml/metadata",
+    "groups_attribute": "groups",
+    "allowed_domains": ["example.com"],
+    "admin_groups": ["cloudterm-admins"],
+    "operator_groups": ["cloudterm-operators"],
+    "viewer_groups": ["cloudterm-auditors"]
+  },
+  {
+    "_setup": "Entra admin center > Enterprise applications > New application > Create your own > SAML. Identifier (Entity ID) and Reply URL (ACS) come from CloudTerm Settings > Sign-in. Under Attributes & Claims add a group claim (Security groups, emit as Group ID or sAMAccountName). Copy the App Federation Metadata Url here. If you emit group IDs, list the object IDs below.",
+    "id": "entra",
+    "type": "saml",
+    "label": "Microsoft Entra ID",
+    "metadata_url": "https://login.microsoftonline.com/TENANT-ID/federationmetadata/2007-06/federationmetadata.xml?appid=APP-ID",
+    "allowed_domains": ["example.com"],
+    "admin_groups": ["00000000-0000-0000-0000-000000000001"],
+    "operator_groups": ["00000000-0000-0000-0000-000000000002"],
+    "viewer_groups": ["00000000-0000-0000-0000-000000000003"]
+  },
+  {
+    "_setup": "Google Admin > Apps > Web and mobile apps > Add custom SAML app. ACS URL and Entity ID come from CloudTerm Settings > Sign-in; Name ID format EMAIL. Under Attribute mapping > Group membership, select the CloudTerm groups and set App attribute 'groups'. Download the IdP metadata XML and point metadata_file at it.",
+    "id": "google",
+    "type": "saml",
+    "label": "Google Workspace",
+    "metadata_file": "/etc/cloudterm/google-idp-metadata.xml",
+    "groups_attribute": "groups",
+    "allowed_domains": ["example.com"],
+    "admin_groups": ["cloudterm-admins@example.com"],
+    "operator_groups": ["cloudterm-operators@example.com"],
+    "viewer_groups": ["cloudterm-auditors@example.com"]
+  },
+  {
+    "_setup": "Google over OIDC has no group claim, so it suits contractors who all get one role. Google Cloud console > APIs & Services > Credentials > OAuth client ID (Web). Authorized redirect URI = the Redirect URI shown in CloudTerm Settings > Sign-in. Keep the secret in an environment variable.",
+    "id": "google-oidc",
+    "type": "oidc",
+    "label": "Google (contractors)",
+    "issuer": "https://accounts.google.com",
+    "client_id": "1234567890-abc.apps.googleusercontent.com",
+    "client_secret_env": "GOOGLE_OIDC_CLIENT_SECRET",
+    "allowed_domains": ["contractor.example.com"],
+    "default_role": "viewer"
+  },
+  {
+    "_setup": "Entra over OIDC: App registrations > New registration, Web redirect URI from CloudTerm Settings > Sign-in. Token configuration > Add groups claim. Entra does not send email_verified, so it is turned off here; domains still restrict who can sign in.",
+    "id": "entra-oidc",
+    "type": "oidc",
+    "label": "Microsoft (OIDC)",
+    "issuer": "https://login.microsoftonline.com/TENANT-ID/v2.0",
+    "client_id": "APP-ID",
+    "client_secret_env": "ENTRA_OIDC_CLIENT_SECRET",
+    "require_email_verified": false,
+    "allowed_domains": ["example.com"],
+    "admin_groups": ["00000000-0000-0000-0000-000000000001"],
+    "operator_groups": ["00000000-0000-0000-0000-000000000002"]
+  }
+]

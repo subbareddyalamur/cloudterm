@@ -75,7 +75,7 @@ func (d *Discovery) UploadFile(profile, region, instanceID, remotePath, platform
 	startTime := time.Now()
 	for i, chunk := range chunks {
 		pct := (i * 95) / totalSteps
-		
+
 		elapsed := time.Since(startTime).Seconds()
 		bytesDone := int64(i * uploadChunkSize)
 		var speed int64
@@ -208,7 +208,7 @@ func (d *Discovery) DownloadFile(profile, region, instanceID, remotePath, platfo
 	startTime := time.Now()
 	for i := 0; i < totalChunks; i++ {
 		pct := (i * 95) / totalChunks
-		
+
 		elapsed := time.Since(startTime).Seconds()
 		bytesDone := int64(i * downloadChunkSize)
 		var speed int64

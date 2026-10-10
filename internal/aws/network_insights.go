@@ -15,7 +15,7 @@ import (
 
 // DeepAnalysisEvent is a single SSE event sent during deep analysis.
 type DeepAnalysisEvent struct {
-	Type    string      `json:"type"`    // "status", "hop", "result", "error"
+	Type    string      `json:"type"` // "status", "hop", "result", "error"
 	Message string      `json:"message,omitempty"`
 	Hop     *DeepHop    `json:"hop,omitempty"`
 	Result  *DeepResult `json:"result,omitempty"`
@@ -32,19 +32,19 @@ type DeepHop struct {
 	Status        string `json:"status"`              // "allow", "deny", "info"
 	Detail        string `json:"detail"`
 	MatchedRule   string `json:"matchedRule,omitempty"`
-	InVPC         bool   `json:"inVpc"`  // Whether this hop is visible in the topology SVG
+	InVPC         bool   `json:"inVpc"` // Whether this hop is visible in the topology SVG
 	VPCID         string `json:"vpcId,omitempty"`
 }
 
 // DeepResult is the final summary of deep analysis.
 type DeepResult struct {
-	Reachable    bool       `json:"reachable"`
-	PathID       string     `json:"pathId"`
-	AnalysisID   string     `json:"analysisId"`
-	Explanations []string   `json:"explanations,omitempty"`
-	HopCount     int        `json:"hopCount"`
-	Hops         []DeepHop  `json:"hops"`
-	Duration     string     `json:"duration"` // How long the analysis took
+	Reachable    bool      `json:"reachable"`
+	PathID       string    `json:"pathId"`
+	AnalysisID   string    `json:"analysisId"`
+	Explanations []string  `json:"explanations,omitempty"`
+	HopCount     int       `json:"hopCount"`
+	Hops         []DeepHop `json:"hops"`
+	Duration     string    `json:"duration"` // How long the analysis took
 }
 
 // DeepAnalyze runs AWS Network Insights analysis and streams hop-by-hop results.

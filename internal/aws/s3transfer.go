@@ -108,7 +108,7 @@ func (d *Discovery) ExpressUpload(profile, region, bucket, instanceID, remotePat
 
 	// 1. Upload to S3.
 	key := fmt.Sprintf("%s/%s/%s", s3TransferPrefix, uuid.New().String(), remotePath[strings.LastIndexAny(remotePath, "/\\")+1:])
-	
+
 	startTime := time.Now()
 	var bytesDone int64
 	wrappedReader := &progressReader{

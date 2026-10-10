@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudTerm access role. The hub task role may assume this role only with this deployment's ExternalId.
+
+Parameters:
+  HubRoleArn:
+    Type: String
+    Description: ARN of the CloudTerm server task role
+  ExternalId:
+    Type: String
+    Description: Per-deployment external id. Prevents a confused deputy.
+    NoEcho: true
+
+Resources:
+  CloudTermAccess:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudTermAccess
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref HubRoleArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: CloudTermReadAndSession
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                  - ssm:StartSession
+                  - ssm:TerminateSession
+                  - ssm:DescribeInstanceInformation
+                  - ssmmessages:*
+                  - ec2messages:*
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt CloudTermAccess.Arn

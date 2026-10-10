@@ -23,10 +23,13 @@ import (
 	"time"
 
 	"cloudterm-go/internal/audit"
+	"cloudterm-go/internal/auth"
 	"cloudterm-go/internal/aws"
 	"cloudterm-go/internal/config"
 	"cloudterm-go/internal/guacamole"
+	"cloudterm-go/internal/license"
 	"cloudterm-go/internal/llm"
+	"cloudterm-go/internal/policy"
 	"cloudterm-go/internal/session"
 	"cloudterm-go/internal/suggest"
 	"cloudterm-go/internal/teleport"
@@ -64,6 +67,9 @@ type Handler struct {
 	clients      map[*websocket.Conn][]string
 	clientsMu    sync.Mutex
 	templates    *template.Template
+	authn        *auth.Service
+	idps         *auth.Registry
+	lic          *license.Client
 }
 
 // New creates a Handler wired to the given dependencies.
@@ -71,7 +77,9 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 	tmpl := template.Must(template.ParseGlob(filepath.Join("web", "templates", "*.html")))
 
 	costSvc := aws.NewCostExplorerService(cfg, accounts, logger)
+	costSvc.SetDiscovery(discovery)
 	eksSvc := aws.NewEKSService(cfg, accounts, logger)
+	eksSvc.SetDiscovery(discovery)
 
 	tokenRefresher := func(accountID, region, clusterName string) (string, error) {
 		return eksSvc.GetToken(context.Background(), accountID, region, clusterName)
@@ -93,7 +101,7 @@ func New(cfg *config.Config, discovery *aws.Discovery, sessions *session.Manager
 		teleport:     teleport.NewService(logger),
 		observers:    make(map[string]*suggest.Observer),
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
+			CheckOrigin: sameOrigin,
 		},
 		clients:   make(map[*websocket.Conn][]string),
 		templates: tmpl,
@@ -135,7 +143,7 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("POST /upload-file", h.handleUploadFile)
 	mux.HandleFunc("POST /download-file", h.handleDownloadFile)
 	mux.HandleFunc("POST /browse-directory", h.handleBrowseDirectory)
-mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
+	mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
 	mux.HandleFunc("POST /express-download", h.handleExpressDownload)
 	mux.HandleFunc("POST /export-session", h.handleExportSession)
 	mux.Handle("GET /exports/", http.StripPrefix("/exports/", http.FileServer(http.Dir(h.cfg.TerminalExportDir))))
@@ -231,8 +239,9 @@ mux.HandleFunc("POST /express-upload", h.handleExpressUpload)
 	mux.HandleFunc("GET /ws", h.handleWebSocket)
 
 	mux.HandleFunc("GET /", h.serveSPA)
+	h.mountEnterprise(mux)
 
-	return mux
+	return h.wrap(mux)
 }
 
 // ---------------------------------------------------------------------------
@@ -342,10 +351,28 @@ func (h *Handler) handleRDPMode(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request) {
+	if h.denyCapability(w, "rdp") {
+		return
+	}
 	var req types.GuacamoleTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+	if h.cfg != nil && h.cfg.RequireAuth {
+		c, err := h.claims(r)
+		role := policy.Operator
+		if err != nil || c.UserID == "" {
+			jsonError(w, "login required", http.StatusUnauthorized)
+			return
+		}
+		role = policy.Role(c.Role)
+		force := h.cfg.RequireRecordProd && strings.Contains(strings.ToLower(req.Environment), "prod")
+		decision := policy.OpenSession(role, req.Environment, h.cfg.AutoRecord || req.Record || force, h.cfg.RequireRecordProd)
+		if !decision.Allow {
+			jsonError(w, decision.Reason, http.StatusForbidden)
+			return
+		}
 	}
 
 	// Ask SSM forwarder to start port forwarding
@@ -356,15 +383,12 @@ func (h *Handler) handleStartGuacamoleRDP(w http.ResponseWriter, r *http.Request
 		AWSRegion:    req.AWSRegion,
 		PortNumber:   3389,
 	}
-	// Resolve credentials for manual accounts.
-	if strings.HasPrefix(req.AWSProfile, "manual:") {
-		acctID := strings.TrimPrefix(req.AWSProfile, "manual:")
-		if acct, ok := h.accounts.Get(acctID); ok {
-			fwdReq.AWSAccessKeyID = acct.AccessKeyID
-			fwdReq.AWSSecretAccessKey = acct.SecretAccessKey
-			fwdReq.AWSSessionToken = acct.SessionToken
-		}
+	fwdCreds, err := h.credsForProfile(r.Context(), req.AWSProfile, h.actorName(r))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusForbidden)
+		return
 	}
+	applyForwarderCreds(&fwdReq, fwdCreds)
 	body, err := json.Marshal(fwdReq)
 	if err != nil {
 		jsonError(w, "failed to marshal forwarder request", http.StatusInternalServerError)
@@ -682,6 +706,9 @@ func (h *Handler) handleStopRDPSession(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleUploadFile(w http.ResponseWriter, r *http.Request) {
+	if h.denyCapability(w, "transfer") {
+		return
+	}
 	if err := r.ParseMultipartForm(500 << 20); err != nil { // 500 MB max
 		jsonError(w, "failed to parse form: "+err.Error(), http.StatusBadRequest)
 		return
@@ -1170,7 +1197,6 @@ func (h *Handler) converterURL(path string) string {
 	return fmt.Sprintf("http://%s:%d%s", h.cfg.ConverterHost, h.cfg.ConverterPort, path)
 }
 
-
 func (h *Handler) handleConvertRecording(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Filename string `json:"filename"`
@@ -1226,20 +1252,44 @@ func (h *Handler) handleAddAWSAccount(w http.ResponseWriter, r *http.Request) {
 		AccessKeyID     string `json:"access_key_id"`
 		SecretAccessKey string `json:"secret_access_key"`
 		SessionToken    string `json:"session_token"`
+		RoleARN         string `json:"role_arn"`
+		ExternalID      string `json:"external_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.AccessKeyID == "" || req.SecretAccessKey == "" {
-		jsonError(w, "access_key_id and secret_access_key are required", http.StatusBadRequest)
+	if req.RoleARN == "" && (req.AccessKeyID == "" || req.SecretAccessKey == "") {
+		jsonError(w, "role_arn is required; access keys remain only as a migration path", http.StatusBadRequest)
+		return
+	}
+	if req.RoleARN == "" && h.discovery.HubMode() && !h.cfg.AllowAccessKeys {
+		jsonError(w, "This deployment reaches AWS only through CloudTermAccess roles. Register the role ARN instead of access keys.", http.StatusBadRequest)
+		return
+	}
+	if req.RoleARN != "" && !strings.HasPrefix(req.RoleARN, "arn:aws") {
+		jsonError(w, "role_arn must look like arn:aws:iam::<account>:role/CloudTermAccess", http.StatusBadRequest)
 		return
 	}
 	if req.Name == "" {
-		req.Name = "Account " + req.AccessKeyID[:4] + "..."
+		if req.RoleARN != "" {
+			req.Name = "CloudTermAccess"
+		} else {
+			req.Name = "Account " + req.AccessKeyID[:4] + "..."
+		}
 	}
 
-	acct, err := h.accounts.Add(req.Name, req.AccessKeyID, req.SecretAccessKey, req.SessionToken)
+	var acct aws.ManualAccount
+	var err error
+	if req.RoleARN != "" {
+		ext := req.ExternalID
+		if ext == "" && h.cfg != nil {
+			ext = h.cfg.ExternalID
+		}
+		acct, err = h.accounts.AddRole(req.Name, req.RoleARN, ext)
+	} else {
+		acct, err = h.accounts.Add(req.Name, req.AccessKeyID, req.SecretAccessKey, req.SessionToken)
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1262,12 +1312,17 @@ func (h *Handler) handleDeleteAWSAccount(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "account id required", http.StatusBadRequest)
 		return
 	}
+	acct, _ := h.accounts.Get(id)
 	if err := h.accounts.Remove(id); err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	// Also remove this account's instances from the discovery cache.
-	h.discovery.RemoveAccountInstances(id)
+	if acct.RoleARN != "" {
+		h.discovery.RemoveInstancesForLabel("role:" + acct.RoleARN)
+	} else {
+		h.discovery.RemoveAccountInstances(id)
+	}
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
 
@@ -1282,6 +1337,9 @@ func (h *Handler) handleScanAWSAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		jsonError(w, "account not found", http.StatusNotFound)
 		return
+	}
+	if c, err := h.claims(r); err == nil && c.UserID != "" {
+		acct.SessionName = c.UserID
 	}
 
 	count, err := h.discovery.ScanAccount(acct)
@@ -1300,6 +1358,9 @@ func (h *Handler) handleScanAWSAccount(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleStartPortForward(w http.ResponseWriter, r *http.Request) {
+	if h.denyCapability(w, "tunnel") {
+		return
+	}
 	var req struct {
 		InstanceID   string `json:"instance_id"`
 		InstanceName string `json:"instance_name"`
@@ -1331,15 +1392,12 @@ func (h *Handler) handleStartPortForward(w http.ResponseWriter, r *http.Request)
 		AWSRegion:    req.AWSRegion,
 		PortNumber:   req.PortNumber,
 	}
-	// Resolve credentials for manual accounts.
-	if strings.HasPrefix(req.AWSProfile, "manual:") {
-		acctID := strings.TrimPrefix(req.AWSProfile, "manual:")
-		if acct, ok := h.accounts.Get(acctID); ok {
-			fwdReq.AWSAccessKeyID = acct.AccessKeyID
-			fwdReq.AWSSecretAccessKey = acct.SecretAccessKey
-			fwdReq.AWSSessionToken = acct.SessionToken
-		}
+	fwdCreds, err := h.credsForProfile(r.Context(), req.AWSProfile, h.actorName(r))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusForbidden)
+		return
 	}
+	applyForwarderCreds(&fwdReq, fwdCreds)
 	body, _ := json.Marshal(fwdReq)
 
 	fwdURL := fmt.Sprintf("%s/start", h.forwarderURL())
@@ -1410,6 +1468,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// writeMu serialises writes to this single connection.
 	var writeMu sync.Mutex
+	actor, _ := h.claims(r)
 	done := make(chan struct{})
 
 	defer func() {
@@ -1472,7 +1531,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.Type {
 		case "start_session":
-			h.wsStartSession(conn, &writeMu, msg.Payload)
+			h.wsStartSession(conn, &writeMu, msg.Payload, actor)
 
 		case "terminal_input":
 			h.wsTerminalInput(msg.Payload)
@@ -1501,7 +1560,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // wsStartSession launches an SSM session and wires output back to the WebSocket.
-func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payload interface{}) {
+func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payload interface{}, actor auth.Claims) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		h.logger.Printf("wsStartSession marshal payload: %v", err)
@@ -1515,9 +1574,44 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		AWSRegion    string `json:"aws_region"`
 		Cols         uint16 `json:"cols"`
 		Rows         uint16 `json:"rows"`
+		Environment  string `json:"environment"`
+		Record       bool   `json:"record"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		h.logger.Printf("wsStartSession unmarshal: %v", err)
+		return
+	}
+	if h.lic != nil && !h.lic.Allow("ssh") {
+		writeMu.Lock()
+		_ = conn.WriteJSON(types.WSMessage{Type: "session_error", Payload: map[string]string{
+			"session_id": msg.SessionID,
+			"error":      "subscription does not allow new SSH sessions",
+		}})
+		writeMu.Unlock()
+		return
+	}
+	role := policy.Role(actor.Role)
+	if role == "" {
+		role = policy.Operator
+	}
+	if h.cfg != nil && h.cfg.RequireAuth && actor.UserID == "" {
+		writeMu.Lock()
+		_ = conn.WriteJSON(types.WSMessage{Type: "session_error", Payload: map[string]string{
+			"session_id": msg.SessionID,
+			"error":      "login required",
+		}})
+		writeMu.Unlock()
+		return
+	}
+	forceRecord := h.cfg != nil && h.cfg.RequireRecordProd && strings.Contains(strings.ToLower(msg.Environment), "prod")
+	decision := policy.OpenSession(role, msg.Environment, (h.cfg != nil && h.cfg.AutoRecord) || msg.Record || forceRecord, h.cfg != nil && h.cfg.RequireRecordProd)
+	if !decision.Allow {
+		writeMu.Lock()
+		_ = conn.WriteJSON(types.WSMessage{Type: "session_error", Payload: map[string]string{
+			"session_id": msg.SessionID,
+			"error":      decision.Reason,
+		}})
+		writeMu.Unlock()
 		return
 	}
 
@@ -1537,20 +1631,19 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 		}
 	}
 
-	// Resolve credentials for manual accounts (profile = "manual:<id>").
-	var creds *session.AWSCreds
-	if strings.HasPrefix(awsProfile, "manual:") {
-		acctID := strings.TrimPrefix(awsProfile, "manual:")
-		if acct, ok := h.accounts.Get(acctID); ok {
-			creds = &session.AWSCreds{
-				AccessKeyID:     acct.AccessKeyID,
-				SecretAccessKey: acct.SecretAccessKey,
-				SessionToken:    acct.SessionToken,
-			}
-			h.logger.Printf("Using manual credentials for account %s (%s)", acctID, acct.Name)
-		} else {
-			h.logger.Printf("wsStartSession: manual account %s not found", acctID)
-		}
+	sessionName := actor.UserID
+	if sessionName == "" {
+		sessionName = "cloudterm"
+	}
+	creds, err := h.credsForProfile(context.Background(), awsProfile, sessionName)
+	if err != nil {
+		writeMu.Lock()
+		_ = conn.WriteJSON(types.WSMessage{Type: "session_error", Payload: map[string]string{
+			"session_id": sessionID,
+			"error":      err.Error(),
+		}})
+		writeMu.Unlock()
+		return
 	}
 
 	onOutput := func(data []byte) {
@@ -1582,7 +1675,14 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 	if rows == 0 {
 		rows = 50
 	}
-	if err := h.sessions.StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion, creds, cols, rows, onOutput); err != nil {
+	tenantID, userID := actor.TenantID, actor.UserID
+	if tenantID == "" {
+		tenantID = "local"
+	}
+	if userID == "" {
+		userID = "shared"
+	}
+	if err := h.sessions.StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion, creds, cols, rows, tenantID+"/"+userID, forceRecord, onOutput); err != nil {
 		h.logger.Printf("start session %s: %v", sessionID, err)
 		writeMu.Lock()
 		conn.WriteJSON(types.WSMessage{
@@ -1639,11 +1739,14 @@ func (h *Handler) wsStartSession(conn *websocket.Conn, writeMu *sync.Mutex, payl
 
 	// Audit log the session start.
 	h.audit.Log(audit.AuditEvent{
-		Action:     "session_start",
-		InstanceID: instanceID,
-		Profile:    awsProfile,
-		Region:     awsRegion,
-		Details:    fmt.Sprintf("session_id=%s", sessionID),
+		Action:       "session_start",
+		InstanceID:   instanceID,
+		InstanceName: instanceName,
+		Profile:      awsProfile,
+		Region:       awsRegion,
+		Details:      fmt.Sprintf("session_id=%s", sessionID),
+		UserID:       actor.UserID,
+		TenantID:     actor.TenantID,
 	})
 
 	// Track this session against the connection for cleanup.
@@ -2321,6 +2424,9 @@ func listGeminiModels(apiKey string) ([]struct {
 // tools are executed transparently; run_command tool calls are forwarded to the
 // client for user approval.
 func (h *Handler) handleAIChat(w http.ResponseWriter, r *http.Request) {
+	if h.denyCapability(w, "ai") {
+		return
+	}
 	provider, err := h.getAIProvider()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
@@ -2523,7 +2629,7 @@ func (h *Handler) handleAIContext(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleGetPreferences(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile(h.cfg.PreferencesFile)
+	data, err := os.ReadFile(h.preferencesPath(r))
 	if err != nil {
 		// No preferences file yet — return empty object
 		w.Header().Set("Content-Type", "application/json")
@@ -2546,7 +2652,7 @@ func (h *Handler) handlePutPreferences(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if err := os.WriteFile(h.cfg.PreferencesFile, data, 0644); err != nil {
+	if err := os.WriteFile(h.preferencesPath(r), data, 0644); err != nil {
 		jsonError(w, "failed to save preferences: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

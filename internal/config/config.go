@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -27,10 +28,10 @@ type Config struct {
 	TerminalExportDir   string
 	AutoRecord          bool
 	AWSAccountsFile     string
-	ConverterHost          string
-	ConverterPort          int
-	CostDashboardHost      string
-	CostDashboardPort      int
+	ConverterHost       string
+	ConverterPort       int
+	CostDashboardHost   string
+	CostDashboardPort   int
 	// AI Agent
 	AIProvider           string // "bedrock", "anthropic", "openai", "gemini", "ollama"
 	AIModel              string
@@ -45,6 +46,40 @@ type Config struct {
 	SuggestEnabled       bool
 	SuggestDataDir       string
 	SuggestEncryptionKey string
+	AuthSecret           string
+	RequireAuth          bool
+	LicenseKey           string
+	LicenseControllerURL string
+	DeploymentID         string
+	ExternalID           string
+	DataDir              string
+	DatabaseURL          string
+	LicensePublicKey     string
+	RequireRecordProd    bool
+	Version              string
+	SeatCount            int
+	// AWSAccessMode is "hub" (AssumeRole only, ~/.aws never read) or "profiles" (legacy).
+	AWSAccessMode   string
+	HubProfile      string
+	AllowAccessKeys bool
+	// Sign-in and SSO.
+	OIDCIssuer          string
+	OIDCClientID        string
+	OIDCClientSecret    string
+	OIDCRedirectURL     string
+	OIDCLabel           string
+	OIDCAllowedDomains  []string
+	OIDCGroupsClaim     string
+	OIDCAdminGroups     []string
+	OIDCOperatorGroups  []string
+	OIDCViewerGroups    []string
+	OIDCDefaultRole     string
+	OIDCRequireVerified bool
+	LocalLogin          string
+	SessionMaxHours     int
+	SessionIdleMinutes  int
+	PublicURL           string
+	SSOProvidersFile    string
 }
 
 func Load() *Config {
@@ -87,7 +122,50 @@ func Load() *Config {
 		SuggestEnabled:       envStr("SUGGEST_ENABLED", "true") == "true",
 		SuggestDataDir:       envStr("SUGGEST_DATA_DIR", "/app/suggestdata"),
 		SuggestEncryptionKey: envStr("SUGGEST_ENCRYPTION_KEY", ""),
+		AuthSecret:           envStr("AUTH_SECRET", ""),
+		RequireAuth:          envStr("REQUIRE_AUTH", "false") == "true",
+		LicenseKey:           envStr("LICENSE_KEY", ""),
+		LicenseControllerURL: envStr("LICENSE_CONTROLLER_URL", ""),
+		DeploymentID:         envStr("DEPLOYMENT_ID", "local"),
+		ExternalID:           envStr("CLOUDTERM_EXTERNAL_ID", "cloudterm-local"),
+		DataDir:              envStr("DATA_DIR", "."),
+		DatabaseURL:          envStr("DATABASE_URL", ""),
+		LicensePublicKey:     envStr("LICENSE_PUBLIC_KEY", ""),
+		RequireRecordProd:    envStr("REQUIRE_RECORD_PROD", "false") == "true",
+		Version:              envStr("CLOUDTERM_VERSION", "dev"),
+		SeatCount:            envInt("SEAT_COUNT", 1),
+		AWSAccessMode:        envStr("AWS_ACCESS_MODE", "profiles"),
+		HubProfile:           envStr("CLOUDTERM_HUB_PROFILE", ""),
+		AllowAccessKeys:      envStr("ALLOW_ACCESS_KEYS", "false") == "true",
+		OIDCIssuer:           envStr("OIDC_ISSUER", ""),
+		OIDCClientID:         envStr("OIDC_CLIENT_ID", ""),
+		OIDCClientSecret:     envStr("OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURL:      envStr("OIDC_REDIRECT_URL", ""),
+		OIDCLabel:            envStr("OIDC_LABEL", "Single sign-on"),
+		OIDCAllowedDomains:   envList("OIDC_ALLOWED_DOMAINS"),
+		OIDCGroupsClaim:      envStr("OIDC_GROUPS_CLAIM", "groups"),
+		OIDCAdminGroups:      envList("OIDC_ADMIN_GROUPS"),
+		OIDCOperatorGroups:   envList("OIDC_OPERATOR_GROUPS"),
+		OIDCViewerGroups:     envList("OIDC_VIEWER_GROUPS"),
+		OIDCDefaultRole:      envStr("OIDC_DEFAULT_ROLE", ""),
+		OIDCRequireVerified:  envStr("OIDC_REQUIRE_EMAIL_VERIFIED", "true") == "true",
+		LocalLogin:           envStr("LOCAL_LOGIN", ""),
+		SessionMaxHours:      envInt("SESSION_MAX_HOURS", 8),
+		SessionIdleMinutes:   envInt("SESSION_IDLE_MINUTES", 60),
+		PublicURL:            envStr("PUBLIC_URL", ""),
+		SSOProvidersFile:     envStr("SSO_PROVIDERS_FILE", ""),
 	}
+}
+
+// envList splits a comma-separated variable, trimming blanks.
+func envList(key string) []string {
+	var out []string
+	for _, part := range strings.Split(os.Getenv(key), ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func envStr(key, fallback string) string {

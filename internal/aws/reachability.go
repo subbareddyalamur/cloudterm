@@ -155,12 +155,12 @@ func AnalyzeReachability(topo *VPCTopology, sourceID, destID string, protocol st
 	if sourceNACL != nil {
 		action, detail, matchedRule := matchNACLRule(sourceNACL.Rules, "outbound", destIP, protocol, port)
 		hop2 := ReachabilityHop{
-			Component:   "nacl-outbound",
-			ResourceID:  sourceNACL.ID,
+			Component:    "nacl-outbound",
+			ResourceID:   sourceNACL.ID,
 			ResourceName: sourceNACL.ID,
-			Status:      action,
-			Detail:      detail,
-			MatchedRule: matchedRule,
+			Status:       action,
+			Detail:       detail,
+			MatchedRule:  matchedRule,
 		}
 		if action != "allow" {
 			allAllowed = false
@@ -205,12 +205,12 @@ func AnalyzeReachability(topo *VPCTopology, sourceID, destID string, protocol st
 	if destNACL != nil {
 		action, detail, matchedRule := matchNACLRule(destNACL.Rules, "inbound", sourceInst.PrivateIP, protocol, port)
 		hop4 := ReachabilityHop{
-			Component:   "nacl-inbound",
-			ResourceID:  destNACL.ID,
+			Component:    "nacl-inbound",
+			ResourceID:   destNACL.ID,
 			ResourceName: destNACL.ID,
-			Status:      action,
-			Detail:      detail,
-			MatchedRule: matchedRule,
+			Status:       action,
+			Detail:       detail,
+			MatchedRule:  matchedRule,
 		}
 		if action != "allow" {
 			allAllowed = false
@@ -239,12 +239,12 @@ func AnalyzeReachability(topo *VPCTopology, sourceID, destID string, protocol st
 	if destNACL != nil {
 		action, detail, matchedRule := matchNACLRule(destNACL.Rules, "outbound", sourceInst.PrivateIP, protocol, 32768)
 		hopReturn1 := ReachabilityHop{
-			Component:   "nacl-outbound-return",
-			ResourceID:  destNACL.ID,
+			Component:    "nacl-outbound-return",
+			ResourceID:   destNACL.ID,
 			ResourceName: destNACL.ID,
-			Status:      action,
-			Detail:      fmt.Sprintf("Return traffic (ephemeral): %s", detail),
-			MatchedRule: matchedRule,
+			Status:       action,
+			Detail:       fmt.Sprintf("Return traffic (ephemeral): %s", detail),
+			MatchedRule:  matchedRule,
 		}
 		if action != "allow" {
 			allAllowed = false
@@ -256,12 +256,12 @@ func AnalyzeReachability(topo *VPCTopology, sourceID, destID string, protocol st
 	if sourceNACL != nil {
 		action, detail, matchedRule := matchNACLRule(sourceNACL.Rules, "inbound", destIP, protocol, 32768)
 		hopReturn2 := ReachabilityHop{
-			Component:   "nacl-inbound-return",
-			ResourceID:  sourceNACL.ID,
+			Component:    "nacl-inbound-return",
+			ResourceID:   sourceNACL.ID,
 			ResourceName: sourceNACL.ID,
-			Status:      action,
-			Detail:      fmt.Sprintf("Return traffic (ephemeral): %s", detail),
-			MatchedRule: matchedRule,
+			Status:       action,
+			Detail:       fmt.Sprintf("Return traffic (ephemeral): %s", detail),
+			MatchedRule:  matchedRule,
 		}
 		if action != "allow" {
 			allAllowed = false

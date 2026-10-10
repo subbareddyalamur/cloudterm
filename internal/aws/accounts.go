@@ -14,9 +14,12 @@ import (
 type ManualAccount struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
-	AccessKeyID     string `json:"access_key_id"`
-	SecretAccessKey string `json:"secret_access_key"`
+	AccessKeyID     string `json:"access_key_id,omitempty"`
+	SecretAccessKey string `json:"secret_access_key,omitempty"`
 	SessionToken    string `json:"session_token,omitempty"`
+	RoleARN         string `json:"role_arn,omitempty"`
+	ExternalID      string `json:"external_id,omitempty"`
+	SessionName     string `json:"-"`
 	AddedAt         string `json:"added_at"`
 }
 
@@ -50,9 +53,12 @@ func (s *AccountStore) List() []ManualAccount {
 	out := make([]ManualAccount, len(s.accounts))
 	for i, a := range s.accounts {
 		out[i] = a
-		if len(a.SecretAccessKey) > 4 {
+		if a.RoleARN != "" {
+			out[i].SecretAccessKey = ""
+			out[i].AccessKeyID = ""
+		} else if len(a.SecretAccessKey) > 4 {
 			out[i].SecretAccessKey = "****" + a.SecretAccessKey[len(a.SecretAccessKey)-4:]
-		} else {
+		} else if a.SecretAccessKey != "" {
 			out[i].SecretAccessKey = "****"
 		}
 		if a.SessionToken != "" {
@@ -74,7 +80,23 @@ func (s *AccountStore) Get(id string) (ManualAccount, bool) {
 	return ManualAccount{}, false
 }
 
-// Add stores a new manual account and persists to disk.
+// AddRole stores a hub AssumeRole target. New installs use this instead of access keys.
+func (s *AccountStore) AddRole(name, roleARN, externalID string) (ManualAccount, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, err := randomID()
+	if err != nil {
+		return ManualAccount{}, err
+	}
+	acct := ManualAccount{
+		ID: id, Name: name, RoleARN: roleARN, ExternalID: externalID,
+		AddedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	s.accounts = append(s.accounts, acct)
+	return acct, s.save()
+}
+
+// Add stores a new manual account and persists to disk. Migration path for long-lived keys.
 func (s *AccountStore) Add(name, accessKey, secretKey, sessionToken string) (ManualAccount, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

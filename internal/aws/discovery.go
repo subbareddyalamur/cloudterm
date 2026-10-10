@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,7 @@ type Discovery struct {
 	mu         sync.RWMutex
 	cloneOps   map[string]*CloneStatus
 	cloneMu    sync.RWMutex
+	assumer    *Assumer
 }
 
 // NewDiscovery creates a new Discovery service.
@@ -73,9 +75,64 @@ func (d *Discovery) SetAccountStore(accounts *AccountStore) {
 	d.accounts = accounts
 }
 
+func (d *Discovery) SetAssumer(a *Assumer) {
+	d.assumer = a
+}
+
+// Assume returns temporary credentials for a CloudTermAccess role.
+// sessionName should be the CloudTerm user id when a person is logged in.
+func (d *Discovery) Assume(ctx context.Context, roleARN, sessionName, region, externalID string) (string, string, string, error) {
+	if d.assumer == nil {
+		return "", "", "", fmt.Errorf("assume role is not configured")
+	}
+	return d.assumer.Credentials(ctx, roleARN, sessionName, region, externalID)
+}
+
+// HubMode reports whether AWS access goes only through hub AssumeRole.
+// In hub mode ~/.aws/credentials and ~/.aws/config are never read.
+func (d *Discovery) HubMode() bool {
+	return d.cfg != nil && d.cfg.AWSAccessMode == "hub"
+}
+
+// roleAccount finds the registered CloudTermAccess role by ARN, for its ExternalId.
+func (d *Discovery) roleAccount(arn string) (ManualAccount, bool) {
+	if d.accounts == nil {
+		return ManualAccount{}, false
+	}
+	for _, a := range d.accounts.ListRaw() {
+		if a.RoleARN == arn {
+			return a, true
+		}
+	}
+	return ManualAccount{}, false
+}
+
+// RoleProvider returns refreshing credentials for a registered role.
+func (d *Discovery) RoleProvider(ctx context.Context, arn, sessionName string) (aws.CredentialsProvider, error) {
+	if d.assumer == nil {
+		return nil, fmt.Errorf("assume role is not configured")
+	}
+	ext := ""
+	if acct, ok := d.roleAccount(arn); ok {
+		ext = acct.ExternalID
+	}
+	return d.assumer.Provider(ctx, arn, sessionName, ext)
+}
+
+// VerifyRole assumes a registered role once and returns the account and ARN STS reports.
+func (d *Discovery) VerifyRole(ctx context.Context, arn, externalID string) (string, string, error) {
+	if d.assumer == nil {
+		return "", "", fmt.Errorf("assume role is not configured")
+	}
+	return d.assumer.Verify(ctx, arn, externalID)
+}
+
 func (d *Discovery) awsConfigOpts(profile, region string) []func(*awsconfig.LoadOptions) error {
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(region),
+	}
+	if d.HubMode() {
+		opts = append(opts, noSharedFiles()...)
 	}
 	if strings.HasPrefix(profile, "manual:") {
 		if d.accounts != nil {
@@ -91,8 +148,61 @@ func (d *Discovery) awsConfigOpts(profile, region string) []func(*awsconfig.Load
 		}
 		return opts
 	}
+	if strings.HasPrefix(profile, "role:") {
+		arn := strings.TrimPrefix(profile, "role:")
+		p, err := d.RoleProvider(context.Background(), arn, "cloudterm")
+		if err != nil {
+			d.logger.Printf("assume role %s: %v", arn, err)
+			return opts
+		}
+		return append(opts, awsconfig.WithCredentialsProvider(p))
+	}
+	if d.HubMode() {
+		d.logger.Printf("hub mode: refusing shared profile %q; register the account's CloudTermAccess role", profile)
+		return opts
+	}
 	opts = append(opts, awsconfig.WithSharedConfigProfile(profile))
 	return opts
+}
+
+// scanSource is one identity the fleet scan reads with.
+type scanSource struct {
+	label string // stamped on instances as AWSProfile
+	name  string // account name to fall back on when IAM has no alias
+	opts  []func(*awsconfig.LoadOptions) error
+}
+
+// scanSources lists what a full scan covers. Hub mode uses only registered
+// CloudTermAccess roles. Profiles mode also reads ~/.aws for existing installs.
+func (d *Discovery) scanSources(ctx context.Context) []scanSource {
+	var out []scanSource
+	if !d.HubMode() {
+		for _, p := range parseAWSProfiles() {
+			out = append(out, scanSource{label: p, opts: []func(*awsconfig.LoadOptions) error{awsconfig.WithSharedConfigProfile(p)}})
+		}
+	}
+	if d.accounts == nil {
+		return out
+	}
+	for _, acct := range d.accounts.ListRaw() {
+		switch {
+		case acct.RoleARN != "":
+			p, err := d.RoleProvider(ctx, acct.RoleARN, "cloudterm-scan")
+			if err != nil {
+				d.logger.Printf("scan: %s: %v", acct.Name, err)
+				continue
+			}
+			opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithCredentialsProvider(p)}
+			if d.HubMode() {
+				opts = append(opts, noSharedFiles()...)
+			}
+			out = append(out, scanSource{label: "role:" + acct.RoleARN, name: acct.Name, opts: opts})
+		case acct.AccessKeyID != "" && (!d.HubMode() || d.cfg.AllowAccessKeys):
+			provider := credentials.NewStaticCredentialsProvider(acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken)
+			out = append(out, scanSource{label: "manual:" + acct.ID, name: acct.Name, opts: []func(*awsconfig.LoadOptions) error{awsconfig.WithCredentialsProvider(provider)}})
+		}
+	}
+	return out
 }
 
 // IsScanning returns whether a scan is currently in progress.
@@ -336,9 +446,20 @@ func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
 	defer cancel()
 
 	profileLabel := "manual:" + acct.ID
+	var credProvider aws.CredentialsProvider
+	if acct.RoleARN != "" {
+		profileLabel = "role:" + acct.RoleARN
+		p, err := d.RoleProvider(ctx, acct.RoleARN, acct.SessionName)
+		if err != nil {
+			return 0, fmt.Errorf("assume %s: %w", acct.RoleARN, err)
+		}
+		credProvider = p
+	} else {
+		credProvider = credentials.NewStaticCredentialsProvider(acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken)
+	}
 
 	regions := getAWSRegions(ctx, d.logger)
-	d.logger.Printf("Scanning manual account %q across %d regions", acct.Name, len(regions))
+	d.logger.Printf("Scanning account %q across %d regions", acct.Name, len(regions))
 
 	var allInstances []types.EC2Instance
 	var accountID, accountAlias string
@@ -356,14 +477,15 @@ func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			credProvider := credentials.NewStaticCredentialsProvider(
-				acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken,
-			)
-			awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+			acctOpts := []func(*awsconfig.LoadOptions) error{
 				awsconfig.WithRegion(region),
 				awsconfig.WithCredentialsProvider(credProvider),
 				awsconfig.WithHTTPClient(leanHTTPClient),
-			)
+			}
+			if d.HubMode() {
+				acctOpts = append(acctOpts, noSharedFiles()...)
+			}
+			awsCfg, err := awsconfig.LoadDefaultConfig(ctx, acctOpts...)
 			if err != nil {
 				return
 			}
@@ -424,8 +546,13 @@ func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
 	}
 
 	wg.Wait()
+	for i := range allInstances {
+		if allInstances[i].AccountAlias == "" {
+			allInstances[i].AccountAlias = acct.Name
+		}
+	}
 
-	// Merge into cache: remove old instances for this manual account, add new ones.
+	// Merge into cache: remove old instances for this account, add new ones.
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -448,9 +575,13 @@ func (d *Discovery) ScanAccount(acct ManualAccount) (int, error) {
 	return len(allInstances), nil
 }
 
-// RemoveAccountInstances removes all cached instances belonging to a manual account.
+// RemoveAccountInstances removes all cached instances belonging to a registered account.
 func (d *Discovery) RemoveAccountInstances(accountID string) {
-	profileLabel := "manual:" + accountID
+	d.RemoveInstancesForLabel("manual:" + accountID)
+}
+
+// RemoveInstancesForLabel drops cached instances scanned under one identity label.
+func (d *Discovery) RemoveInstancesForLabel(profileLabel string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -466,7 +597,7 @@ func (d *Discovery) RemoveAccountInstances(accountID string) {
 	}
 	d.cache.Instances = kept
 	d.cache.Data = buildInstanceTree(kept)
-	d.logger.Printf("Removed instances for manual account %s from cache", accountID)
+	d.logger.Printf("Removed cached instances for %s", profileLabel)
 }
 
 // GetInstanceConfig looks up the profile and region for a given instance ID.
@@ -547,22 +678,32 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	profiles := parseAWSProfiles()
-	if len(profiles) == 0 {
-		d.logger.Println("No AWS profiles found in ~/.aws/credentials")
+	sources := d.scanSources(ctx)
+	if len(sources) == 0 {
+		msg := "No AWS accounts configured"
+		if d.HubMode() {
+			msg = "No CloudTermAccess roles registered"
+		}
+		d.logger.Println(msg)
 		d.mu.Lock()
-		d.scanStatus = types.ScanStatus{Status: "error", Message: "No AWS profiles found"}
+		d.scanStatus = types.ScanStatus{Status: "error", Message: msg}
 		d.mu.Unlock()
-		return nil, fmt.Errorf("no AWS profiles found")
+		return nil, fmt.Errorf("%s", strings.ToLower(msg))
+	}
+	fallbackNames := map[string]string{}
+	for _, src := range sources {
+		if src.name != "" {
+			fallbackNames[src.label] = src.name
+		}
 	}
 
 	regions := getAWSRegions(ctx, d.logger)
-	d.logger.Printf("Scanning %d profiles across %d regions", len(profiles), len(regions))
+	d.logger.Printf("Scanning %d accounts across %d regions (mode %s)", len(sources), len(regions), d.cfg.AWSAccessMode)
 
 	var allInstances []types.EC2Instance
 	scannedCombinations := 0
 	successfulRegions := 0
-	totalCombinations := len(profiles) * len(regions)
+	totalCombinations := len(sources) * len(regions)
 
 	// accountInfo caches account ID and alias per profile to avoid repeated STS/IAM calls.
 	type accountMeta struct {
@@ -581,19 +722,20 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 	var wg sync.WaitGroup
 	var instancesMu sync.Mutex
 
-	for _, profile := range profiles {
+	for _, src := range sources {
 		for _, region := range regions {
 			wg.Add(1)
-			go func(profile, region string) {
+			go func(src scanSource, region string) {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
+				profile := src.label
 
-				awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+				loadOpts := append([]func(*awsconfig.LoadOptions) error{
 					awsconfig.WithRegion(region),
-					awsconfig.WithSharedConfigProfile(profile),
 					awsconfig.WithHTTPClient(leanHTTPClient),
-				)
+				}, src.opts...)
+				awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 				if err != nil {
 					return
 				}
@@ -676,7 +818,7 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 					Message:             fmt.Sprintf("Scanned %d/%d combinations", scannedCombinations, totalCombinations),
 				}
 				d.mu.Unlock()
-			}(profile, region)
+			}(src, region)
 		}
 	}
 
@@ -691,6 +833,9 @@ func (d *Discovery) Scan(force bool) (*types.ScanResult, error) {
 			if allInstances[i].AccountAlias == "" && m.accountAlias != "" {
 				allInstances[i].AccountAlias = m.accountAlias
 			}
+		}
+		if allInstances[i].AccountAlias == "" {
+			allInstances[i].AccountAlias = fallbackNames[allInstances[i].AWSProfile]
 		}
 	}
 
@@ -980,7 +1125,38 @@ func buildInstanceTree(instances []types.EC2Instance) *types.InstanceTree {
 		tree.Accounts = append(tree.Accounts, node)
 	}
 
+	sortTree(tree)
 	return tree
+}
+
+// sortTree gives the fleet a stable order so it does not reshuffle between scans:
+// accounts by name, regions by code, groups by customer then environment, hosts by name.
+func sortTree(tree *types.InstanceTree) {
+	lower := strings.ToLower
+	sort.SliceStable(tree.Accounts, func(i, j int) bool {
+		a, b := tree.Accounts[i], tree.Accounts[j]
+		if lower(a.AccountAlias) != lower(b.AccountAlias) {
+			return lower(a.AccountAlias) < lower(b.AccountAlias)
+		}
+		return a.AccountID < b.AccountID
+	})
+	for ai := range tree.Accounts {
+		regions := tree.Accounts[ai].Regions
+		sort.SliceStable(regions, func(i, j int) bool { return regions[i].Region < regions[j].Region })
+		for ri := range regions {
+			groups := regions[ri].Groups
+			sort.SliceStable(groups, func(i, j int) bool {
+				if lower(groups[i].Tag1) != lower(groups[j].Tag1) {
+					return lower(groups[i].Tag1) < lower(groups[j].Tag1)
+				}
+				return lower(groups[i].Tag2) < lower(groups[j].Tag2)
+			})
+			for gi := range groups {
+				hosts := groups[gi].Instances
+				sort.SliceStable(hosts, func(i, j int) bool { return lower(hosts[i].Name) < lower(hosts[j].Name) })
+			}
+		}
+	}
 }
 
 // --- YAML persistence ---
@@ -1115,10 +1291,13 @@ func (d *Discovery) loadFromYAML() (*types.ScanResult, error) {
 	tree := &types.InstanceTree{}
 
 	for accountKey, acct := range raw {
-		_ = accountKey
+		alias := accountKey
+		if strings.HasPrefix(alias, "AWS_Account_") && acct.AWSProfile != "" {
+			alias = acct.AWSProfile
+		}
 		node := types.AccountNode{
 			AccountID:    acct.AccountID,
-			AccountAlias: accountKey,
+			AccountAlias: alias,
 			Profile:      acct.AWSProfile,
 		}
 
@@ -1140,7 +1319,7 @@ func (d *Discovery) loadFromYAML() (*types.ScanResult, error) {
 							AWSProfile:     yi.AWSProfile,
 							AWSRegion:      yi.Region,
 							AccountID:      acct.AccountID,
-							AccountAlias:   accountKey,
+							AccountAlias:   alias,
 							Tag1Value:      custName,
 							Tag2Value:      envName,
 							VpcID:          yi.VpcID,
@@ -1162,6 +1341,7 @@ func (d *Discovery) loadFromYAML() (*types.ScanResult, error) {
 
 		tree.Accounts = append(tree.Accounts, node)
 	}
+	sortTree(tree)
 
 	info, _ := os.Stat(path)
 	ts := time.Now()

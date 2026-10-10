@@ -12,6 +12,9 @@ import (
 // handleCloneStart creates an AMI from the source instance and starts background polling.
 // POST /clone/start
 func (h *Handler) handleCloneStart(w http.ResponseWriter, r *http.Request) {
+	if h.denyCapability(w, "clone") {
+		return
+	}
 	var req struct {
 		InstanceID string `json:"instance_id"`
 		CloneName  string `json:"clone_name"`

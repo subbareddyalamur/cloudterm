@@ -190,6 +190,8 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 			"AWS_ACCESS_KEY_ID="+req.AWSAccessKeyID,
 			"AWS_SECRET_ACCESS_KEY="+req.AWSSecretAccessKey,
 			"AWS_DEFAULT_REGION="+req.AWSRegion,
+			"AWS_SHARED_CREDENTIALS_FILE=/dev/null",
+			"AWS_CONFIG_FILE=/dev/null",
 		)
 		if req.AWSSessionToken != "" {
 			ssmCmd.Env = append(ssmCmd.Env, "AWS_SESSION_TOKEN="+req.AWSSessionToken)

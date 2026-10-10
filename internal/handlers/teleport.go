@@ -93,16 +93,16 @@ func (h *Handler) handleTeleportStatus(w http.ResponseWriter, r *http.Request) {
 	// If success, certData and keyData are populated.
 	// We need the CA Data and Kubernetes Server URL from the kubeconfig to finish connection.
 	// For Teleport, the proxy URL itself is often the kube server, or the tsh writes the kubeconfig.
-	// Actually, the kubeconfig was uploaded previously and CloudTerm frontend should send it again 
+	// Actually, the kubeconfig was uploaded previously and CloudTerm frontend should send it again
 	// or we parse the generated kubeconfig from tsh.
-	
+
 	// tsh login writes to ~/.tsh/keys/... and ALSO updates ~/.kube/config if --kube-cluster was passed.
 	// Since we didn't pass --kube-cluster, we just get the client certs.
 	// The frontend must now submit the original kubeconfig CA Data and Server URL.
-	
+
 	// Let's just return the raw cert and key, and let frontend call the standard connection
 	// Wait, sending private keys to frontend is insecure.
-	// Instead, we should cache them inside k8sPool using the sessionID, and the frontend 
+	// Instead, we should cache them inside k8sPool using the sessionID, and the frontend
 	// can refer to them.
 
 	// For security, just connect directly if frontend passes server and CA?

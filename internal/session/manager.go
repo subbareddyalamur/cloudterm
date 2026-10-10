@@ -46,6 +46,7 @@ type SSMSession struct {
 	onOutput     func([]byte)
 	outputBuf    bytes.Buffer
 	recorder     *Recorder
+	recordDir    string
 	lastInput    time.Time // last time user sent input
 	mu           sync.Mutex
 }
@@ -81,7 +82,19 @@ type AWSCreds struct {
 // begins streaming its output through onOutput.
 // If creds is non-nil, the credentials are passed via environment variables
 // instead of --profile (used for manually-added AWS accounts).
-func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion string, creds *AWSCreds, cols, rows uint16, onOutput func([]byte)) error {
+func (m *Manager) OpenCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, s := range m.sessions {
+		if s != nil {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, awsRegion string, creds *AWSCreds, cols, rows uint16, recordPrefix string, forceRecord bool, onOutput func([]byte)) error {
 	// Atomic check-and-reserve under a full write lock to prevent a TOCTOU
 	// race where two concurrent start_session messages both pass the check.
 	m.mu.Lock()
@@ -124,6 +137,9 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 			"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 			"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 			"AWS_DEFAULT_REGION="+awsRegion,
+			// Keys come from CloudTerm; the child must not fall back to ~/.aws.
+			"AWS_SHARED_CREDENTIALS_FILE=/dev/null",
+			"AWS_CONFIG_FILE=/dev/null",
 			"TERM=xterm-256color",
 			"COLORTERM=truecolor",
 		)
@@ -162,11 +178,19 @@ func (m *Manager) StartSession(instanceID, instanceName, sessionID, awsProfile, 
 		done:         make(chan struct{}),
 		onOutput:     onOutput,
 		lastInput:    time.Now(),
+		recordDir:    m.recordingDir,
+	}
+	if prefix := safePrefix(recordPrefix); prefix != "" && m.recordingDir != "" {
+		s.recordDir = filepath.Join(m.recordingDir, prefix)
+		if err := os.MkdirAll(s.recordDir, 0750); err != nil {
+			m.logger.Printf("recording dir %s: %v", s.recordDir, err)
+			s.recordDir = m.recordingDir
+		}
 	}
 
-	// Auto-start recording if enabled.
-	if m.autoRecord && m.recordingDir != "" {
-		rec, err := NewRecorder(m.recordingDir, instanceID, instanceName, 80, 24)
+	// Auto-start recording if enabled, or when production policy requires it.
+	if (m.autoRecord || forceRecord) && s.recordDir != "" {
+		rec, err := NewRecorder(s.recordDir, instanceID, instanceName, 80, 24)
 		if err != nil {
 			m.logger.Printf("failed to start recording for %s: %v", sessionID, err)
 		} else {
@@ -325,7 +349,11 @@ func (m *Manager) StartRecording(sessionID string) error {
 	if s.recorder != nil {
 		return nil // already recording
 	}
-	rec, err := NewRecorder(m.recordingDir, s.InstanceID, s.InstanceName, 80, 24)
+	dir := s.recordDir
+	if dir == "" {
+		dir = m.recordingDir
+	}
+	rec, err := NewRecorder(dir, s.InstanceID, s.InstanceName, 80, 24)
 	if err != nil {
 		return err
 	}

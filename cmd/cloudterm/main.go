@@ -1,19 +1,26 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"path/filepath"
+
 	"cloudterm-go/internal/audit"
+	"cloudterm-go/internal/auth"
 	"cloudterm-go/internal/aws"
 	"cloudterm-go/internal/config"
 	"cloudterm-go/internal/handlers"
+	"cloudterm-go/internal/license"
 	"cloudterm-go/internal/session"
 	"cloudterm-go/internal/suggest"
 	"cloudterm-go/internal/vault"
@@ -70,10 +77,58 @@ func main() {
 	}
 
 	handler := handlers.New(cfg, discovery, sessionMgr, logger, auditLogger, accountStore, suggestEngine, vaultStore)
+	assumer := aws.NewAssumer(cfg.ExternalID)
+	discovery.SetAssumer(assumer)
+	if cfg.AWSAccessMode == "hub" {
+		assumer.UseHub(cfg.HubProfile)
+		logger.Printf("AWS access: hub mode. ~/.aws is not read; accounts are reached through CloudTermAccess roles")
+	}
 
-	// Start background scanner
+	secret, err := auth.LoadSecret(cfg.AuthSecret, filepath.Join(cfg.DataDir, "auth.key"))
+	if err != nil {
+		logger.Fatalf("auth secret: %v", err)
+	}
+	opts := auth.Options{
+		MaxAge: time.Duration(cfg.SessionMaxHours) * time.Hour,
+		Idle:   time.Duration(cfg.SessionIdleMinutes) * time.Minute,
+	}
+	var idents *auth.Service
+	var authErr error
+	if cfg.DatabaseURL != "" {
+		idents, authErr = auth.OpenPostgres(context.Background(), cfg.DatabaseURL, secret, opts)
+	} else {
+		idents, authErr = auth.Open(filepath.Join(cfg.DataDir, "users.json"), secret, opts)
+	}
+	if authErr != nil {
+		logger.Fatalf("auth init failed: %v", authErr)
+	}
+	if idents.InitialAdminPassword != "" {
+		logger.Printf("Break-glass admin created: admin@local / %s  (shown once; set CLOUDTERM_ADMIN_PASSWORD to choose it)", idents.InitialAdminPassword)
+	}
+	idps, err := loadIdentityProviders(cfg)
+	if err != nil {
+		logger.Fatalf("sign-in providers: %v", err)
+	}
+	for _, p := range idps.Providers() {
+		logger.Printf("Sign-in provider: %s (%s, id %s)", p.Label, strings.ToUpper(p.Type), p.ID)
+	}
+	handler.SetIdentity(idents, idps)
+	if cfg.RequireAuth {
+		logger.Printf("Sign-in required for every route")
+	} else {
+		logger.Printf("warning: REQUIRE_AUTH=false; anyone who can reach this port can use it")
+	}
+	lic := &license.Client{}
+	if pub, err := license.ParsePublicKey(cfg.LicensePublicKey); err == nil {
+		lic.SetPublicKey(pub)
+	}
+	_ = lic.Load(filepath.Join(cfg.DataDir, "entitlement.json"))
+	handler.SetLicense(lic)
+
+	// Start background scanner and the license heartbeat.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go pollLicense(ctx, cfg, lic, logger, sessionMgr.OpenCount)
 	go discovery.BackgroundScanLoop(ctx)
 
 	// Build HTTP server
@@ -115,4 +170,88 @@ func main() {
 		logger.Printf("Shutdown error: %v", err)
 	}
 	logger.Println("Server stopped")
+}
+
+func pollLicense(ctx context.Context, cfg *config.Config, lic *license.Client, logger *log.Logger, openSessions func() int) {
+	if cfg.LicenseControllerURL == "" || cfg.LicenseKey == "" {
+		return
+	}
+	cachePath := filepath.Join(cfg.DataDir, "entitlement.json")
+	once := func() {
+		body, _ := json.Marshal(map[string]any{
+			"license_key":   cfg.LicenseKey,
+			"deployment_id": cfg.DeploymentID,
+			"version":       cfg.Version,
+			"seats":         cfg.SeatCount,
+			"open_sessions": openSessions(),
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.LicenseControllerURL+"/v1/heartbeat", bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			logger.Printf("license heartbeat: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		var parsed struct {
+			Entitlement license.Entitlement `json:"entitlement"`
+			Signature   string              `json:"signature"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+			logger.Printf("license decode: %v", err)
+			return
+		}
+		if lic.HasPublicKey() {
+			if err := lic.StoreSigned(parsed.Signature); err != nil {
+				logger.Printf("license signature: %v", err)
+				return
+			}
+		} else {
+			lic.Store(parsed.Entitlement)
+		}
+		if err := lic.Save(cachePath); err != nil {
+			logger.Printf("license cache: %v", err)
+		}
+	}
+	once()
+	tick := time.NewTicker(15 * time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			once()
+		}
+	}
+}
+
+// loadIdentityProviders reads SSO_PROVIDERS_FILE (default DATA_DIR/sso-providers.json)
+// and keeps the single-provider OIDC_* variables working as provider "oidc".
+func loadIdentityProviders(cfg *config.Config) (*auth.Registry, error) {
+	path := cfg.SSOProvidersFile
+	if path == "" {
+		path = filepath.Join(cfg.DataDir, "sso-providers.json")
+	}
+	providers, err := auth.LoadProviders(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.OIDCIssuer != "" && cfg.OIDCClientID != "" {
+		verified := cfg.OIDCRequireVerified
+		providers = append(providers, auth.ProviderConfig{
+			ID: "oidc", Type: "oidc", Label: cfg.OIDCLabel,
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
+			RedirectURL:     cfg.OIDCRedirectURL,
+			GroupsAttribute: cfg.OIDCGroupsClaim,
+			AllowedDomains:  cfg.OIDCAllowedDomains,
+			AdminGroups:     cfg.OIDCAdminGroups, OperatorGroups: cfg.OIDCOperatorGroups, ViewerGroups: cfg.OIDCViewerGroups,
+			DefaultRole:          auth.Role(cfg.OIDCDefaultRole),
+			RequireEmailVerified: &verified,
+		})
+	}
+	return auth.NewRegistry(providers, auth.RegistryOptions{PublicURL: cfg.PublicURL, DataDir: cfg.DataDir})
 }

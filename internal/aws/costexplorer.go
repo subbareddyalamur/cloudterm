@@ -14,7 +14,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -23,6 +22,7 @@ import (
 
 type CostExplorerService struct {
 	cfg      *config.Config
+	disc     *Discovery
 	accounts *AccountStore
 	logger   *log.Logger
 	cache    map[string]*costCacheEntry
@@ -216,21 +216,23 @@ type ceClientInfo struct {
 	profile   string
 }
 
+// SetDiscovery shares the fleet's identity sources, so cost data follows the
+// same hub-role rules as the scan.
+func (s *CostExplorerService) SetDiscovery(d *Discovery) { s.disc = d }
+
 func (s *CostExplorerService) buildCEClients(ctx context.Context) []ceClientInfo {
 	var clients []ceClientInfo
 	seen := make(map[string]bool)
-
-	profiles := parseAWSProfiles()
-	for _, profile := range profiles {
-		awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-			awsconfig.WithRegion("us-east-1"),
-			awsconfig.WithSharedConfigProfile(profile),
-		)
+	if s.disc == nil {
+		return clients
+	}
+	for _, src := range s.disc.scanSources(ctx) {
+		opts := append([]func(*awsconfig.LoadOptions) error{awsconfig.WithRegion("us-east-1")}, src.opts...)
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 		if err != nil {
-			s.logger.Printf("Cost explorer: failed to load profile %s: %v", profile, err)
+			s.logger.Printf("Cost explorer: failed to load %s: %v", src.label, err)
 			continue
 		}
-
 		accountID, alias := resolveAccountInfo(ctx, awsCfg)
 		if accountID != "" && seen[accountID] {
 			continue
@@ -238,49 +240,16 @@ func (s *CostExplorerService) buildCEClients(ctx context.Context) []ceClientInfo
 		if accountID != "" {
 			seen[accountID] = true
 		}
-
+		if alias == "" {
+			alias = src.name
+		}
 		clients = append(clients, ceClientInfo{
 			client:    costexplorer.NewFromConfig(awsCfg),
 			accountID: accountID,
 			alias:     alias,
-			profile:   profile,
+			profile:   src.label,
 		})
 	}
-
-	if s.accounts != nil {
-		for _, acct := range s.accounts.ListRaw() {
-			credProvider := credentials.NewStaticCredentialsProvider(
-				acct.AccessKeyID, acct.SecretAccessKey, acct.SessionToken,
-			)
-			awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-				awsconfig.WithRegion("us-east-1"),
-				awsconfig.WithCredentialsProvider(credProvider),
-			)
-			if err != nil {
-				s.logger.Printf("Cost explorer: failed to load manual account %s: %v", acct.Name, err)
-				continue
-			}
-
-			accountID, alias := resolveAccountInfo(ctx, awsCfg)
-			if accountID != "" && seen[accountID] {
-				continue
-			}
-			if accountID != "" {
-				seen[accountID] = true
-			}
-			if alias == "" {
-				alias = acct.Name
-			}
-
-			clients = append(clients, ceClientInfo{
-				client:    costexplorer.NewFromConfig(awsCfg),
-				accountID: accountID,
-				alias:     alias,
-				profile:   "manual:" + acct.ID,
-			})
-		}
-	}
-
 	return clients
 }
 

@@ -15,6 +15,13 @@ type AuditEvent struct {
 	Profile      string `json:"profile,omitempty"`
 	Region       string `json:"region,omitempty"`
 	Details      string `json:"details,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+	UserEmail    string `json:"user_email,omitempty"`
+	Role         string `json:"role,omitempty"`
+	TenantID     string `json:"tenant_id,omitempty"`
+	IP           string `json:"ip,omitempty"`
+	UserAgent    string `json:"user_agent,omitempty"`
+	Outcome      string `json:"outcome,omitempty"` // "success", "denied", "error"
 }
 
 type Logger struct {

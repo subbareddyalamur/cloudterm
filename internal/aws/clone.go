@@ -352,4 +352,3 @@ func (d *Discovery) LaunchClone(ctx context.Context, cloneID string, settings Cl
 
 	return newID, nil
 }
-
